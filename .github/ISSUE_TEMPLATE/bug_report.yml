@@ -1,0 +1,99 @@
+name: Bug report
+description: 报告一个可复现的问题
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。安全漏洞请不要在这里公开，按仓库根目录 SECURITY.md 的方式私下报告。
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 设置页 → 版本，或 `/api/health` 里的 `build` / `buildOnDisk`
+      placeholder: "server 0.1.21 / web 0.1.35"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: 涉及的代理
+      options:
+        - Codex
+        - Claude Code
+        - 两者都有
+        - 与代理无关（前端 / 部署）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式
+      options:
+        - 源码直接运行（npm start）
+        - Windows 服务（NSSM）
+        - PM2 / 发布包
+        - Docker
+        - 多 runner（Hub + runner）
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 尽量给出最小、确定的步骤
+      placeholder: |
+        1. 打开…
+        2. 选择权限档位…
+        3. 发送…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 有截图、录屏或错误卡片时请贴在这里
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: |
+        服务端日志（info 或 debug）和浏览器控制台。**请先删除 PIN、token、cookie、
+        路径中的用户名和其他敏感信息。**
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      placeholder: "Windows 11 / Node 22 / Android Chrome / iPhone Safari"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 确认
+      options:
+        - label: 我已确认这不是已知限制（docs/limitations.md）
+          required: true
+        - label: 我已删除日志和截图中的密钥、PIN、token 与个人信息
+          required: true

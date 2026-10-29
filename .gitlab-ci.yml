@@ -1,0 +1,87 @@
+# 只做部署；typecheck / test / lint 见 .github/workflows/ci.yml。
+workflow:
+  # 新提交取消旧流水线，部署任务除外（见 interruptible: false）。
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+stages:
+  - image
+  - deploy
+
+variables:
+  REGISTRY_HOST: "10.0.0.5:8080"
+  IMAGE_NAME: "10.0.0.5:8080/home/vibemobile"
+
+container:
+  stage: image
+  # 用 runner 自带的 Docker daemon；非 privileged runner 上 dind 起不来。
+  image: docker:27
+  before_script:
+    - test -n "$REGISTRY_USER" || (echo "REGISTRY_USER is not configured in GitLab CI/CD variables" && exit 1)
+    - test -n "$REGISTRY_PASSWORD" || (echo "REGISTRY_PASSWORD is not configured in GitLab CI/CD variables" && exit 1)
+    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" --username "$REGISTRY_USER" --password-stdin
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION_TAG="$CI_COMMIT_TAG"
+      else
+        VERSION_TAG="$CI_COMMIT_SHORT_SHA"
+      fi
+      # runner 连不上 Docker Hub，--pull 会让有缓存的构建也失败。
+      docker build --tag "$IMAGE_NAME:$VERSION_TAG" --tag "$IMAGE_NAME:latest" .
+      docker push "$IMAGE_NAME:$VERSION_TAG"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] || [ -n "$CI_COMMIT_TAG" ]; then
+        docker push "$IMAGE_NAME:latest"
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+deploy_production:
+  stage: deploy
+  # bookworm 已缓存在这个 runner 上，且自带 openssh-client / base64 / scp。
+  # Alpine 镜像也能用，但它的 CDN（dl-cdn.alpinelinux.org）现在返回
+  # Permission denied，`apk add openssh-client` 无法执行。
+  image: node:22-bookworm
+  interruptible: false
+  variables:
+    DEPLOY_HOST: "10.0.0.72"
+    DEPLOY_USER: "root"
+    DEPLOY_PATH: "/www/custom/vibemobile"
+    # 宿主机端口；3000 已被占用，容器内固定监听 5900。
+    DEPLOY_PORT: "3010"
+    # nginx 同机用回环；异机改为其可达网卡并限制防火墙，
+    # 否则 TRUST_PROXY 可被伪造。
+    DEPLOY_BIND: "127.0.0.1"
+  before_script:
+    - test -n "$DEPLOY_SSH_PRIVATE_KEY_B64" || (echo "DEPLOY_SSH_PRIVATE_KEY_B64 is not configured in GitLab CI/CD variables" && exit 1)
+    - install -m 700 -d ~/.ssh
+    - printf '%s' "$DEPLOY_SSH_PRIVATE_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  script:
+    - ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+    - scp docker-compose.hub.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.hub.yml"
+    - |
+      # 部署 latest；按提交打的标签留在仓库里供回滚。
+      # 不设 PUBLIC_ORIGIN：按 Host + X-Forwarded-Proto 推导允许的 origin。
+      # TLS 在 nginx 终止，Cookie 用 Secure；PIN 由 Hub 自动生成并打印。
+      printf 'VIBEMOBILE_IMAGE=%s:latest\nHUB_PORT=%s\nHUB_BIND=%s\nVIBEMOBILE_SECURE_COOKIE=1\nVIBEMOBILE_TRUST_PROXY=1\n' \
+        "$IMAGE_NAME" "$DEPLOY_PORT" "$DEPLOY_BIND" > .env.ci
+    - scp .env.ci "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env.ci"
+    # 旧单机容器占着同一端口，且属于另一个 Compose 项目。
+    - >-
+      ssh "$DEPLOY_USER@$DEPLOY_HOST"
+      "cd '$DEPLOY_PATH' &&
+      docker compose --env-file .env.ci -f docker-compose.hub.yml pull hub &&
+      { docker rm -f vibemobile >/dev/null 2>&1 || true; } &&
+      docker compose --env-file .env.ci -f docker-compose.hub.yml up -d --remove-orphans hub"
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  allow_failure: false

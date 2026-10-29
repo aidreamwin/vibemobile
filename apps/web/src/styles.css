@@ -1,0 +1,373 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Tailwind v4 keys `dark:` off prefers-color-scheme by default. This app is
+ * dark unconditionally (index.html hardcodes class="dark"), and every shadcn
+ * component is written with `dark:` variants -- without this line they would
+ * key off the *phone's* system setting instead, and a phone in light mode
+ * would render the controls light-on-dark. */
+@custom-variant dark (&:is(.dark *));
+
+/* shadcn/ui default theme, neutral base. :root must come before .dark:
+   both selectors have the same specificity (0,1,0) and both land on <html>,
+   so source order is what makes .dark win. */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* APP EXTENSIONS -- not part of shadcn's token set, see @theme inline. */
+  --warning: oklch(0.666 0.179 58.318);
+  --success: oklch(0.596 0.145 163.225);
+  --raised: oklch(0.92 0 0);
+  --raised-hover: oklch(0.87 0 0);
+
+  /* Tag hues. shadcn has no notion of "a colour that means an identity, not a
+   * state"; these two exist because the session list merges providers and each
+   * row has to say which agent owns it.
+   *
+   * Deliberately NOT the vendors' own colours, and deliberately not near the
+   * semantic three: the same row already carries --success (163deg, working),
+   * --warning (84deg, waiting) and --destructive (22deg, error) in its status
+   * pill and its 等待你 badge, so a chip in any of those families reads as a
+   * state. What is left is the cool end, and the two hues sit at the same
+   * lightness and chroma so the pair reads as one family rather than as two
+   * colours that happen to be on screen together. */
+  --tag-violet: oklch(0.5 0.15 295);
+  --tag-cyan: oklch(0.52 0.11 225);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+
+  --warning: oklch(0.828 0.189 84.429);
+  --success: oklch(0.765 0.177 163.223);
+  --raised: oklch(0.32 0 0);
+  --raised-hover: oklch(0.38 0 0);
+
+  /* The same two hues, lifted and slightly desaturated: here they are text on
+   * a near-black chip, where the light-theme values would be unreadable. */
+  --tag-violet: oklch(0.78 0.115 295);
+  --tag-cyan: oklch(0.79 0.1 225);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* APP EXTENSIONS.
+   * shadcn models three surface levels (background / card / accent) and no
+   * status colours beyond `destructive`. This app needs both:
+   *  - warning/success: the app reports four distinct states (waiting for
+   *    approval, working, error, info); `destructive` covers only one.
+   *  - raised: shadcn's --secondary, --muted and --accent are all the SAME
+   *    value (oklch(0.269 0 0)) in dark. This app stacks a pressed/hover step
+   *    on top of a secondary surface (menu rows, markdown code chips), which
+   *    that three-level model has no room for -- without --raised every
+   *    `active:` state in the app silently becomes a no-op.
+   * Values live in :root/.dark above, so both themes can diverge later. */
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-raised: var(--raised);
+  --color-raised-hover: var(--raised-hover);
+  --color-tag-violet: var(--tag-violet);
+  --color-tag-cyan: var(--tag-cyan);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ------------------------------------------------------------------ base */
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* Prevent iOS rubber-banding the whole page while scrolling a transcript. */
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Inputs must be >= 16px or iOS Safari zooms the viewport on focus.
+   *
+   * In @layer base, and that is the whole point: an unlayered declaration
+   * outranks every cascade layer, Tailwind's `utilities` included. As a bare
+   * rule this silently beat any text-[13px] written on a control -- every
+   * select in the app rendered at 16px no matter what it asked for, which is
+   * why the composer's "完全访问" was always clipped to "完全…". Utilities are
+   * meant to win over this default; the default is only for controls that ask
+   * for nothing. */
+  input,
+  textarea,
+  select,
+  button {
+    font-size: 16px;
+    font-family: inherit;
+  }
+}
+
+button:not(:disabled),
+select:not(:disabled) {
+  cursor: pointer;
+}
+
+select {
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ utils */
+
+@utility app-height {
+  /* dvh tracks the collapsing mobile URL bar; vh does not. */
+  height: 100dvh;
+}
+
+@utility safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+}
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* A tap target that meets the 44px minimum without forcing every icon to be huge. */
+@utility tap {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s ease, background-color 0.15s ease;
+}
+
+.tap:active {
+  transform: scale(0.96);
+}
+
+@utility scroll-y {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+@utility scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --------------------------------------------------------------- markdown */
+
+.md {
+  font-size: 0.9375rem; /* 15px */
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+/* Shared mobile surfaces. Keeping these here avoids each page inventing a
+   slightly different divider and makes dense lists easier to scan. */
+.surface-list {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+.md > * + * {
+  margin-top: 0.85rem;
+}
+.md h1,
+.md h2,
+.md h3 {
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--foreground);
+  margin-top: 1.25rem;
+}
+.md h1 {
+  font-size: 1.25rem;
+}
+.md h2 {
+  font-size: 1.125rem;
+}
+.md h3 {
+  font-size: 1rem;
+}
+.md ul,
+.md ol {
+  padding-left: 1.25rem;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li {
+  margin-top: 0.35rem;
+}
+.md a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.md code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--raised);
+  color: var(--foreground);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.375rem;
+}
+.md pre {
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.8125rem; /* 13px */
+  line-height: 1.55;
+  color: var(--foreground);
+}
+.md .md-code-block {
+  /* Long commands should remain readable on a phone instead of hiding their
+     tail behind a horizontal scrollbar. Preserve source newlines and spacing,
+     but allow paths, URLs, and other unbroken tokens to wrap when needed. */
+  max-width: 100%;
+  /* `CodeBlock` draws the box itself (border, radius, header strip), so the
+     generic `.md pre` decoration would nest a second one inside it. The reset
+     has to be here and not in the element's className: `@layer utilities`
+     loses to these unlayered rules, so no Tailwind class can undo them. */
+  background: none;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 0.75rem 0.875rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.md .md-code-block code {
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
+}
+.md blockquote {
+  border-left: 3px solid var(--ring);
+  padding-left: 0.875rem;
+  color: var(--muted-foreground);
+}
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin: 0.75rem 0;
+}
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.md th {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+.md hr {
+  border-color: var(--border);
+  margin: 1rem 0;
+}
+
+/* Blinking caret shown while an agent message is still streaming. */
+@keyframes vm-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.caret::after {
+  content: '▍';
+  animation: vm-blink 1s step-end infinite;
+  margin-left: 2px;
+  color: var(--primary);
+}
+
+/* --------------------------------------------------------------- xterm */
+
+.xterm-viewport {
+  background-color: var(--background) !important;
+}

@@ -1,0 +1,53 @@
+name: vibemobile-hub
+services:
+  hub:
+    build: .
+    image: ${VIBEMOBILE_IMAGE:-vibemobile:multi-runner}
+    command: ["node", "apps/server/dist/distributed/hub.js"]
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${HUB_BIND:-127.0.0.1}:${HUB_PORT:-5900}:5900"
+    environment:
+      PORT: "5900"
+      VIBEMOBILE_HOST: "0.0.0.0"
+      VIBEMOBILE_STATE_DIR: /app/.multi-runner/hub
+      VIBEMOBILE_ROOTS: /app/workspace
+      # Empty means "generate one on first start and print it in the log", the
+      # same behaviour as the standalone server.
+      VIBEMOBILE_PIN: ${VIBEMOBILE_PIN:-}
+      # Empty means "accept the request's own origin", derived from Host and
+      # X-Forwarded-Proto (requires VIBEMOBILE_TRUST_PROXY behind a proxy).
+      # That keeps the image independent of the public domain; set an explicit
+      # comma-separated allowlist only when a fixed origin is wanted.
+      VIBEMOBILE_PUBLIC_ORIGIN: ${VIBEMOBILE_PUBLIC_ORIGIN:-}
+      VIBEMOBILE_SECURE_COOKIE: ${VIBEMOBILE_SECURE_COOKIE:-0}
+      # Only safe when the hub is reachable exclusively through the proxy
+      # (HUB_BIND=127.0.0.1): trustProxy makes the login throttle key on
+      # X-Forwarded-For, a header a direct client could forge.
+      VIBEMOBILE_TRUST_PROXY: ${VIBEMOBILE_TRUST_PROXY:-}
+      # Empty means the Hub keeps remote runner credentials in its state dir
+      # (<stateDir>/runners.json, inside the hub-data volume) and manages them
+      # from Settings. An explicit file must be writable for that.
+      VIBEMOBILE_RUNNERS_FILE: ${HUB_RUNNERS_FILE:-}
+      VIBEMOBILE_HUB_TLS: ${VIBEMOBILE_HUB_TLS:-off}
+      VIBEMOBILE_HUB_TLS_CERT_FILE: ${HUB_TLS_CERT_FILE:-}
+      VIBEMOBILE_HUB_TLS_KEY_FILE: ${HUB_TLS_KEY_FILE:-}
+      VIBEMOBILE_HUB_CA_FILE: ${HUB_CA_FILE:-}
+      VIBEMOBILE_DEFAULT_RUNNER_HUB_URL: ${VIBEMOBILE_DEFAULT_RUNNER_HUB_URL:-}
+    volumes:
+      - hub-data:/app/.multi-runner
+      - ${HOST_WORKSPACE_DIR:-.}:/app/workspace
+      # Optional: keep the runner list on the host instead of the volume.
+      # Settings writes to it, so it cannot be read-only. Create the file first
+      # (otherwise Docker creates a directory) and set
+      # HUB_RUNNERS_FILE=/app/runner-credentials.json.
+      # - ./runner-credentials.json:/app/runner-credentials.json
+      # Native TLS: mount certificates, set HUB_TLS_CERT_FILE/HUB_TLS_KEY_FILE
+      # to container paths, and HUB_CA_FILE for a private issuing CA.
+      # - ./certs:/app/certs:ro
+      # Optional agent configuration for the default runner:
+      # - ~/.codex:/root/.codex
+      # - ~/.claude:/root/.claude
+volumes:
+  hub-data:

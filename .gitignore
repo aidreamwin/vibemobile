@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------- secrets
+#
+# Holds the JWT signing secret, the scrypt PIN hash, AND the auto-generated PIN
+# in plaintext. Committing it would hand anyone with repo access a working login
+# to a service that runs arbitrary shell commands on this machine.
+.vibemobile/
+
+.env
+.env.*
+!.env.example
+
+# PM2 local process configuration may contain the login PIN.
+ecosystem.config.cjs
+
+# ------------------------------------------------------------- build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Distributable PM2 packages (npm run release). Built artifacts, often several
+# tens of MB, and they embed a RELEASE.json with the exact commit.
+/release/
+/release-test/
+
+# ------------------------------------------------------------- generated
+#
+# 845 files of `codex app-server generate-ts` output (1.5 MB). One command
+# regenerates it and the codex version is pinned, so it does not belong in
+# history. Nothing imports it — it is kept locally as protocol reference only.
+# Regenerate with: npm run gen:codex-types
+packages/protocol/src/generated/
+
+# ------------------------------------------------------------ downloaded
+#
+# NSSM 服务包装器（nssm.exe），由 scripts/windows/install-service.ps1 从 npm 的
+# nssm-bin 取到本地。二进制不入库。
+scripts/windows/tools/
+
+# ------------------------------------------------------- local tool config
+# Machine-specific permission allowlists. Shared config would be settings.json.
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# ------------------------------------------------------------------ noise
+*.log
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+.multi-runner/
+runner-credentials.json
+/certs/

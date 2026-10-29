@@ -1,0 +1,26 @@
+name: vibemobile-runner
+services:
+  runner:
+    build: .
+    image: ${VIBEMOBILE_IMAGE:-vibemobile:multi-runner}
+    command: ["node", "apps/server/dist/distributed/runner.js"]
+    init: true
+    restart: unless-stopped
+    # Outbound WS/WSS only. No published ports are needed.
+    environment:
+      VIBEMOBILE_HUB_URL: ${VIBEMOBILE_HUB_URL:?Set ws:// or wss:// Hub URL}
+      VIBEMOBILE_RUNNER_ID: ${VIBEMOBILE_RUNNER_ID:?Set runner ID}
+      VIBEMOBILE_RUNNER_TOKEN: ${VIBEMOBILE_RUNNER_TOKEN:?Set runner token}
+      VIBEMOBILE_HUB_CA_FILE: ${RUNNER_HUB_CA_FILE:-}
+      VIBEMOBILE_STATE_DIR: /app/.multi-runner/state
+      VIBEMOBILE_ROOTS: /app/workspace
+      VIBEMOBILE_SHELL: /bin/bash
+    volumes:
+      - runner-data:/app/.multi-runner
+      - ${HOST_WORKSPACE_DIR:-.}:/app/workspace
+      # Private CA WSS: set RUNNER_HUB_CA_FILE=/app/certs/ca.pem and enable:
+      # - ./certs/ca.pem:/app/certs/ca.pem:ro
+      # - ~/.codex:/root/.codex
+      # - ~/.claude:/root/.claude
+volumes:
+  runner-data:

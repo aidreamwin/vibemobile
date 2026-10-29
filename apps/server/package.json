@@ -1,0 +1,40 @@
+{
+  "name": "@vibemobile/server",
+  "version": "0.1.29",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc -p tsconfig.build.json",
+    "postbuild": "node ../../scripts/build-info.mjs --out dist/version.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "smoke": "tsx scripts/smoke-codex.ts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.303",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.0.2",
+    "@vibemobile/protocol": "*",
+    "@xterm/addon-serialize": "^0.13.0",
+    "@xterm/headless": "^5.5.0",
+    "fastify": "^5.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
+    "@vitest/coverage-v8": "^4.1.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.12"
+  }
+}
