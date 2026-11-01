@@ -114,7 +114,7 @@ npm run test:coverage  # 两个 workspace 各自输出 coverage/
   - 只改前端 → `apps/web/package.json` 的 `version` 末位 +1
   - 同时改了 `packages/protocol` 或两边 → 两个都抬
   - 只改文档 / 注释不算
-- **不要顺手升级 Codex CLI**。它精确固定在 `0.162.1`，协议没有版本协商；
+- **不要顺手升级 Codex CLI**。它精确固定在 `0.166.0`，协议没有版本协商；
   升级需要单独评估并重跑 `npm run gen:codex-types`。
 - 不要在 PR 里提交 `.vibemobile/`、`certs/`、`release/`、`runner-credentials.json`
   或任何真实凭据。

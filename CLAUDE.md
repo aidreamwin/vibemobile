@@ -261,7 +261,7 @@ vendor chunk，`chunkSizeWarningLimit` 是 500 kB。把 xterm 或 `react-markdow
 
 ### Codex 后端
 
-- **版本精确 pin 在 `0.162.1`（根 devDependencies，不带 `^`），升版本必须先得到用户同意** —— 协议没有版本协商，跨版本字段会静默漂移，升级必然伴随一次适配（重跑 `npm run gen:codex-types`、diff 产物、逐条核对措辞）。Dockerfile 从 `package.json` 读它，不要另写一份。
+- **版本精确 pin 在 `0.166.0`（根 devDependencies，不带 `^`），升版本必须先得到用户同意** —— 协议没有版本协商，跨版本字段会静默漂移，升级必然伴随一次适配（重跑 `npm run gen:codex-types`、diff 产物、逐条核对措辞）。Dockerfile 从 `package.json` 读它，不要另写一份。
 - **模型列表就是这个 CLI 二进制的内置目录 —— 「支持新模型」在这份代码里没有可改的地方，只能升上面那一行。** `listModels()` 是纯转发。`supervisor.ts` 用 `require.resolve` 定位二进制，不看 PATH、也不看 `CODEX_CLI_PATH` —— 本机并存的 Codex 桌面 app / VSCode 扩展与本服务无关。`model/list` 默认过滤 `hidden: true`，`listModels()` 传 `{}`，想显示得显式开。
 - **「没有这个线程」只有措辞、没有错误码，所以这条判断必须集中在一处。** 三种措辞（`thread not loaded: <id>` / `no rollout found for thread id <id>` / `is not materialized yet`）全是泛化的 `-32600`，只能匹配文案（`CodexProvider` 顶部那三个谓词）；**措辞不在生成的类型里**，而且**换过**。
 - **不认识的 id 一律翻译成 `providers/types.ts` 的 `SessionNotFoundError`**（`#threadRpc` 统一包一层），路由用 `notFoundOr` 回答 404；`getSession` 按接口约定返回 `null`，404 由路由既有的分支给出。**别让「没有历史」和「没有这个线程」共用一个谓词** —— 混在一起会把「刚建好、还没发消息的会话」（它就真的存在）变成 404。`DELETE` 拿到 404 时前端当成功。
