@@ -16,6 +16,7 @@ import type { AgentInput, ApprovalPolicy, ModelInfo, SandboxMode } from '@vibemo
 import { Button } from './ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { isSendKey } from '../lib/composerKeys'
 import { MAX_IMAGES, prepareImage, type PreparedImage } from '../lib/image'
 import { PERMISSIONS, type PermissionCard } from '../lib/permission'
 import { speechSupported, startDictation, type Dictation } from '../lib/speech'
@@ -454,6 +455,9 @@ export default function Composer({
             void addImages(files)
           }}
           onKeyDown={(event) => {
+            // Enter belongs to the candidate list while an IME is composing;
+            // sending here swallows the character the user is still choosing.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return
             // With the menu up, the arrows pick a command and Enter takes it —
             // the opposite of what the keys do otherwise, which is the
             // convention everywhere else and what makes this usable without a
@@ -475,7 +479,9 @@ export default function Composer({
                 return
               }
             }
-            if (event.key === 'Enter' && !event.shiftKey) {
+            // Enter types a newline on every device; Ctrl/Cmd+Enter and the
+            // send button are the ways out. See lib/composerKeys.ts.
+            if (isSendKey(event.nativeEvent)) {
               event.preventDefault()
               send()
             }
