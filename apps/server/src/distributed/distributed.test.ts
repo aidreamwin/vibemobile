@@ -298,6 +298,21 @@ describe('distributed Hub and two reverse runners', () => {
     }
   })
 
+  it('allows the agent-runtime and app-update endpoints through the tunnel', () => {
+    for (const path of [
+      '/api/agents',
+      '/api/agents/codex/update',
+      '/api/agents/claude/check',
+      '/api/system/update',
+      '/api/system/update/check',
+    ]) {
+      expect(allowedPath(path)).toBe(true)
+    }
+    for (const path of ['/api/agents/codex', '/api/agents/x/delete', '/api/system/other']) {
+      expect(allowedPath(path)).toBe(false)
+    }
+  })
+
   it('rejects non-execution paths and unknown runners', async () => {
     expect((await hub.inject({ url: '/r/r0/api/auth/login', headers: { cookie } })).statusCode).toBe(404)
     // The body shape matters: the custom handler must win over Fastify's
