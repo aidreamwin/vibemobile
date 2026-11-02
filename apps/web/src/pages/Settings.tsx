@@ -277,38 +277,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
 
       <div className="scroll-y min-h-0 flex-1 px-3.5 pb-8">
         <div className="mx-auto max-w-2xl">
-          <Section title="代理">
-            {providers.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">加载中…</div>}
-            {providers.map((provider) => (
-              <InfoRow
-                key={provider.id}
-                label={provider.displayName}
-                value={
-                  <span
-                    className={provider.available && provider.authenticated !== false ? 'text-success' : 'text-warning'}
-                  >
-                    {provider.available ? (provider.authenticated === false ? '未登录' : '可用') : '不可用'}
-                  </span>
-                }
-              >
-                {provider.version && (
-                  <Detail label="版本">
-                    <code>{provider.version}</code>
-                  </Detail>
-                )}
-                {provider.detail && <Detail label="详情">{provider.detail}</Detail>}
-                {!provider.version && !provider.detail && <p>暂无更多信息</p>}
-                {provider.available && provider.authenticated === false && (
-                  <p className="text-warning">
-                    请在执行机器上运行 <code>{LOGIN_COMMAND[provider.id] ?? provider.id}</code>
-                    {LOGIN_FOLLOW_UP[provider.id] ? ' ' + LOGIN_FOLLOW_UP[provider.id] : ''}
-                  </p>
-                )}
-              </InfoRow>
-            ))}
-          </Section>
-
-          <AgentRuntimeSection />
+          <AgentsSection providers={providers} />
 
           <SystemUpdateSection />
 
@@ -846,7 +815,7 @@ function UpdateRow({
  * release. Installing one is a background npm job on the executor, so this row
  * polls while `updating` is true instead of holding a request open.
  */
-function AgentRuntimeSection() {
+function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
   const [agents, setAgents] = useState<AgentRuntimeStatus[]>([])
   const [latest, setLatest] = useState<Record<string, string | null | undefined>>({})
   const [error, setError] = useState<string | null>(null)
@@ -902,49 +871,121 @@ function AgentRuntimeSection() {
     }
   }
 
+  const byId = new Map(agents.map((agent) => [agent.id, agent]))
+  const ids: AgentRuntimeId[] = agents.length
+    ? agents.map((agent) => agent.id)
+    : providers.map((provider) => provider.id as AgentRuntimeId)
+
   return (
-    <Section title="代理运行时">
-      {agents.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">{error ?? '加载中…'}</div>}
-      {agents.map((agent) => {
-        const checked = latest[agent.id]
-        const newer = checked && checked !== agent.active ? checked : null
-        let line: string
-        if (agent.updating) line = '更新中…'
-        else if (!agent.active) line = '未找到可用版本'
-        else if (newer) line = `当前 ${agent.active} → 可升级到 ${newer}`
-        else if (checked === null) line = '检查失败，请重试'
-        else if (checked === agent.active) line = `已是最新（${agent.active}）`
-        else if (agent.satisfied) line = `已是最新（${agent.active}）`
-        else line = `当前 ${agent.active}`
+    <Section title="代理">
+      {ids.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">{error ?? '加载中…'}</div>}
+      {ids.map((id) => {
+        const agent = byId.get(id)
+        const provider = providers.find((item) => item.id === id)
+        const name = agent?.displayName ?? provider?.displayName ?? id
+        const checked = latest[id]
+        const newer = agent && checked && checked !== agent.active ? checked : null
+        const providerState = provider
+          ? provider.available
+            ? provider.authenticated === false
+              ? '未登录'
+              : '可用'
+            : '不可用'
+          : '…'
+        const warn = !provider || !provider.available || provider.authenticated === false || Boolean(agent?.error)
+
+        let line = providerState
+        if (agent?.updating) line = '更新中…'
+        else if (agent && !agent.active) line = `${providerState} · 未找到可用版本`
+        else if (agent) line = `${providerState} · ${agent.active ?? '未知版本'}${newer ? ` → 可升级到 ${newer}` : ''}`
+        else if (checked === null) line = `${providerState} · 检查失败`
 
         return (
-          <div key={agent.id} className="flex min-h-16 items-center gap-3 py-2 pl-4 pr-3">
+          <div key={id} className="flex min-h-16 items-center gap-3 py-2 pl-4 pr-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">{agent.displayName}</div>
-              <div className="truncate text-xs text-muted-foreground">{line}</div>
-              {agent.error && <div className="mt-0.5 text-xs text-destructive">{agent.error}</div>}
+              <div className="text-sm font-medium text-foreground">{name}</div>
+              <div className={`truncate text-xs ${warn ? 'text-warning' : 'text-muted-foreground'}`}>{line}</div>
+              {agent?.error && <div className="mt-0.5 text-xs text-destructive">{agent.error}</div>}
             </div>
-            {agent.updating ? (
-              <span className="text-xs text-muted-foreground">更新中…</span>
-            ) : newer ? (
-              <Button type="button" size="sm" disabled={busy === agent.id} onClick={() => void update(agent.id)}>
-                升级到 {newer}
-              </Button>
-            ) : agent.satisfied ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={checking === agent.id}
-                onClick={() => void check(agent.id)}
-              >
-                {checking === agent.id ? '检查中…' : checked === null ? '重试' : '检查更新'}
-              </Button>
-            ) : (
-              <Button type="button" size="sm" disabled={busy === agent.id} onClick={() => void update(agent.id)}>
-                升级
-              </Button>
-            )}
+
+            {agent &&
+              (agent.updating ? (
+                <span className="text-xs text-muted-foreground">更新中…</span>
+              ) : newer ? (
+                <Button type="button" size="sm" disabled={busy === id} onClick={() => void update(id)}>
+                  升级到 {newer}
+                </Button>
+              ) : agent.satisfied ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={checking === id}
+                  onClick={() => void check(id)}
+                >
+                  {checking === id ? '检查中…' : checked === null ? '重试' : '检查更新'}
+                </Button>
+              ) : (
+                <Button type="button" size="sm" disabled={busy === id} onClick={() => void update(id)}>
+                  升级
+                </Button>
+              ))}
+
+            <Popover.Root>
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label={`${name}详情`}
+                  className="tap shrink-0 rounded-xl text-muted-foreground/60 transition-colors active:bg-secondary data-[state=open]:text-primary"
+                >
+                  <Info aria-hidden="true" className="size-4" strokeWidth={1.7} />
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  aria-label={`${name}详情`}
+                  side="top"
+                  align="end"
+                  sideOffset={6}
+                  collisionPadding={12}
+                  onOpenAutoFocus={(event) => event.preventDefault()}
+                  className="z-50 max-h-[var(--radix-popover-content-available-height)] w-72 max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-border bg-popover px-3.5 py-3 text-xs leading-relaxed text-muted-foreground shadow-xl outline-none [overflow-wrap:anywhere]"
+                >
+                  <div className="mb-2 font-medium text-foreground">{name}</div>
+                  <div className="space-y-2">
+                    {provider?.version && (
+                      <Detail label="代理版本">
+                        <code>{provider.version}</code>
+                      </Detail>
+                    )}
+                    {provider?.detail && <Detail label="详情">{provider.detail}</Detail>}
+                    {agent && (
+                      <Detail label="运行时版本">
+                        <code>{agent.active ?? '未找到'}</code>
+                      </Detail>
+                    )}
+                    {agent && (
+                      <Detail label="来源">
+                        {agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知'}
+                      </Detail>
+                    )}
+                    {agent && (
+                      <Detail label="支持范围">
+                        <code>{agent.supported}</code>
+                      </Detail>
+                    )}
+                    {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
+                    {provider?.available && provider.authenticated === false && (
+                      <p className="text-warning">
+                        请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
+                        {LOGIN_FOLLOW_UP[id] ? ` ${LOGIN_FOLLOW_UP[id]}` : ''}
+                      </p>
+                    )}
+                  </div>
+                  <Popover.Arrow className="fill-popover" width={10} height={5} />
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
           </div>
         )
       })}
@@ -952,7 +993,7 @@ function AgentRuntimeSection() {
         只下载到执行机器，不重建也不重启 VibeMobile。更新 Codex 会重启 app-server，正在执行的任务会中断；Claude
         在下一回合生效。
       </div>
-      {error && agents.length > 0 && <div className="px-4 pb-2 text-xs text-destructive">{error}</div>}
+      {error && ids.length > 0 && <div className="px-4 pb-2 text-xs text-destructive">{error}</div>}
     </Section>
   )
 }
