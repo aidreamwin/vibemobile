@@ -45,7 +45,7 @@ describe('deploymentInfo', () => {
     vi.stubEnv('NODE_APP_INSTANCE', '0')
     const dir = temp()
     writeEnv(dir, 'VIBEMOBILE_ROLE=hub\n')
-    const info = deploymentInfo(config(dir), built)
+    const info = deploymentInfo(config(dir), built, { docker: false })
     expect(info).toMatchObject({ manager: 'pm2', scope: 'hub', role: 'hub', supported: true, reason: null })
   })
 
@@ -54,7 +54,11 @@ describe('deploymentInfo', () => {
     vi.stubEnv('NODE_APP_INSTANCE', '0')
     const dir = temp()
     writeEnv(dir, 'VIBEMOBILE_ROLE=runner\nVIBEMOBILE_HUB_URL=wss://hub.example\n')
-    expect(deploymentInfo(config(dir), built)).toMatchObject({ manager: 'pm2', scope: 'runner', role: 'runner' })
+    expect(deploymentInfo(config(dir), built, { docker: false })).toMatchObject({
+      manager: 'pm2',
+      scope: 'runner',
+      role: 'runner',
+    })
   })
 
   it('marks the Hub default runner as shared and not independently updatable', () => {
@@ -63,7 +67,7 @@ describe('deploymentInfo', () => {
     vi.stubEnv('VIBEMOBILE_DEFAULT_RUNNER_CHILD', '1')
     const dir = temp()
     writeEnv(dir, 'VIBEMOBILE_ROLE=hub\n')
-    expect(deploymentInfo(config(dir), built)).toMatchObject({
+    expect(deploymentInfo(config(dir), built, { docker: false })).toMatchObject({
       scope: 'runner',
       sharedInstall: true,
       supported: false,
@@ -71,10 +75,22 @@ describe('deploymentInfo', () => {
     })
   })
 
+  it('detects Docker even when PM2-looking env is present', () => {
+    vi.stubEnv('VIBEMOBILE_PM2_NAME', 'vibemobile')
+    vi.stubEnv('NODE_APP_INSTANCE', '0')
+    const dir = temp()
+    writeEnv(dir, 'VIBEMOBILE_ROLE=hub\n')
+    expect(deploymentInfo(config(dir), built, { docker: true })).toMatchObject({
+      manager: 'docker',
+      supported: false,
+      reason: 'docker',
+    })
+  })
+
   it('refuses to self-update outside PM2', () => {
     const dir = temp()
     writeEnv(dir, 'VIBEMOBILE_ROLE=hub\n')
-    const info = deploymentInfo(config(dir), built)
+    const info = deploymentInfo(config(dir), built, { docker: false })
     expect(info.supported).toBe(false)
     expect(info.manualCommand).toBeTruthy()
   })
@@ -84,6 +100,9 @@ describe('deploymentInfo', () => {
     vi.stubEnv('NODE_APP_INSTANCE', '0')
     const dir = temp()
     writeEnv(dir, 'VIBEMOBILE_ROLE=hub\n')
-    expect(deploymentInfo(config(dir, false), built)).toMatchObject({ supported: false, reason: 'update_disabled' })
+    expect(deploymentInfo(config(dir, false), built, { docker: false })).toMatchObject({
+      supported: false,
+      reason: 'update_disabled',
+    })
   })
 })

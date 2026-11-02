@@ -48,13 +48,15 @@ function isDocker(): boolean {
  * would otherwise report itself as the Hub. The explicit child marker from
  * `hub.ts` is what distinguishes "ships with the Hub" from a real runner.
  */
-export function deploymentInfo(config: Config, build: BuildInfo): DeploymentInfo {
+export function deploymentInfo(config: Config, build: BuildInfo, options: { docker?: boolean } = {}): DeploymentInfo {
   const env = readEnvFile(path.join(config.installDir, 'vibemobile.env'))
   const role: 'hub' | 'runner' = env.VIBEMOBILE_ROLE === 'runner' || env.VIBEMOBILE_HUB_URL ? 'runner' : 'hub'
   const sharedInstall = process.env.VIBEMOBILE_DEFAULT_RUNNER_CHILD === '1'
   const pm2Name = process.env.VIBEMOBILE_PM2_NAME?.trim() || null
   const pm2Detected = process.env.pm_id !== undefined || process.env.NODE_APP_INSTANCE !== undefined
-  const docker = isDocker()
+  // Injectable because the test suite itself runs inside a Docker container in
+  // CI; `/.dockerenv` would otherwise turn every manager test into "docker".
+  const docker = options.docker ?? isDocker()
 
   let manager: UpdateManager = 'unknown'
   if (docker) manager = 'docker'
