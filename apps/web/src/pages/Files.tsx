@@ -15,6 +15,7 @@ import { isPathInside, parentPath, useWorkspaceStore } from '../lib/workspace'
 import { UnifiedDiff } from '../components/DiffView'
 import FileBody, { isRenderable } from '../components/FileBody'
 import FileEditor, { MAX_EDIT_LINES } from '../components/FileEditor'
+import { useDocumentTitle } from '../lib/title'
 
 type View =
   | { kind: 'list'; path: string }
@@ -75,6 +76,13 @@ export default function Files() {
   // Picked up from the last visit to this page, if there was one — which is the
   // whole point: the root of the workspace is the fallback, not the default.
   const [view, setView] = useState<View>(() => lastView ?? { kind: 'list', path: '' })
+  useDocumentTitle(
+    view.kind === 'file'
+      ? view.name
+      : view.kind === 'list'
+        ? view.path.split(/[\\/]/).filter(Boolean).pop() || '文件'
+        : '改动',
+  )
 
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [content, setContent] = useState<FileContent | null>(null)

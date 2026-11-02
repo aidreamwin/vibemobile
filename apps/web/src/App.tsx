@@ -7,7 +7,8 @@ import BottomNav from './components/BottomNav'
 import UpdateBanner from './components/UpdateBanner'
 import { Button } from './components/ui/button'
 import { useWorkspaceStore } from './lib/workspace'
-import { runnerId, runnerSwitchUrl } from './lib/runner'
+import { pathAfterScope, runnerId, runnerSwitchUrl } from './lib/runner'
+import { routeTitle, useDocumentTitle } from './lib/title'
 
 // The landing page stays eager; everything else is fetched when its route is
 // opened. That keeps xterm (Terminal) and react-markdown (Chat / Files) out of
@@ -34,6 +35,9 @@ export default function App() {
   /** Bumped by the retry button; the effect below re-runs on it. */
   const [bootAttempt, setBootAttempt] = useState(0)
   const location = useLocation()
+  // A runner prefix is part of every path under /r/<id>; the title is the same
+  // page either way. Pages with real content override this below.
+  useDocumentTitle(routeTitle(pathAfterScope(location.pathname)))
   const loadWorkspace = useWorkspaceStore((state) => state.load)
 
   useEffect(() => {

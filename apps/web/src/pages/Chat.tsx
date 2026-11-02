@@ -13,6 +13,7 @@ import {
   type ExportMode,
 } from '../lib/exportMarkdown'
 import { indexTurns } from '../lib/turnIndex'
+import { useDocumentTitle } from '../lib/title'
 import { Button } from '../components/ui/button'
 import ChatHeader from '../components/ChatHeader'
 import ChatItemList from '../components/ChatItemList'
@@ -81,6 +82,7 @@ export default function Chat() {
   const navigate = useNavigate()
 
   const [session, setSession] = useState<SessionSummary | null>(null)
+  useDocumentTitle(session?.title || '对话')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [showDiff, setShowDiff] = useState(false)
