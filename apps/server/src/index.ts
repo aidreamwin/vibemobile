@@ -15,6 +15,7 @@ import { registerSessionRoutes } from './routes/sessions.js'
 import { registerFileRoutes } from './routes/files.js'
 import { registerImageRoutes } from './routes/images.js'
 import { registerHealthRoutes } from './routes/health.js'
+import { registerAgentRoutes } from './routes/agents.js'
 import { registerHub } from './ws/hub.js'
 import { registerTerminal } from './ws/terminal.js'
 
@@ -54,6 +55,8 @@ registry.log = (message, detail) => app.log.warn({ detail }, message)
 const codex = new CodexProvider({
   port: config.codex.port,
   attachUrl: config.codex.attachUrl,
+  bin: config.codex.bin,
+  agentsDir: config.agentsDir,
   workspaceRoots: config.workspaceRoots,
   stateDir: config.stateDir,
   onLog: (line) => app.log.debug(line),
@@ -72,6 +75,7 @@ registry.register(codex)
 const claude = new ClaudeProvider({
   workspaceRoots: config.workspaceRoots,
   stateDir: config.stateDir,
+  agentsDir: config.agentsDir,
   onLog: (line) => app.log.debug(line),
   // Warn rather than debug: this is the line that says a session came back on
   // a level that acts without asking, and the deployment runs at `info`.
@@ -94,6 +98,7 @@ app.addHook('onClose', async () => {
 
 registerHealthRoutes(app, config)
 registerAuthRoutes(app, config)
+registerAgentRoutes(app, config, codex)
 registerSessionRoutes(app, config)
 registerFileRoutes(app, config)
 registerImageRoutes(app, config)

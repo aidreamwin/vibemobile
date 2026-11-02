@@ -35,6 +35,12 @@ export interface Config {
     bin?: string
   }
   stateDir: string
+  /**
+   * Runtime packs live here, one directory per agent version, with a `current`
+   * link. Separate from node_modules so an agent update never has to reinstall
+   * the app.
+   */
+  agentsDir: string
   /** Where built web assets live, served as the SPA. */
   webDist: string
   /**
@@ -260,6 +266,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
       bin: env('CODEX_BIN'),
     },
     stateDir,
+    agentsDir: path.resolve(env('VIBEMOBILE_AGENTS_DIR') ?? path.join(stateDir, 'agents')),
     webDist: env('VIBEMOBILE_WEB_DIST') ?? path.resolve(root, 'apps/web/dist'),
     trustProxy: boolEnv('VIBEMOBILE_TRUST_PROXY'),
     terminal: {

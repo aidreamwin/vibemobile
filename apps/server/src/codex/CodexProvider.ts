@@ -54,6 +54,10 @@ import { capImages, MAX_PER_MESSAGE, ImageStore } from '../images/store.js'
 export interface CodexProviderOptions {
   attachUrl?: string
   port?: number
+  /** Explicit Codex entry point (CODEX_BIN), overriding runtime packs. */
+  bin?: string
+  /** Runtime packs directory; the app-server reads `current` on every spawn. */
+  agentsDir?: string
   /** Workspace roots the agent may operate in. First entry is the default. */
   workspaceRoots: string[]
   /**
@@ -196,6 +200,8 @@ export class CodexProvider extends EventEmitter {
     this.#supervisor = new AppServerSupervisor({
       attachUrl: opts.attachUrl,
       port: opts.port,
+      bin: opts.bin,
+      agentsDir: opts.agentsDir,
       onLog: opts.onLog,
     })
     this.#client = new AppServerClient({ url: this.#supervisor.url })
@@ -375,6 +381,16 @@ export class CodexProvider extends EventEmitter {
     await this.#client.close()
     await this.#supervisor.stop()
     this.#started = false
+  }
+
+  /**
+   * Respawning picks up a newly switched runtime pack. The client reconnects on
+   * its own and `reconnected` makes the caller re-subscribe; any turn that was
+   * in flight is lost.
+   */
+  async restartAppServer(): Promise<void> {
+    if (!this.#started) return
+    await this.#supervisor.restart()
   }
 
   /** Subscribe to normalized events. Returns an unsubscribe function. */

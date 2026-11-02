@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 - 改仓库的操作手册，整份载入上下文；只写「怎么做/怎么验」和「删掉就会静默写错」的约束。
-- 文档地图：[README](README.md) · [架构](docs/architecture.md) · [部署](docs/deployment.md) · [限制](docs/limitations.md) · [发布](docs/releasing.md) · [安全](SECURITY.md) · [贡献](CONTRIBUTING.md)
+- 文档地图：[README](README.md) · [架构](docs/architecture.md) · [部署](docs/deployment.md) · [限制](docs/limitations.md) · [发布](docs/releasing.md) · [代理运行时](docs/agent-runtime.md) · [安全](SECURITY.md) · [贡献](CONTRIBUTING.md)
 ## 文档与代码治理（严格执行）
 
 #### 文档
@@ -59,6 +59,12 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 
 - Claude session id 本地 `randomUUID()`，首回合经 `options.sessionId` 交给 CLI。
 - `config.ts` 的 `repoRoot()` 从模块位置往上找含 `workspaces` 的 package.json，不从 cwd（workspace 脚本 cwd 是 `apps/server`，会解析出第二个 `.vibemobile/`）；`packages/protocol` 不发产物、只被 `import type`，改它不用构建。
+### 代理运行时（`agents/`）
+- 二进制约在 `<stateDir>/agents/<id>/<version>`，`current` 是 junction/symlink；升级只换目录，不碰应用 `node_modules`。
+- 版本范围（`~x.y.z`）只从 [manifest.ts](apps/server/src/agents/manifest.ts) 来，npm 解析最新补丁；客户端只能选 id，别加「latest」，minor/major 变更必须改 manifest（要重新验证协议措辞）。
+- Codex 换包后 `supervisor.restart()` 是进程级重启，进行中回合并丢；Claude 下一回合自动生效；新包起不来必须回滚 `current`。
+- 解析优先级：`CODEX_BIN` → pack → 内置 → PATH；Claude 走 SDK 的 `pathToClaudeCodeExecutable`。
+- 更新是后台 job（`GET /api/agents` 轮询）；npm 用 `npm-cli.js` 直跑，别走 shell（安装路径可能带空格）。
 ### 会话路由
 - `providers/registry.ts` 维护 `sessionId → providerId`：每个学到 id 的路径 `bind()`，未命中才挨个问 provider，兜底 `default`；`registry.default` = 第一个注册的 provider（Codex）—— `index.ts` 注册顺序有意义。
 - `/api/sessions` 不带 `provider` = 只有 Codex（旧契约）；全部要显式 `?provider=all`（逐 provider 拉、按 `updatedAt` 合并，单个抛错记 warn 当空）；未知 provider 兜底 `default`（200）；`all` 故意不进 `packages/protocol`（纯类型，服务端不引 runtime）。

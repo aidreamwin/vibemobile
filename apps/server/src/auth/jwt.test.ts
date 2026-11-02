@@ -15,6 +15,7 @@ function config(sessionVersion: number): Config {
     workspaceRoots: [],
     codex: { port: 0 },
     stateDir: '',
+    agentsDir: '',
     webDist: '',
     trustProxy: false,
     terminal: { enabled: false, shell: '', idleTimeoutMs: 1_000 },

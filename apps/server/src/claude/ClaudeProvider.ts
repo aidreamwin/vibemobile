@@ -90,6 +90,7 @@ import {
   sdkVersion,
   withTimeout,
 } from './runtime.js'
+import { resolveClaudeBin } from '../agents/runtime.js'
 import { buildTurns, MAX_CURSOR_SKIP, readTranscriptMessages, UUID_RE } from './transcript.js'
 import { TurnInput } from './turnInput.js'
 
@@ -102,6 +103,8 @@ export interface ClaudeProviderOptions {
    * Claude side needs this at all when Codex does not.
    */
   stateDir?: string
+  /** Runtime packs directory; `current` is re-read on every spawn. */
+  agentsDir?: string
   onLog?: (line: string) => void
   /**
    * For the few lines an operator should see at the default log level. `onLog`
@@ -249,6 +252,8 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
    * holds no in-memory state (see `images/store.ts`).
    */
   #images?: ImageStore
+  /** Where runtime packs live, or undefined to always use the SDK's bundled CLI. */
+  #agentsDir?: string
   /** Learned from the first `system:init`; until then probe reports the SDK's. */
   #cliVersion: string | null = null
   /**
@@ -273,6 +278,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       opts.onLog,
     )
     this.#images = opts.stateDir ? new ImageStore(path.join(opts.stateDir, 'images'), opts.onLog) : undefined
+    this.#agentsDir = opts.agentsDir
   }
 
   /**
@@ -1457,8 +1463,12 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
   // --------------------------------------------------------------- helpers
 
   #baseOptions(cwd: string): Options {
+    // Re-resolved per spawn: a runtime pack switched from the settings page
+    // must be used by the very next turn. Null means the SDK's bundled CLI.
+    const executable = resolveClaudeBin(this.#agentsDir)
     return {
       cwd,
+      ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       // The entire streaming design rests on this. Without it the SDK reports
       // whole messages only, and there is nothing for the phone to animate.
       includePartialMessages: true,

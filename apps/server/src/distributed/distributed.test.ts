@@ -29,6 +29,7 @@ const config: Config = {
   workspaceRoots: [],
   codex: { port: 0 },
   stateDir: '',
+  agentsDir: '',
   webDist: 'missing-test-web-dist',
   trustProxy: false,
   terminal: { enabled: true, shell: '', idleTimeoutMs: 60_000 },

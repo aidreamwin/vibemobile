@@ -1,4 +1,7 @@
 import type {
+  AgentsResponse,
+  AgentRuntimeId,
+  AgentRuntimeStatus,
   CreateSessionOptions,
   FileContent,
   FileEntry,
@@ -102,6 +105,13 @@ export const api = {
   // Settings rather than cached: its whole point is to report what the process
   // loaded *right now*, and a cached answer would keep saying "old" after a restart.
   health: () => request<HealthResponse>('/api/health'),
+
+  // ---- agent runtime packs ----
+  // Scoped to the current runner on purpose: the pack is installed where the
+  // agent actually runs, not on the Hub that happens to serve this page.
+  agents: () => request<AgentsResponse>('/api/agents'),
+  updateAgent: (id: AgentRuntimeId) =>
+    request<{ data: AgentRuntimeStatus[] }>(`/api/agents/${id}/update`, { method: 'POST' }),
 
   // ---- providers ----
   providers: () => request<{ data: ProviderStatus[]; default: string | null }>('/api/providers'),

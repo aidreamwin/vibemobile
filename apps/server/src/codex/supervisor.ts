@@ -9,12 +9,8 @@
  * WS listener without auth, and we never want this port reachable anyway.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import path from 'node:path'
 import { EventEmitter } from 'node:events'
-
-const require = createRequire(import.meta.url)
+import { resolveCodexBin } from '../agents/runtime.js'
 
 export interface SupervisorOptions {
   /** When set, we attach to this URL instead of spawning. */
@@ -25,62 +21,25 @@ export interface SupervisorOptions {
   extraArgs?: string[]
   /** Working directory for the app-server process itself. */
   cwd?: string
+  /** Explicit Codex entry point (CODEX_BIN). Wins over runtime packs. */
+  bin?: string
+  /** Runtime packs directory; `current` is re-read on every spawn. */
+  agentsDir?: string
   onLog?: (line: string) => void
 }
 
-/**
- * The native executable inside `@openai/codex`'s optional platform packages.
- * Mirrors `bin/codex.js` (pinned with the CLI version) so we can spawn the
- * binary directly.
- *
- * Why not the launcher: `codex.js` spawns the native binary without
- * `windowsHide`, and the grandchild then gets its own console window when the
- * parent has none (PM2, a Windows service). Spawning the binary ourselves with
- * `windowsHide: true` is the only way to keep that window from appearing.
- */
-const PLATFORM_BINARIES: Record<string, { package: string; triple: string; file: string }> = {
-  'linux-x64': { package: '@openai/codex-linux-x64', triple: 'x86_64-unknown-linux-musl', file: 'codex' },
-  'linux-arm64': { package: '@openai/codex-linux-arm64', triple: 'aarch64-unknown-linux-musl', file: 'codex' },
-  'darwin-x64': { package: '@openai/codex-darwin-x64', triple: 'x86_64-apple-darwin', file: 'codex' },
-  'darwin-arm64': { package: '@openai/codex-darwin-arm64', triple: 'aarch64-apple-darwin', file: 'codex' },
-  'win32-x64': { package: '@openai/codex-win32-x64', triple: 'x86_64-pc-windows-msvc', file: 'codex.exe' },
-  'win32-arm64': { package: '@openai/codex-win32-arm64', triple: 'aarch64-pc-windows-msvc', file: 'codex.exe' },
-}
-
-/**
- * Locate the codex entry point without relying on PATH or shell shims.
- * Prefers the native binary; falls back to `bin/codex.js` (for installs where
- * the optional platform package was skipped) and finally to PATH.
- */
-function resolveCodexBin(): { cmd: string; args: string[] } {
-  const target = PLATFORM_BINARIES[`${process.platform}-${process.arch}`]
-  if (target) {
-    try {
-      const pkg = require.resolve(`${target.package}/package.json`)
-      const binary = path.join(path.dirname(pkg), 'vendor', target.triple, 'bin', target.file)
-      if (existsSync(binary)) return { cmd: binary, args: [] }
-    } catch {
-      // Optional dependency absent — fall through to the JS launcher.
-    }
-  }
-  try {
-    const pkg = require.resolve('@openai/codex/package.json')
-    const shim = path.join(path.dirname(pkg), 'bin', 'codex.js')
-    return { cmd: process.execPath, args: [shim] }
-  } catch {
-    // Fall back to PATH.
-    return { cmd: 'codex', args: [] }
-  }
-}
-
 export class AppServerSupervisor extends EventEmitter {
-  #opts: Required<Omit<SupervisorOptions, 'attachUrl' | 'onLog'>> & {
+  #opts: Required<Omit<SupervisorOptions, 'attachUrl' | 'bin' | 'agentsDir' | 'onLog'>> & {
+    bin?: string
+    agentsDir?: string
     attachUrl?: string
     onLog?: (line: string) => void
   }
   #child?: ChildProcess
   #stopping = false
   #restarts = 0
+  /** Pending crash-backoff spawn, so restart() can cancel it. */
+  #restartTimer?: NodeJS.Timeout
 
   constructor(opts: SupervisorOptions = {}) {
     super()
@@ -113,7 +72,16 @@ export class AppServerSupervisor extends EventEmitter {
   }
 
   #spawn() {
-    const { cmd, args } = resolveCodexBin()
+    // A backoff timer may already be waiting to do this; two children would
+    // fight over the listen port and restart-loop each other.
+    if (this.#child) return
+    if (this.#restartTimer) {
+      clearTimeout(this.#restartTimer)
+      this.#restartTimer = undefined
+    }
+    // Resolved on every spawn, never cached: switching a runtime pack's
+    // `current` must take effect on the respawn that follows the update.
+    const { cmd, args } = resolveCodexBin({ bin: this.#opts.bin, agentsDir: this.#opts.agentsDir })
     const fullArgs = [
       ...args,
       'app-server',
@@ -152,7 +120,8 @@ export class AppServerSupervisor extends EventEmitter {
       const delay = Math.min(500 * 2 ** this.#restarts, 15_000)
       this.#restarts++
       this.#log(`restarting app-server in ${delay}ms`)
-      setTimeout(() => {
+      this.#restartTimer = setTimeout(() => {
+        this.#restartTimer = undefined
         if (this.#stopping) return
         this.#spawn()
       }, delay)
@@ -187,8 +156,41 @@ export class AppServerSupervisor extends EventEmitter {
     else this.emit('log', line)
   }
 
+  /**
+   * Replace the running app-server with a fresh spawn, picking up whatever the
+   * runtime pack's `current` points at now.
+   *
+   * Deliberately not `stop()` + `start()`: `stop()` leaves `#stopping` set, so
+   * the exit handler would swallow the respawn. In-flight turns are lost — the
+   * caller warns the user before asking for this.
+   */
+  async restart(): Promise<void> {
+    if (this.#opts.attachUrl) return
+    const child = this.#child
+    if (child) {
+      this.#stopping = true
+      await new Promise<void>((resolve) => {
+        const done = () => resolve()
+        child.once('exit', done)
+        child.kill()
+        setTimeout(() => {
+          if (this.#child) this.#child.kill('SIGKILL')
+          resolve()
+        }, 5_000)
+      })
+      this.#stopping = false
+    }
+    this.#restarts = 0
+    this.#spawn()
+    await this.#waitForReady()
+  }
+
   async stop(): Promise<void> {
     this.#stopping = true
+    if (this.#restartTimer) {
+      clearTimeout(this.#restartTimer)
+      this.#restartTimer = undefined
+    }
     const child = this.#child
     if (!child) return
     await new Promise<void>((resolve) => {

@@ -3,7 +3,14 @@ import RunnerSelector from '../components/RunnerSelector'
 import { useCallback, useEffect, useState } from 'react'
 import { Popover } from 'radix-ui'
 import { ChevronRight, FolderOpen, Info, LogOut, MoreVertical, Settings as SettingsIcon } from 'lucide-react'
-import type { BuildInfo, HealthResponse, ProviderStatus, RunnerInfo } from '@vibemobile/protocol'
+import type {
+  AgentRuntimeId,
+  AgentRuntimeStatus,
+  BuildInfo,
+  HealthResponse,
+  ProviderStatus,
+  RunnerInfo,
+} from '@vibemobile/protocol'
 import { api } from '../lib/api'
 import { runnerId, runnerSwitchUrl } from '../lib/runner'
 import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
@@ -298,6 +305,8 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
               </InfoRow>
             ))}
           </Section>
+
+          <AgentRuntimeSection />
 
           <Section title="工作区">
             <div className="flex min-w-0 items-center pl-4 pr-1">
@@ -648,6 +657,85 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
         </Sheet>
       )}
     </div>
+  )
+}
+
+/**
+ * Agent runtime packs: the model processes' binaries, separate from this app's
+ * release. Installing one is a background npm job on the executor, so this row
+ * polls while `updating` is true instead of holding a request open.
+ */
+function AgentRuntimeSection() {
+  const [agents, setAgents] = useState<AgentRuntimeStatus[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<AgentRuntimeId | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      setAgents((await api.agents()).data)
+      setError(null)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const updating = agents.some((agent) => agent.updating)
+  useEffect(() => {
+    if (!updating) return
+    const timer = setInterval(() => void load(), 1500)
+    return () => clearInterval(timer)
+  }, [updating, load])
+
+  async function update(id: AgentRuntimeId) {
+    setBusy(id)
+    setError(null)
+    try {
+      setAgents((await api.updateAgent(id)).data)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Section title="代理运行时">
+      {agents.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">{error ?? '加载中…'}</div>}
+      {agents.map((agent) => {
+        return (
+          <div key={agent.id} className="flex min-h-16 items-center gap-3 py-2 pl-4 pr-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">{agent.displayName}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {agent.active
+                  ? `${agent.active} · ${agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知来源'}`
+                  : '未找到'}
+                {agent.satisfied ? '' : ` · 支持 ${agent.supported}`}
+              </div>
+              {agent.error && <div className="mt-0.5 text-xs text-destructive">{agent.error}</div>}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={agent.satisfied ? 'outline' : 'default'}
+              disabled={agent.updating || busy === agent.id}
+              onClick={() => void update(agent.id)}
+            >
+              {agent.updating ? '更新中…' : agent.satisfied ? '检查更新' : '更新'}
+            </Button>
+          </div>
+        )
+      })}
+      <div className="px-4 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        只下载到执行机器，不重建也不重启 VibeMobile。更新 Codex 会重启 app-server，正在执行的任务会中断；Claude
+        在下一回合生效。
+      </div>
+      {error && agents.length > 0 && <div className="px-4 pb-2 text-xs text-destructive">{error}</div>}
+    </Section>
   )
 }
 

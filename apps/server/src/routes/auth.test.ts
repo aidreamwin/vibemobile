@@ -25,6 +25,7 @@ beforeEach(() => {
     workspaceRoots: [],
     codex: { port: 0 },
     stateDir: dir,
+    agentsDir: dir,
     webDist: '',
     trustProxy: false,
     terminal: { enabled: false, shell: '', idleTimeoutMs: 1_000 },

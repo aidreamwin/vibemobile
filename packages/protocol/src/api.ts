@@ -23,6 +23,40 @@ export interface ProviderStatus {
   detail?: string
 }
 
+// ------------------------------------------------------------ agent runtime
+
+/**
+ * Runtime packs let the agent binaries update without reinstalling the app.
+ *
+ * `source` is the half that matters: `runtime` means the process is using a
+ * pack under `<stateDir>/agents`, `bundled` means it fell back to the copy in
+ * `node_modules`, and `missing` means neither could be resolved. A pack that is
+ * installed but not active is listed in `installed`, not in `active`.
+ */
+export type AgentRuntimeId = 'codex' | 'claude'
+
+export interface AgentRuntimeStatus {
+  id: AgentRuntimeId
+  displayName: string
+  /** Version executing right now, or null when nothing usable was found. */
+  active: string | null
+  source: 'runtime' | 'bundled' | 'missing'
+  /** Patch-level range this build supports and installs, e.g. `~0.166.0`. */
+  supported: string
+  /** Whether `active` falls inside `supported`. */
+  satisfied: boolean
+  /** Versions already installed as runtime packs. */
+  installed: string[]
+  /** An install/switch job is in flight. */
+  updating: boolean
+  /** Last job failure; cleared when a new one starts. */
+  error: string | null
+}
+
+export interface AgentsResponse {
+  data: AgentRuntimeStatus[]
+}
+
 export interface ModelInfo {
   id: string
   displayName: string
