@@ -2,7 +2,18 @@ import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import { useCallback, useEffect, useState } from 'react'
 import { Popover } from 'radix-ui'
-import { ChevronRight, FolderOpen, Info, LogOut, MoreVertical, Settings as SettingsIcon } from 'lucide-react'
+import {
+  ArrowUpCircle,
+  ChevronRight,
+  CircleAlert,
+  FolderOpen,
+  Info,
+  LoaderCircle,
+  LogOut,
+  MoreVertical,
+  RefreshCw,
+  Settings as SettingsIcon,
+} from 'lucide-react'
 import type {
   AgentRuntimeId,
   AgentRuntimeStatus,
@@ -13,6 +24,8 @@ import type {
   UpdateStatus,
 } from '@vibemobile/protocol'
 import { errorLabel, jobRunning, phaseLabel, useSystemStore } from '../lib/system'
+import CopyButton from '../components/CopyButton'
+import { Hint } from '../components/ui/tooltip'
 import { api } from '../lib/api'
 import { runnerId, runnerSwitchUrl } from '../lib/runner'
 import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
@@ -634,12 +647,12 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
 }
 
 const UPDATE_REASONS: Record<string, string> = {
-  docker: 'Docker 部署请在宿主机更新',
-  windows_service: 'Windows 服务部署请运行更新脚本',
-  development_mode: '开发模式不支持一键升级',
-  standalone: '当前部署方式不支持一键升级',
-  update_disabled: '更新已被关闭（VIBEMOBILE_UPDATE=off）',
-  update_via_hub: '随 Hub 一起升级',
+  docker: 'Docker · 宿主机更新',
+  windows_service: 'Windows 服务 · 更新脚本',
+  development_mode: '开发模式',
+  standalone: '不支持一键升级',
+  update_disabled: '更新已关闭',
+  update_via_hub: '随 Hub 升级',
 }
 
 function SystemUpdateSection() {
@@ -756,51 +769,79 @@ function UpdateRow({
   const latest = status.latest?.serverVersion
 
   let line: string
-  if (status.sharedInstall) line = '随 Hub 一起升级'
+  if (status.sharedInstall) line = '随 Hub 升级'
   else if (!status.supported) line = UPDATE_REASONS[status.reason ?? ''] ?? '不支持一键升级'
   else if (running) line = phaseLabel(job?.phase)
-  else if (failed) line = job?.status === 'rolled_back' ? '升级失败，已回到原版本' : '升级失败'
+  else if (failed) line = job?.status === 'rolled_back' ? '已回滚' : '升级失败'
   else if (status.feedError === 'update_not_configured') line = '未配置更新源'
   else if (status.feedError) line = '无法检查更新'
-  else if (status.updateAvailable && latest) line = `可升级到 ${latest}（当前 ${currentVersion}）`
-  else line = `已是最新（${currentVersion}）`
+  else if (status.updateAvailable && latest) line = `可升级到 ${latest}`
+  else line = `已是最新 · ${currentVersion}`
 
   return (
-    <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">{label}</div>
-          <div className={`truncate text-xs ${failed ? 'text-destructive' : 'text-muted-foreground'}`}>{line}</div>
-        </div>
+    <div className="px-4 py-2.5">
+      <div className="flex min-h-8 items-center gap-2">
+        <span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
+        {failed && <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />}
+        <span className={`min-w-0 flex-1 truncate text-xs ${failed ? 'text-destructive' : 'text-muted-foreground'}`}>
+          {line}
+        </span>
+
         {status.supported &&
           !status.sharedInstall &&
-          !running &&
-          (status.updateAvailable ? (
-            <Button type="button" size="sm" disabled={loading} onClick={onUpgrade}>
-              升级
-            </Button>
+          (running ? (
+            <LoaderCircle aria-label="升级中" className="size-4 shrink-0 animate-spin text-muted-foreground" />
+          ) : status.updateAvailable ? (
+            <Hint content={`升级到 ${latest}`}>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="tap text-primary"
+                disabled={loading}
+                onClick={onUpgrade}
+                aria-label="升级"
+              >
+                <ArrowUpCircle className="size-4" />
+              </Button>
+            </Hint>
           ) : status.feedError === 'update_not_configured' ? null : (
-            <Button type="button" size="sm" variant="outline" disabled={loading} onClick={onCheck}>
-              检查更新
-            </Button>
+            <Hint content="检查更新">
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="tap"
+                disabled={loading}
+                onClick={onCheck}
+                aria-label="检查更新"
+              >
+                <RefreshCw className="size-4" />
+              </Button>
+            </Hint>
           ))}
+
+        {!status.supported && !status.sharedInstall && status.manualCommand && (
+          <Hint content={<span className="break-all font-mono">{status.manualCommand}</span>}>
+            <span>
+              <CopyButton getText={() => status.manualCommand ?? ''} label="复制更新命令" />
+            </span>
+          </Hint>
+        )}
       </div>
 
-      {!status.supported && !status.sharedInstall && status.manualCommand && (
-        <code className="mt-1.5 block break-all text-[11px] text-muted-foreground">{status.manualCommand}</code>
-      )}
       {status.feedError === 'update_not_configured' && (
-        <p className="mt-1 text-[11px] text-muted-foreground">还没有配置更新源（VIBEMOBILE_UPDATE_*）。</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">配置 VIBEMOBILE_UPDATE_* 后可一键升级</p>
       )}
       {status.feedError && status.feedError !== 'update_not_configured' && (
-        <p className="mt-1 text-[11px] text-destructive">{errorLabel(status.feedError)}</p>
+        <p className="mt-0.5 text-[11px] text-destructive">{errorLabel(status.feedError)}</p>
       )}
-      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
-      {failed && job?.error && <p className="mt-1 text-[11px] text-destructive">{errorLabel(job.error)}</p>}
+      {error && <p className="mt-0.5 text-[11px] text-destructive">{error}</p>}
+      {failed && job?.error && <p className="mt-0.5 text-[11px] text-destructive">{errorLabel(job.error)}</p>}
 
       {status.logTail && (failed || running) && (
-        <details className="mt-1">
-          <summary className="text-[11px] text-muted-foreground">详情</summary>
+        <details className="mt-0.5">
+          <summary className="cursor-pointer text-[11px] text-muted-foreground">详情</summary>
           <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
             {status.logTail}
           </pre>
@@ -893,42 +934,75 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
             : '不可用'
           : '…'
         const warn = !provider || !provider.available || provider.authenticated === false || Boolean(agent?.error)
-
-        let line = providerState
-        if (agent?.updating) line = '更新中…'
-        else if (agent && !agent.active) line = `${providerState} · 未找到可用版本`
-        else if (agent) line = `${providerState} · ${agent.active ?? '未知版本'}${newer ? ` → 可升级到 ${newer}` : ''}`
-        else if (checked === null) line = `${providerState} · 检查失败`
+        const dot =
+          !provider || !provider.available
+            ? 'bg-destructive'
+            : provider.authenticated === false
+              ? 'bg-warning'
+              : 'bg-success'
 
         return (
-          <div key={id} className="flex min-h-16 items-center gap-3 py-2 pl-4 pr-1">
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">{name}</div>
-              <div className={`truncate text-xs ${warn ? 'text-warning' : 'text-muted-foreground'}`}>{line}</div>
-              {agent?.error && <div className="mt-0.5 text-xs text-destructive">{agent.error}</div>}
-            </div>
+          <div key={id} className="flex min-h-12 items-center gap-2 pl-4 pr-2">
+            <span className={`size-1.5 shrink-0 rounded-full ${dot}`} aria-hidden />
+            <span className="text-sm font-medium text-foreground">{name}</span>
+            <span className={`text-xs ${warn ? 'text-warning' : 'text-muted-foreground'}`}>{providerState}</span>
+            <span className="font-mono text-[11px] text-muted-foreground/80">{agent?.active ?? '—'}</span>
+            {newer && <span className="truncate text-[11px] text-primary">→ {newer}</span>}
+            <span className="min-w-0 flex-1" />
+
+            {agent?.error && (
+              <Hint content={agent.error}>
+                <span className="shrink-0">
+                  <CircleAlert aria-label="错误" className="size-3.5 text-destructive" />
+                </span>
+              </Hint>
+            )}
 
             {agent &&
               (agent.updating ? (
-                <span className="text-xs text-muted-foreground">更新中…</span>
+                <LoaderCircle aria-label="更新中" className="size-4 shrink-0 animate-spin text-muted-foreground" />
               ) : newer ? (
-                <Button type="button" size="sm" disabled={busy === id} onClick={() => void update(id)}>
-                  升级到 {newer}
-                </Button>
+                <Hint content={`升级到 ${newer}`}>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="tap text-primary"
+                    disabled={busy === id}
+                    onClick={() => void update(id)}
+                    aria-label={`升级到 ${newer}`}
+                  >
+                    <ArrowUpCircle className="size-4" />
+                  </Button>
+                </Hint>
               ) : agent.satisfied ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={checking === id}
-                  onClick={() => void check(id)}
-                >
-                  {checking === id ? '检查中…' : checked === null ? '重试' : '检查更新'}
-                </Button>
+                <Hint content={checked === null ? '检查失败，重试' : '检查更新'}>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="tap"
+                    disabled={checking === id}
+                    onClick={() => void check(id)}
+                    aria-label="检查更新"
+                  >
+                    <RefreshCw className={checking === id ? 'size-4 animate-spin' : 'size-4'} />
+                  </Button>
+                </Hint>
               ) : (
-                <Button type="button" size="sm" disabled={busy === id} onClick={() => void update(id)}>
-                  升级
-                </Button>
+                <Hint content="升级">
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="tap text-primary"
+                    disabled={busy === id}
+                    onClick={() => void update(id)}
+                    aria-label="升级"
+                  >
+                    <ArrowUpCircle className="size-4" />
+                  </Button>
+                </Hint>
               ))}
 
             <Popover.Root>
@@ -975,6 +1049,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                       </Detail>
                     )}
                     {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
+                    <p>只下载到执行机器；Codex 更新会重启 app-server（当前回合中断），Claude 下一回合生效。</p>
                     {provider?.available && provider.authenticated === false && (
                       <p className="text-warning">
                         请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
@@ -989,10 +1064,6 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
           </div>
         )
       })}
-      <div className="px-4 py-2 text-[11px] leading-relaxed text-muted-foreground">
-        只下载到执行机器，不重建也不重启 VibeMobile。更新 Codex 会重启 app-server，正在执行的任务会中断；Claude
-        在下一回合生效。
-      </div>
       {error && ids.length > 0 && <div className="px-4 pb-2 text-xs text-destructive">{error}</div>}
     </Section>
   )
