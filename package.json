@@ -26,6 +26,7 @@
     "smoke": "npm run smoke --workspace=@vibemobile/server",
     "gen:codex-types": "codex app-server generate-ts --out packages/protocol/src/generated --experimental",
     "agents:update": "tsx apps/server/scripts/update-agents.ts",
+    "test:deploy": "node --test deploy/lib/*.test.mjs",
     "gen:hub-certs": "node scripts/generate-hub-certs.mjs",
     "release": "node scripts/release.mjs",
     "lint": "biome check .",

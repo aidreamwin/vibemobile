@@ -22,7 +22,7 @@ export function allowedPath(value: string, ws = false): boolean {
   const pathname = value.split('?')[0]
   if (ws) return pathname === '/ws' || pathname === '/ws/terminal'
   return (
-    /^\/api\/(?:health|features|providers(?:\/[^/]+\/models)?|projects|sessions(?:\/[^/]+(?:\/(?:open|fork))?)?|files(?:\/(?:content|diff))?|images\/[^/]+)$/.test(
+    /^\/api\/(?:health|features|providers(?:\/[^/]+\/models)?|projects|sessions(?:\/[^/]+(?:\/(?:open|fork))?)?|files(?:\/(?:content|diff))?|images\/[^/]+|system\/update(?:\/check)?)$/.test(
       pathname,
     ) && !/%(?:2f|5c|2e)/i.test(pathname)
   )

@@ -87,6 +87,11 @@ Common:
   --force                  overwrite an existing vibemobile.env
   --force-certs            regenerate certificates even if present
   --no-terminal            disable the shell feature
+  --update-api-url=<url>   GitLab API, e.g. https://gitlab.example/api/v4
+  --update-project-id=<id> numeric id or URL-encoded path
+  --update-token-file=<f>  read_api + read_package_registry token (or --update-token)
+  --update-package-name=<n> registry package name (default vibemobile)
+  --update-allow-http      only for a trusted plain-HTTP GitLab
   --allow-root             permit installing as root (not recommended)
   --force-dev              allow running from a git checkout (destroys its node_modules)
 `)
@@ -416,9 +421,26 @@ function openOrigins(scheme) {
   return publicOrigins(hubPort, hosts, scheme).join(',')
 }
 
+function updateEnv() {
+  const values = {}
+  const apiUrl = one(args.updateApiUrl)
+  if (apiUrl) values.VIBEMOBILE_UPDATE_API_URL = String(apiUrl)
+  const projectId = one(args.updateProjectId)
+  if (projectId) values.VIBEMOBILE_UPDATE_PROJECT_ID = String(projectId)
+  const packageName = one(args.updatePackageName)
+  if (packageName) values.VIBEMOBILE_UPDATE_PACKAGE_NAME = String(packageName)
+  const tokenFile = one(args.updateTokenFile)
+  const token = tokenFile ? fs.readFileSync(path.resolve(String(tokenFile)), 'utf8').trim() : one(args.updateToken)
+  if (token) values.VIBEMOBILE_UPDATE_TOKEN = String(token)
+  if (args.updateAllowHttp === true || args.updateAllowHttp === 'true') values.VIBEMOBILE_UPDATE_ALLOW_HTTP = '1'
+  if (Object.keys(values).length) values.VIBEMOBILE_UPDATE = 'on'
+  return values
+}
+
 function hubEnv({ pin }) {
   const values = {
     VIBEMOBILE_ROLE: 'hub',
+    VIBEMOBILE_INSTALL_DIR: ROOT,
     VIBEMOBILE_PM2_NAME: pm2Name,
     PORT: String(hubPort),
     VIBEMOBILE_HOST: '0.0.0.0',
@@ -432,6 +454,7 @@ function hubEnv({ pin }) {
     CODEX_PORT: String(codexPort),
     VIBEMOBILE_TERMINAL: args.noTerminal ? 'off' : 'on',
     VIBEMOBILE_LOG: 'info',
+    ...updateEnv(),
   }
   if (pin) values.VIBEMOBILE_PIN = pin
   if (tls) {
@@ -466,6 +489,7 @@ function runnerEnv() {
   if (hubCa && !fs.existsSync(path.resolve(String(hubCa)))) fail(`--hub-ca does not exist: ${hubCa}`)
   const values = {
     VIBEMOBILE_ROLE: 'runner',
+    VIBEMOBILE_INSTALL_DIR: ROOT,
     VIBEMOBILE_PM2_NAME: pm2Name,
     VIBEMOBILE_HUB_URL: String(hubUrl),
     VIBEMOBILE_RUNNER_ID: String(runnerId),
@@ -476,6 +500,7 @@ function runnerEnv() {
     VIBEMOBILE_ROOTS: joinRoots(workspaces),
     VIBEMOBILE_TERMINAL: args.noTerminal ? 'off' : 'on',
     VIBEMOBILE_LOG: 'info',
+    ...updateEnv(),
   }
   if (hubCa) values.VIBEMOBILE_HUB_CA_FILE = path.resolve(String(hubCa))
   return values

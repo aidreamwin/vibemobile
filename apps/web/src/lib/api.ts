@@ -13,6 +13,8 @@ import type {
   RunnerTokenResponse,
   SessionSummary,
   Transcript,
+  UpdateJob,
+  UpdateStatus,
 } from '@vibemobile/protocol'
 import { runnerPath, type RunnerInfo } from './runner'
 
@@ -27,12 +29,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, options: { hub?: boolean } = {}): Promise<T> {
   // Hub-level endpoints: auth, mode detection and runner management. Everything
-  // else belongs to the runner currently in the URL scope.
+  // else belongs to the runner currently in the URL scope. `hub: true` forces
+  // the Hub even from a runner page (used for the separate Hub update row).
   const hubLevel =
     path.startsWith('/api/auth/') || path === '/api/hub' || path === '/api/runners' || path.startsWith('/api/runners/')
-  const scoped = hubLevel ? path : runnerPath(path)
+  const scoped = options.hub || hubLevel ? path : runnerPath(path)
   const res = await fetch(scoped, {
     // The session lives in an httpOnly cookie.
     credentials: 'include',
@@ -110,8 +113,19 @@ export const api = {
   // Scoped to the current runner on purpose: the pack is installed where the
   // agent actually runs, not on the Hub that happens to serve this page.
   agents: () => request<AgentsResponse>('/api/agents'),
+  checkAgent: (id: AgentRuntimeId) => request<{ latest: string | null }>(`/api/agents/${id}/check`, { method: 'POST' }),
   updateAgent: (id: AgentRuntimeId) =>
     request<{ data: AgentRuntimeStatus[] }>(`/api/agents/${id}/update`, { method: 'POST' }),
+
+  // ---- app update ----
+  // Scoped by default: on the Hub root this is the Hub, under /r/<id>/ it is the
+  // runner. The `hub*` variants are for showing the Hub row from a runner page.
+  systemUpdate: () => request<UpdateStatus>('/api/system/update'),
+  checkSystemUpdate: () => request<UpdateStatus>('/api/system/update/check', { method: 'POST' }),
+  startSystemUpdate: () => request<{ job: UpdateJob }>('/api/system/update', { method: 'POST' }),
+  hubSystemUpdate: () => request<UpdateStatus>('/api/system/update', {}, { hub: true }),
+  hubCheckSystemUpdate: () => request<UpdateStatus>('/api/system/update/check', { method: 'POST' }, { hub: true }),
+  hubStartSystemUpdate: () => request<{ job: UpdateJob }>('/api/system/update', { method: 'POST' }, { hub: true }),
 
   // ---- providers ----
   providers: () => request<{ data: ProviderStatus[]; default: string | null }>('/api/providers'),

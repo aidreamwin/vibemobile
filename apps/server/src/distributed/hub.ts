@@ -76,6 +76,9 @@ if (withDefault) {
           process.env.VIBEMOBILE_DEFAULT_RUNNER_STATE_DIR?.trim() || statePath('runners', defaultId),
         ...defaultTransport,
         VIBEMOBILE_RUNNER_ID: defaultId,
+        // It shares the Hub's install and must never update on its own; the
+        // update service turns this into `update_via_hub`.
+        VIBEMOBILE_DEFAULT_RUNNER_CHILD: '1',
         VIBEMOBILE_RUNNER_TOKEN: defaultToken,
         VIBEMOBILE_RUNNER_PORT: String(runnerPort),
         CODEX_PORT: String(codexPort),

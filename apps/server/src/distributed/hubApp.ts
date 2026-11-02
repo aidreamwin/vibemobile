@@ -8,6 +8,7 @@ import type { Config } from '../config.js'
 import type { CreateRunnerRequest } from '@vibemobile/protocol'
 import { COOKIE_NAME, verifySession } from '../auth/jwt.js'
 import { registerAuthRoutes } from '../routes/auth.js'
+import { registerSystemRoutes } from '../routes/system.js'
 import { requireAuth } from '../routes/guards.js'
 import { RunnerTunnel, RunnerOfflineError } from './tunnel.js'
 import { allowedPath, MAX_BODY, MAX_FRAME, PROTOCOL, RESPONSE_HEADERS } from './wire.js'
@@ -98,6 +99,7 @@ export async function createHub(
       return reply.code(403).send({ error: 'origin_not_allowed' })
   })
   registerAuthRoutes(app, config)
+  registerSystemRoutes(app, config)
   const auth = { preHandler: requireAuth(config) }
   app.get('/api/hub', () => ({ mode: 'hub', protocol: PROTOCOL }))
   app.get('/api/runners', auth, () => ({

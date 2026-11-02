@@ -57,6 +57,8 @@ node /tmp/vbm-update/deploy/update.mjs --target=/opt/vibemobile
 
 完整的替换、健康检查、自动回滚和保留策略见文档。`data/`、`certs/`、`vibemobile.env` 不会被升级修改。
 
+PM2 部署配置好 `VIBEMOBILE_UPDATE_*` 后，也可以直接在网页里一键升级（见 [`docs/app-update.md`](../docs/app-update.md)）；首次仍需上面的手动升级。
+
 ## 只准备不启动
 
 ```bash

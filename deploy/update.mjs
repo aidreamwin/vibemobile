@@ -41,12 +41,21 @@ import {
   writeAtomic,
   copyTree,
 } from './lib/common.mjs'
+import { updateJob } from './lib/job.mjs'
 
 const SOURCE = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const args = parseArgs()
 const dryRun = args.dryRun === true || args.dryRun === 'true'
 const noStart = args.noStart === true || args.noStart === 'true'
+const replaceRelease = args.replaceRelease === true || args.replaceRelease === 'true'
+const jobFile = one(args.jobFile)
+const jobId = one(args.jobId)
 const keep = Math.max(2, Number(one(args.keep) ?? 2))
+
+function jobPhase(phase, status = 'running', error = null) {
+  if (!jobFile || !jobId) return
+  updateJob(String(jobFile), String(jobId), { phase, status, ...(error ? { error } : {}) })
+}
 
 if (args.help === true) {
   log(`Usage: node deploy/update.mjs --target=<install-root> [options]
@@ -56,6 +65,9 @@ if (args.help === true) {
   --no-start         stage and build, write the ecosystem file, do not restart PM2
   --dry-run          validate and print the plan, change nothing
   --name=<pm2-name>  override the name recorded in vibemobile.env
+  --job-file=<file>  update <stateDir>/update-job.json as phases advance
+  --job-id=<id>      only patch a job carrying this id
+  --replace-release  remove a non-active release dir with the same stamp (retry)
 `)
   process.exit(0)
 }
@@ -126,8 +138,20 @@ for (const [key, value] of Object.entries({
 if (nodeMajor() < 20) fail(`Node >= 20 is required, found ${process.versions.node}`)
 if (!npmCliPath() && !hasCommand('npm')) fail('npm not found')
 if (!dryRun && !noStart && !pm2Available()) fail('PM2 is not available to the current user')
+
+const oldEcosystem = fs.existsSync(ecosystemFile) ? fs.readFileSync(ecosystemFile, 'utf8') : null
+const previousDir = ecosystemCwd(oldEcosystem)
 if (!dryRun && fs.existsSync(releaseDir) && fs.readdirSync(releaseDir).length) {
-  fail(`${releaseDir} already exists; remove it or ship a release with a different commit`)
+  if (!replaceRelease) {
+    fail(`${releaseDir} already exists; remove it or ship a release with a different commit`)
+  }
+  const active = readJson(activeFile, undefined)?.active
+  const activePath = typeof active === 'string' ? path.resolve(active) : null
+  if (activePath === releaseDir || previousDir === releaseDir) {
+    fail(`${releaseDir} is the active release; refusing to replace it`)
+  }
+  fs.rmSync(releaseDir, { recursive: true, force: true })
+  ok(`removed the previous failed release: ${releaseDir}`)
 }
 
 if (dryRun) {
@@ -155,6 +179,7 @@ copyTree(SOURCE, releaseDir, (source) => {
   return ['node_modules', 'dist', '.git', '.vibemobile', '.multi-runner', 'certs', 'release'].includes(top)
 })
 
+jobPhase('installing')
 step('Installing dependencies')
 runNpm(['ci', '--include=dev', '--include=optional', '--no-audit', '--no-fund', '--foreground-scripts'], {
   cwd: releaseDir,
@@ -164,6 +189,7 @@ if (!fs.existsSync(path.join(releaseDir, 'node_modules', '@openai', 'codex', 'pa
   fail('Codex CLI was not installed; `npm ci` must include devDependencies')
 if (!fs.existsSync(path.join(releaseDir, 'node_modules', 'node-pty'))) fail('node-pty was not installed')
 
+jobPhase('building')
 step('Building')
 runNpm(['run', 'build', '--workspace=@vibemobile/server'], { cwd: releaseDir })
 run(process.execPath, ['-e', "require('node-pty')"], { cwd: releaseDir })
@@ -189,8 +215,6 @@ ok(`new build: server ${built?.version ?? 'unknown'} ${built?.commit ?? '(no git
 
 // --------------------------------------------------------------- swap
 
-const oldEcosystem = fs.existsSync(ecosystemFile) ? fs.readFileSync(ecosystemFile, 'utf8') : null
-const previousDir = ecosystemCwd(oldEcosystem)
 step('Writing the new ecosystem file')
 ensureDir(logsDir)
 writeAtomic(
@@ -219,14 +243,17 @@ if (oldEcosystem) writeAtomic(path.join(backupDir, 'ecosystem.config.cjs'), oldE
 if (fs.existsSync(activeFile)) fs.copyFileSync(activeFile, path.join(backupDir, 'active-release.json'))
 ok(backupDir)
 
+jobPhase('restarting')
 step('Swapping the PM2 process')
 try {
   pm2Delete(pm2Name)
   await waitForPortsFree(role === 'hub' ? [hubPort, runnerPort, codexPort] : [runnerPort, codexPort])
   pm2Start({ ecosystemFile, cwd: TARGET })
+  jobPhase('healthcheck')
   await healthy()
   writeActive(previousDir)
   prune()
+  jobPhase('done', 'succeeded')
   step('Updated')
   log(`    active:  ${releaseDir}`)
   if (role === 'hub') {
@@ -238,6 +265,7 @@ try {
   }
 } catch (error) {
   warn(`the new release did not come up: ${error.message}`)
+  jobPhase('rolling_back')
   step('Rolling back')
   if (oldEcosystem) {
     try {
@@ -246,12 +274,15 @@ try {
       await waitForPortsFree(role === 'hub' ? [hubPort, runnerPort, codexPort] : [runnerPort, codexPort])
       pm2Start({ ecosystemFile, cwd: TARGET })
       await healthy()
+      jobPhase('rolled_back', 'rolled_back')
       ok('rolled back; the previous release is running')
     } catch (rollbackError) {
+      jobPhase('failed', 'failed', 'rollback_failed')
       warn(`rollback also failed: ${rollbackError.message}`)
       warn(`inspect: pm2 logs ${pm2Name}; ecosystem backup at ${backupDir}`)
     }
   } else {
+    jobPhase('failed', 'failed', 'no_previous_release')
     warn(`no previous ecosystem file to restore; backup dir: ${backupDir}`)
   }
   process.exit(1)

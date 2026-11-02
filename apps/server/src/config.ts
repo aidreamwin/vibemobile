@@ -41,6 +41,25 @@ export interface Config {
    * the app.
    */
   agentsDir: string
+  /**
+   * The deployment root: the directory containing `releases/`, `vibemobile.env`
+   * and `data/`. Under PM2 the code runs from `releases/<stamp>`, so this is
+   * the grandparent of the module; standalone installs use the repo root.
+   */
+  installDir: string
+  /** The release directory the process actually runs from (`releases/<stamp>` under PM2). */
+  releaseDir: string
+  /** App self-update feed. Disabled unless a GitLab registry is configured. */
+  update: {
+    enabled: boolean
+    apiUrl?: string
+    projectId?: string
+    packageName: string
+    token?: string
+    allowHttp: boolean
+    ttlMs: number
+    downloadTimeoutMs: number
+  }
   /** Where built web assets live, served as the SPA. */
   webDist: string
   /**
@@ -251,6 +270,24 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
 
   saveState(stateDir, state)
 
+  // `root` is the release directory under PM2; the install root is the
+  // directory whose child is `releases/`. Standalone installs do not have that
+  // shape and use the repo root directly.
+  const installDir = path.resolve(
+    env('VIBEMOBILE_INSTALL_DIR') ??
+      (path.basename(path.dirname(root)) === 'releases' ? path.dirname(path.dirname(root)) : root),
+  )
+  const tokenFile = env('VIBEMOBILE_UPDATE_TOKEN_FILE')
+  let updateToken = env('VIBEMOBILE_UPDATE_TOKEN')
+  if (!updateToken && tokenFile) {
+    try {
+      updateToken = fs.readFileSync(path.resolve(tokenFile), 'utf8').trim() || undefined
+    } catch {
+      // A missing token file is reported as an update error when it is used;
+      // it must not stop the server from starting.
+    }
+  }
+
   const config: Config = {
     host: env('VIBEMOBILE_HOST') ?? '0.0.0.0',
     port: Number(env('PORT') ?? 3000),
@@ -267,6 +304,18 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     },
     stateDir,
     agentsDir: path.resolve(env('VIBEMOBILE_AGENTS_DIR') ?? path.join(stateDir, 'agents')),
+    installDir,
+    releaseDir: root,
+    update: {
+      enabled: env('VIBEMOBILE_UPDATE') !== 'off',
+      apiUrl: env('VIBEMOBILE_UPDATE_API_URL'),
+      projectId: env('VIBEMOBILE_UPDATE_PROJECT_ID'),
+      packageName: env('VIBEMOBILE_UPDATE_PACKAGE_NAME') ?? 'vibemobile',
+      token: updateToken,
+      allowHttp: boolEnv('VIBEMOBILE_UPDATE_ALLOW_HTTP'),
+      ttlMs: Number(env('VIBEMOBILE_UPDATE_CHECK_TTL_MS') ?? 5 * 60 * 1000),
+      downloadTimeoutMs: Number(env('VIBEMOBILE_UPDATE_DOWNLOAD_TIMEOUT_MS') ?? 10 * 60 * 1000),
+    },
     webDist: env('VIBEMOBILE_WEB_DIST') ?? path.resolve(root, 'apps/web/dist'),
     trustProxy: boolEnv('VIBEMOBILE_TRUST_PROXY'),
     terminal: {

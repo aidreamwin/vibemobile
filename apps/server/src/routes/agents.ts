@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { AgentsResponse } from '@vibemobile/protocol'
 import type { Config } from '../config.js'
 import type { CodexProvider } from '../codex/CodexProvider.js'
-import { agentStatuses, startAgentUpdate } from '../agents/installer.js'
+import { agentStatuses, latestAvailableVersion, startAgentUpdate } from '../agents/installer.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
 import { requireAuth } from './guards.js'
 
@@ -29,6 +29,13 @@ export function registerAgentRoutes(
   const auth = { preHandler: requireAuth(config) }
 
   app.get('/api/agents', auth, async (): Promise<AgentsResponse> => ({ data: agentStatuses(config) }))
+
+  app.post<{ Params: { id: string } }>('/api/agents/:id/check', auth, async (req, reply) => {
+    const id = req.params.id
+    if (!isAgentRuntimeId(id)) return reply.code(404).send({ error: 'unknown_agent' })
+    // `null` is a registry failure, not "up to date": the UI offers a retry.
+    return { latest: await latestAvailableVersion(id) }
+  })
 
   app.post<{ Params: { id: string } }>('/api/agents/:id/update', auth, async (req, reply) => {
     const id = req.params.id

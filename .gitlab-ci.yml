@@ -1,4 +1,6 @@
-# 只做部署；typecheck / test / lint 见 .github/workflows/ci.yml。
+# 部署与发布；typecheck / test / lint 的独立门禁见 .github/workflows/ci.yml。
+# release_package 会跑一次 release 脚本（含测试与构建），因为 GitLab 是实际
+# 发布 PM2 更新包的通道。
 workflow:
   # 新提交取消旧流水线，部署任务除外（见 interruptible: false）。
   auto_cancel:
@@ -9,6 +11,7 @@ workflow:
 
 stages:
   - image
+  - release
   - deploy
 
 variables:
@@ -36,6 +39,30 @@ container:
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] || [ -n "$CI_COMMIT_TAG" ]; then
         docker push "$IMAGE_NAME:latest"
       fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+release_package:
+  stage: release
+  image: node:22-bookworm
+  script:
+    - npm ci
+    - npm run test:deploy
+    - node scripts/release.mjs --kind=all
+    - |
+      VERSION="v$(node -p "require('./apps/server/package.json').version")-w$(node -p "require('./apps/web/package.json').version")-${CI_COMMIT_SHORT_SHA}-${CI_PIPELINE_ID}"
+      BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/vibemobile/${VERSION}"
+      for f in release/manifest.json release/SHA256SUMS release/vibemobile-hub-*.tar.gz release/vibemobile-runner-*.tar.gz; do
+        [ -f "$f" ] || continue
+        curl --fail --silent --show-error --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+          --upload-file "$f" "$BASE/$(basename "$f")"
+      done
+      echo "Published update package ${VERSION}"
+  artifacts:
+    paths:
+      - release/
+    expire_in: 1 week
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG'

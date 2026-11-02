@@ -4,6 +4,7 @@ import { api, ApiError } from './lib/api'
 import { socket } from './lib/ws'
 import Sessions from './pages/Sessions'
 import BottomNav from './components/BottomNav'
+import UpdateBanner from './components/UpdateBanner'
 import { Button } from './components/ui/button'
 import { useWorkspaceStore } from './lib/workspace'
 import { runnerId, runnerSwitchUrl } from './lib/runner'
@@ -165,6 +166,7 @@ export default function App() {
 
   return (
     <div className="app-height flex flex-col overflow-hidden">
+      <UpdateBanner />
       <main className="min-h-0 flex-1">
         <Suspense fallback={<PageFallback />}>
           <Routes>

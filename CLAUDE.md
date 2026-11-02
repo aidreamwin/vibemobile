@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 - 改仓库的操作手册，整份载入上下文；只写「怎么做/怎么验」和「删掉就会静默写错」的约束。
-- 文档地图：[README](README.md) · [架构](docs/architecture.md) · [部署](docs/deployment.md) · [限制](docs/limitations.md) · [发布](docs/releasing.md) · [代理运行时](docs/agent-runtime.md) · [安全](SECURITY.md) · [贡献](CONTRIBUTING.md)
+- 文档地图：[README](README.md) · [架构](docs/architecture.md) · [部署](docs/deployment.md) · [限制](docs/limitations.md) · [发布](docs/releasing.md) · [代理运行时](docs/agent-runtime.md) · [应用升级](docs/app-update.md) · [安全](SECURITY.md) · [贡献](CONTRIBUTING.md)
 ## 文档与代码治理（严格执行）
 
 #### 文档
@@ -60,11 +60,14 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - Claude session id 本地 `randomUUID()`，首回合经 `options.sessionId` 交给 CLI。
 - `config.ts` 的 `repoRoot()` 从模块位置往上找含 `workspaces` 的 package.json，不从 cwd（workspace 脚本 cwd 是 `apps/server`，会解析出第二个 `.vibemobile/`）；`packages/protocol` 不发产物、只被 `import type`，改它不用构建。
 ### 代理运行时（`agents/`）
-- 二进制约在 `<stateDir>/agents/<id>/<version>`，`current` 是 junction/symlink；升级只换目录，不碰应用 `node_modules`。
+- 二进制约在 `<stateDir>/agents/<id>/<version>`，`current` 是 junction/symlink；升级只换目录，不碰应用 `node_modules`；解析优先级 `CODEX_BIN` → pack → 内置 → PATH，Claude 走 SDK 的 `pathToClaudeCodeExecutable`。
 - 版本范围（`~x.y.z`）只从 [manifest.ts](apps/server/src/agents/manifest.ts) 来，npm 解析最新补丁；客户端只能选 id，别加「latest」，minor/major 变更必须改 manifest（要重新验证协议措辞）。
 - Codex 换包后 `supervisor.restart()` 是进程级重启，进行中回合并丢；Claude 下一回合自动生效；新包起不来必须回滚 `current`。
-- 解析优先级：`CODEX_BIN` → pack → 内置 → PATH；Claude 走 SDK 的 `pathToClaudeCodeExecutable`。
 - 更新是后台 job（`GET /api/agents` 轮询）；npm 用 `npm-cli.js` 直跑，别走 shell（安装路径可能带空格）。
+### 应用升级（PM2）
+- 更新器是独立 PM2 进程 `<pm2Name>-updater`（PM2 会 treekill app 子进程）；`deploy/update.mjs` 只做构建/切换/回滚，feed 与触发在服务端。
+- feed/token 只从 env 读，客户端不能传 URL/版本；下载校验 sha256 + `RELEASE.json` 角色；job 在 `<stateDir>/update-job.json`，重启后按 build 版本对账。
+- Hub 根更新 Hub，`/r/<id>/` 更新 runner；Hub 默认 runner 带 `VIBEMOBILE_DEFAULT_RUNNER_CHILD=1`，单独升级返回 `update_via_hub`。
 ### 会话路由
 - `providers/registry.ts` 维护 `sessionId → providerId`：每个学到 id 的路径 `bind()`，未命中才挨个问 provider，兜底 `default`；`registry.default` = 第一个注册的 provider（Codex）—— `index.ts` 注册顺序有意义。
 - `/api/sessions` 不带 `provider` = 只有 Codex（旧契约）；全部要显式 `?provider=all`（逐 provider 拉、按 `updatedAt` 合并，单个抛错记 warn 当空）；未知 provider 兜底 `default`（200）；`all` 故意不进 `packages/protocol`（纯类型，服务端不引 runtime）。
@@ -130,8 +133,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - pty 与 mirror 的 cols/rows 必须一起改（attach/resize/构造），错位不报错；`excludeAltBuffer` = 尺寸没变（没变则 alt buffer 就是当前屏幕，必须还原；变了让重绘赢）。
 - `@xterm/headless` 只能动态 import：Node CJS 在 `default`，tsx 直接给 `Terminal`（`loadMirror()` 两种都认）；`@xterm/addon-serialize` 是正常命名导出；`attached` 只由服务端给，false 才画 `shell · cwd` banner、接回不画；`exit` 必须先于 `kill()`，`restart` 先 dispose 旧 onData/onExit 再 kill。
 ### 构建戳与重启
-- `buildInfo.ts` 的 `build` 是模块级常量（进程启动时）；只有 `buildOnDisk()` 请求时重读；`/api/health` 返回两者；不要改成每次现读。
-- 开发模式现场问 git，`builtAt` 为 null；`commit` 可为 null（Docker 无 `.git`），比较前两边都要有值；前端走 `virtual:build-info`（`buildInfoPlugin`），不要用 `define`（dev 下不替换）。
+- `buildInfo.ts` 的 `build` 是模块级常量（进程启动时），只有 `buildOnDisk()` 请求时重读，`/api/health` 返回两者；开发模式现场问 git、`builtAt` 为 null；`commit` 可为 null（Docker 无 `.git`），比较前两边都要有值；前端走 `virtual:build-info`（`buildInfoPlugin`），不要用 `define`。
 - `scripts/build-info.mjs` 不能加 shebang（vite 注入代码后 `#!` 不在第 0 字节 → 构建/vite dev 都挂）；Dockerfile 只 COPY 它。
 - 重启：`Stop-Service -Force` → 轮询 `Stopped` → `Start-Service` → `/api/health` 的 `build == buildOnDisk`；`Restart-Service -Force` 会报错；卡住时 `sc queryex` 看 nssm PID，应用已退但 nssm 在 → `Stop-Process -Id <nssm> -Force`；Git Bash 的 `taskkill /F` 会被改写成路径。
 ### 文件引用 · 查看器 · 写入（前端）
@@ -145,5 +147,4 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - `FileContent.rev` = 读到字节的短 sha256，带且不匹配 `409 file_changed`；前端 409 必须保留草稿、只重读换 `rev`；路由 `bodyLimit` 必须 2 MiB（默认 1 MiB 在 handler 前 413）；`WorkspaceError.code` 可选，不给时响应体与旧版逐字节相同。
 - `FileEditor` 是 `FileBody` 的兄弟（textarea 自滚，不能逐行渲染）；草稿只能由 `content.text` 初始化，不能取 rows（5000 行以上会丢尾）；`content.truncated` 不可编辑；`MAX_EDIT_LINES` 守卫；编辑态整个头部替换为 取消/保存；脏草稿卸载时存模块作用域；`saveError` 与页面 `error` 分开（否则弹回目录丢草稿）。
 ### 平台
-- 端口分段：3xxx/5xxx HTTP，68xx codex app-server；开发/部署必须分开（supervisor 只探 `/readyz` 端口，撞上会静默接错）；`npm run dev` 预检。
-- Windows：`.ps1` 带 BOM、`.bat` 纯 ASCII；二进制走 npm（`nssm-bin`）；端口占用用 `connect` 判断（`SO_REUSEADDR` 允许多绑定）。
+- 端口分段：3xxx/5xxx HTTP，68xx codex app-server；开发/部署必须分开（supervisor 只探 `/readyz` 端口，撞上会静默接错）；`npm run dev` 预检；Windows 脚本 `.ps1` 带 BOM、`.bat` 纯 ASCII，二进制走 npm（`nssm-bin`），端口占用用 `connect` 判断（`SO_REUSEADDR` 允许多绑定）。

@@ -128,6 +128,44 @@ export async function updateAgent(config: Config, id: AgentRuntimeId, hooks: Age
   }
 }
 
+const LATEST_TTL_MS = 5 * 60 * 1000
+const latestCache = new Map<AgentRuntimeId, { at: number; version: string | null }>()
+
+/**
+ * The newest patch the manifest range resolves to, for the "check update"
+ * button. Null means the registry could not be reached; the caller shows a
+ * retry rather than claiming the agent is current.
+ */
+export async function latestAvailableVersion(id: AgentRuntimeId): Promise<string | null> {
+  const cached = latestCache.get(id)
+  if (cached && Date.now() - cached.at < LATEST_TTL_MS) return cached.version
+  const spec = AGENT_RUNTIMES[id]
+  let version: string | null = null
+  try {
+    const stdout = await runNpmCapture(['view', `${spec.package}@${spec.range}`, 'version', '--json'])
+    version = parseNpmVersion(stdout)
+  } catch {
+    version = null
+  }
+  // Do not cache a failure: the "retry" button must actually retry.
+  if (version) latestCache.set(id, { at: Date.now(), version })
+  return version
+}
+
+function parseNpmVersion(stdout: string): string | null {
+  try {
+    const parsed = JSON.parse(stdout)
+    if (typeof parsed === 'string') return parsed
+    if (Array.isArray(parsed)) {
+      const versions = parsed.filter((value): value is string => typeof value === 'string')
+      return versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop() ?? null
+    }
+  } catch {
+    // Fall through to null.
+  }
+  return null
+}
+
 function isInstalled(id: AgentRuntimeId, dir: string, pkg: string, version: string): boolean {
   return hasBinary(id, dir) && readPackVersion(dir, pkg) === version
 }
@@ -178,6 +216,38 @@ function npmCommand(): { cmd: string; prefix: string[]; shell: boolean } {
     prefix: [],
     shell: process.platform === 'win32',
   }
+}
+
+function runNpmCapture(args: string[], timeoutMs = 30_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const npm = npmCommand()
+    const child = spawn(npm.cmd, [...npm.prefix, ...args], {
+      windowsHide: true,
+      env: { ...process.env, npm_config_update_notifier: 'false' },
+      shell: npm.shell,
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error('npm view timed out'))
+    }, timeoutMs)
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) resolve(stdout)
+      else reject(new Error(stderr.trim() || `npm view exited with ${code}`))
+    })
+  })
 }
 
 function runNpm(args: string[], onLog: (line: string) => void): Promise<void> {

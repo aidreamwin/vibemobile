@@ -57,6 +57,93 @@ export interface AgentsResponse {
   data: AgentRuntimeStatus[]
 }
 
+// ------------------------------------------------------------ app updates
+
+export type UpdateScope = 'hub' | 'runner' | 'standalone'
+export type UpdateManager = 'pm2' | 'docker' | 'nssm' | 'unknown'
+export type UpdateStatusName = 'queued' | 'running' | 'succeeded' | 'failed' | 'rolled_back'
+export type UpdatePhase =
+  | 'queued'
+  | 'downloading'
+  | 'verifying'
+  | 'extracting'
+  | 'installing'
+  | 'building'
+  | 'restarting'
+  | 'healthcheck'
+  | 'done'
+  | 'rolling_back'
+  | 'rolled_back'
+  | 'failed'
+
+export interface UpdateCurrentInfo {
+  serverVersion: string
+  webVersion: string | null
+  commit: string | null
+  dirty: boolean
+}
+
+export interface UpdateTargetInfo {
+  serverVersion: string
+  webVersion: string
+  commit: string | null
+  file: string
+  sha256: string
+  bytes: number
+}
+
+export interface UpdateReleaseInfo {
+  serverVersion: string
+  webVersion: string
+  commit: string | null
+  createdAt: string | null
+  artifact: {
+    role: 'hub' | 'runner'
+    file: string
+    sha256: string
+    bytes: number
+  }
+}
+
+/**
+ * One update job. Written by the updater and read by whichever process is
+ * serving the UI, including the new one after the restart — that is why it is
+ * a file under `stateDir` and not process memory.
+ */
+export interface UpdateJob {
+  format: 1
+  id: string
+  scope: UpdateScope
+  role: 'hub' | 'runner'
+  status: UpdateStatusName
+  phase: UpdatePhase
+  target: UpdateTargetInfo
+  current: UpdateCurrentInfo
+  workerPid: number | null
+  startedAt: number
+  updatedAt: number
+  finishedAt: number | null
+  error: string | null
+}
+
+export interface UpdateStatus {
+  scope: UpdateScope
+  role: 'hub' | 'runner'
+  /** The Hub's default runner: it ships with the Hub and must not update alone. */
+  sharedInstall: boolean
+  supported: boolean
+  manager: UpdateManager
+  reason: string | null
+  manualCommand: string | null
+  current: UpdateCurrentInfo
+  latest: UpdateReleaseInfo | null
+  updateAvailable: boolean
+  checking: boolean
+  feedError: string | null
+  job: UpdateJob | null
+  logTail: string | null
+}
+
 export interface ModelInfo {
   id: string
   displayName: string

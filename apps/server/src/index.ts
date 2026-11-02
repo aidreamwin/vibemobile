@@ -16,6 +16,7 @@ import { registerFileRoutes } from './routes/files.js'
 import { registerImageRoutes } from './routes/images.js'
 import { registerHealthRoutes } from './routes/health.js'
 import { registerAgentRoutes } from './routes/agents.js'
+import { registerSystemRoutes } from './routes/system.js'
 import { registerHub } from './ws/hub.js'
 import { registerTerminal } from './ws/terminal.js'
 
@@ -99,6 +100,7 @@ app.addHook('onClose', async () => {
 registerHealthRoutes(app, config)
 registerAuthRoutes(app, config)
 registerAgentRoutes(app, config, codex)
+registerSystemRoutes(app, config)
 registerSessionRoutes(app, config)
 registerFileRoutes(app, config)
 registerImageRoutes(app, config)

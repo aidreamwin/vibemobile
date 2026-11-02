@@ -61,6 +61,8 @@ const HUB_ENTRIES = [
   'docs/multi-runner.md',
   'docs/architecture.md',
   'docs/deployment.md',
+  'docs/app-update.md',
+  'docs/agent-runtime.md',
   'docs/limitations.md',
   'docs/releasing.md',
   'docs/error-reporting.md',

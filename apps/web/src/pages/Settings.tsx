@@ -10,7 +10,9 @@ import type {
   HealthResponse,
   ProviderStatus,
   RunnerInfo,
+  UpdateStatus,
 } from '@vibemobile/protocol'
+import { errorLabel, jobRunning, phaseLabel, useSystemStore } from '../lib/system'
 import { api } from '../lib/api'
 import { runnerId, runnerSwitchUrl } from '../lib/runner'
 import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
@@ -307,6 +309,8 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
           </Section>
 
           <AgentRuntimeSection />
+
+          <SystemUpdateSection />
 
           <Section title="工作区">
             <div className="flex min-w-0 items-center pl-4 pr-1">
@@ -660,6 +664,183 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
   )
 }
 
+const UPDATE_REASONS: Record<string, string> = {
+  docker: 'Docker 部署请在宿主机更新',
+  windows_service: 'Windows 服务部署请运行更新脚本',
+  development_mode: '开发模式不支持一键升级',
+  standalone: '当前部署方式不支持一键升级',
+  update_disabled: '更新已被关闭（VIBEMOBILE_UPDATE=off）',
+  update_via_hub: '随 Hub 一起升级',
+}
+
+function SystemUpdateSection() {
+  const { current, hub, loading, currentError, hubError, load, start } = useSystemStore()
+  const [confirming, setConfirming] = useState<'current' | 'hub' | null>(null)
+  const [starting, setStarting] = useState(false)
+  const inRunner = Boolean(runnerId)
+  const running = jobRunning(current?.job) || jobRunning(hub?.job)
+
+  useEffect(() => {
+    void load()
+    if (inRunner) void load({ hub: true })
+  }, [load, inRunner])
+
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => {
+      void load()
+      if (inRunner) void load({ hub: true })
+    }, 1500)
+    return () => clearInterval(timer)
+  }, [running, load, inRunner])
+
+  const target = confirming === 'hub' ? hub : current
+
+  async function confirm() {
+    setStarting(true)
+    try {
+      await start(confirming === 'hub')
+      setConfirming(null)
+    } catch {
+      // The row renders the store's error.
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  return (
+    <>
+      <Section title="应用升级">
+        {!current && <div className="px-4 py-3 text-sm text-muted-foreground">{currentError ?? '加载中…'}</div>}
+        {current && (
+          <UpdateRow
+            status={current}
+            label={inRunner ? `执行机 ${runnerId}` : 'Hub（本机）'}
+            error={currentError}
+            loading={loading}
+            onCheck={() => void load({ force: true })}
+            onUpgrade={() => setConfirming('current')}
+          />
+        )}
+        {inRunner && hub && (
+          <UpdateRow
+            status={hub}
+            label="Hub（本机）"
+            error={hubError}
+            loading={loading}
+            onCheck={() => void load({ hub: true, force: true })}
+            onUpgrade={() => setConfirming('hub')}
+          />
+        )}
+      </Section>
+
+      {confirming && target && (
+        <Sheet title="升级 VibeMobile" onClose={() => setConfirming(null)} dismissable={!starting}>
+          <div className="space-y-4 px-4 pt-2 pb-4">
+            <p className="text-[13px] text-foreground/85">
+              将升级到 {target.latest?.serverVersion ?? '新版本'}
+              。服务会重启，正在执行的任务会中断；失败会自动回到原版本。
+            </p>
+            <Button
+              type="button"
+              disabled={starting}
+              onClick={() => void confirm()}
+              className="tap h-auto w-full py-3.5 text-[15px]"
+            >
+              {starting ? '正在启动…' : '确认升级'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={starting}
+              onClick={() => setConfirming(null)}
+              className="tap h-auto w-full py-3.5 text-[15px]"
+            >
+              取消
+            </Button>
+          </div>
+        </Sheet>
+      )}
+    </>
+  )
+}
+
+function UpdateRow({
+  status,
+  label,
+  error,
+  loading,
+  onCheck,
+  onUpgrade,
+}: {
+  status: UpdateStatus
+  label: string
+  error: string | null
+  loading: boolean
+  onCheck: () => void
+  onUpgrade: () => void
+}) {
+  const job = status.job
+  const running = jobRunning(job)
+  const failed = job?.status === 'failed' || job?.status === 'rolled_back'
+  const currentVersion = status.current.serverVersion
+  const latest = status.latest?.serverVersion
+
+  let line: string
+  if (status.sharedInstall) line = '随 Hub 一起升级'
+  else if (!status.supported) line = UPDATE_REASONS[status.reason ?? ''] ?? '不支持一键升级'
+  else if (running) line = phaseLabel(job?.phase)
+  else if (failed) line = job?.status === 'rolled_back' ? '升级失败，已回到原版本' : '升级失败'
+  else if (status.feedError === 'update_not_configured') line = '未配置更新源'
+  else if (status.feedError) line = '无法检查更新'
+  else if (status.updateAvailable && latest) line = `可升级到 ${latest}（当前 ${currentVersion}）`
+  else line = `已是最新（${currentVersion}）`
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-foreground">{label}</div>
+          <div className={`truncate text-xs ${failed ? 'text-destructive' : 'text-muted-foreground'}`}>{line}</div>
+        </div>
+        {status.supported &&
+          !status.sharedInstall &&
+          !running &&
+          (status.updateAvailable ? (
+            <Button type="button" size="sm" disabled={loading} onClick={onUpgrade}>
+              升级
+            </Button>
+          ) : status.feedError === 'update_not_configured' ? null : (
+            <Button type="button" size="sm" variant="outline" disabled={loading} onClick={onCheck}>
+              检查更新
+            </Button>
+          ))}
+      </div>
+
+      {!status.supported && !status.sharedInstall && status.manualCommand && (
+        <code className="mt-1.5 block break-all text-[11px] text-muted-foreground">{status.manualCommand}</code>
+      )}
+      {status.feedError === 'update_not_configured' && (
+        <p className="mt-1 text-[11px] text-muted-foreground">还没有配置更新源（VIBEMOBILE_UPDATE_*）。</p>
+      )}
+      {status.feedError && status.feedError !== 'update_not_configured' && (
+        <p className="mt-1 text-[11px] text-destructive">{errorLabel(status.feedError)}</p>
+      )}
+      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
+      {failed && job?.error && <p className="mt-1 text-[11px] text-destructive">{errorLabel(job.error)}</p>}
+
+      {status.logTail && (failed || running) && (
+        <details className="mt-1">
+          <summary className="text-[11px] text-muted-foreground">详情</summary>
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
+            {status.logTail}
+          </pre>
+        </details>
+      )}
+    </div>
+  )
+}
+
 /**
  * Agent runtime packs: the model processes' binaries, separate from this app's
  * release. Installing one is a background npm job on the executor, so this row
@@ -667,8 +848,10 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
  */
 function AgentRuntimeSection() {
   const [agents, setAgents] = useState<AgentRuntimeStatus[]>([])
+  const [latest, setLatest] = useState<Record<string, string | null | undefined>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<AgentRuntimeId | null>(null)
+  const [checking, setChecking] = useState<AgentRuntimeId | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -690,11 +873,28 @@ function AgentRuntimeSection() {
     return () => clearInterval(timer)
   }, [updating, load])
 
+  async function check(id: AgentRuntimeId) {
+    setChecking(id)
+    try {
+      const result = await api.checkAgent(id)
+      setLatest((prev) => ({ ...prev, [id]: result.latest }))
+    } catch {
+      setLatest((prev) => ({ ...prev, [id]: null }))
+    } finally {
+      setChecking(null)
+    }
+  }
+
   async function update(id: AgentRuntimeId) {
     setBusy(id)
     setError(null)
     try {
       setAgents((await api.updateAgent(id)).data)
+      setLatest((prev) => {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -706,27 +906,45 @@ function AgentRuntimeSection() {
     <Section title="代理运行时">
       {agents.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">{error ?? '加载中…'}</div>}
       {agents.map((agent) => {
+        const checked = latest[agent.id]
+        const newer = checked && checked !== agent.active ? checked : null
+        let line: string
+        if (agent.updating) line = '更新中…'
+        else if (!agent.active) line = '未找到可用版本'
+        else if (newer) line = `当前 ${agent.active} → 可升级到 ${newer}`
+        else if (checked === null) line = '检查失败，请重试'
+        else if (checked === agent.active) line = `已是最新（${agent.active}）`
+        else if (agent.satisfied) line = `已是最新（${agent.active}）`
+        else line = `当前 ${agent.active}`
+
         return (
           <div key={agent.id} className="flex min-h-16 items-center gap-3 py-2 pl-4 pr-3">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-foreground">{agent.displayName}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {agent.active
-                  ? `${agent.active} · ${agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知来源'}`
-                  : '未找到'}
-                {agent.satisfied ? '' : ` · 支持 ${agent.supported}`}
-              </div>
+              <div className="truncate text-xs text-muted-foreground">{line}</div>
               {agent.error && <div className="mt-0.5 text-xs text-destructive">{agent.error}</div>}
             </div>
-            <Button
-              type="button"
-              size="sm"
-              variant={agent.satisfied ? 'outline' : 'default'}
-              disabled={agent.updating || busy === agent.id}
-              onClick={() => void update(agent.id)}
-            >
-              {agent.updating ? '更新中…' : agent.satisfied ? '检查更新' : '更新'}
-            </Button>
+            {agent.updating ? (
+              <span className="text-xs text-muted-foreground">更新中…</span>
+            ) : newer ? (
+              <Button type="button" size="sm" disabled={busy === agent.id} onClick={() => void update(agent.id)}>
+                升级到 {newer}
+              </Button>
+            ) : agent.satisfied ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={checking === agent.id}
+                onClick={() => void check(agent.id)}
+              >
+                {checking === agent.id ? '检查中…' : checked === null ? '重试' : '检查更新'}
+              </Button>
+            ) : (
+              <Button type="button" size="sm" disabled={busy === agent.id} onClick={() => void update(agent.id)}>
+                升级
+              </Button>
+            )}
           </div>
         )
       })}
