@@ -34,6 +34,23 @@ export interface Config {
     /** Path to the codex entry point; resolved automatically when omitted. */
     bin?: string
   }
+  opencode: {
+    /**
+     * Attach to a running opencode service. When set, this mode never spawns.
+     * Normally left unset: the service record under the user's state directory
+     * is discovered automatically.
+     */
+    attachUrl?: string
+    /** Loopback port for a private `opencode serve` when no service is found. */
+    port: number
+    bin?: string
+    /** Password for an explicit/attached service; otherwise read from service.json. */
+    password?: string
+    /** Override the service.json path (tests and non-standard installs). */
+    serviceFile?: string
+    /** Skip discovery and always spawn a private server. */
+    noAttach?: boolean
+  }
   stateDir: string
   /**
    * Runtime packs live here, one directory per agent version, with a `current`
@@ -301,6 +318,14 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
       attachUrl: env('CODEX_WS_URL'),
       port: Number(env('CODEX_PORT') ?? 8788),
       bin: env('CODEX_BIN'),
+    },
+    opencode: {
+      attachUrl: env('OPENCODE_ATTACH_URL') ?? env('OPENCODE_URL'),
+      port: Number(env('OPENCODE_PORT') ?? 6820),
+      bin: env('OPENCODE_BIN'),
+      password: env('OPENCODE_SERVER_PASSWORD') ?? env('OPENCODE_PASSWORD'),
+      serviceFile: env('OPENCODE_SERVICE_FILE'),
+      noAttach: boolEnv('OPENCODE_NO_ATTACH'),
     },
     stateDir,
     agentsDir: path.resolve(env('VIBEMOBILE_AGENTS_DIR') ?? path.join(stateDir, 'agents')),

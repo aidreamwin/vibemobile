@@ -24,6 +24,7 @@
     "start:runner": "node apps/server/dist/distributed/runner.js",
     "build:all": "npm run build --workspace=@vibemobile/server && npm run build --workspace=@vibemobile/web",
     "smoke": "npm run smoke --workspace=@vibemobile/server",
+    "smoke:opencode": "npm run smoke:opencode --workspace=@vibemobile/server",
     "gen:codex-types": "codex app-server generate-ts --out packages/protocol/src/generated --experimental",
     "agents:update": "tsx apps/server/scripts/update-agents.ts",
     "test:deploy": "node --test deploy/lib/*.test.mjs",

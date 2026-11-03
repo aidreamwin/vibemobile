@@ -4,7 +4,20 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { bumpSessionVersion, loadConfig } from './config.js'
 
-const KEYS = ['VIBEMOBILE_STATE_DIR', 'VIBEMOBILE_PIN', 'VIBEMOBILE_NO_AUTH', 'VIBEMOBILE_SESSION_TTL_MS']
+const KEYS = [
+  'VIBEMOBILE_STATE_DIR',
+  'VIBEMOBILE_PIN',
+  'VIBEMOBILE_NO_AUTH',
+  'VIBEMOBILE_SESSION_TTL_MS',
+  'OPENCODE_ATTACH_URL',
+  'OPENCODE_URL',
+  'OPENCODE_PORT',
+  'OPENCODE_BIN',
+  'OPENCODE_SERVER_PASSWORD',
+  'OPENCODE_PASSWORD',
+  'OPENCODE_SERVICE_FILE',
+  'OPENCODE_NO_ATTACH',
+]
 
 let dir: string
 let saved: Record<string, string | undefined>
@@ -22,6 +35,32 @@ afterEach(() => {
     else process.env[key] = saved[key]
   }
   rmSync(dir, { recursive: true, force: true })
+})
+
+describe('opencode config', () => {
+  it('defaults to discovery plus a private port', () => {
+    process.env.VIBEMOBILE_PIN = 'test-pin'
+    const config = loadConfig()
+    expect(config.opencode).toEqual({ port: 6820, noAttach: false })
+  })
+
+  it('reads the attach URL, password, bin, service file and no-attach switch', () => {
+    process.env.VIBEMOBILE_PIN = 'test-pin'
+    process.env.OPENCODE_URL = 'http://127.0.0.1:28894'
+    process.env.OPENCODE_PORT = '7777'
+    process.env.OPENCODE_BIN = '/opt/opencode'
+    process.env.OPENCODE_SERVER_PASSWORD = 'secret'
+    process.env.OPENCODE_SERVICE_FILE = '/tmp/service.json'
+    process.env.OPENCODE_NO_ATTACH = '1'
+    expect(loadConfig().opencode).toEqual({
+      attachUrl: 'http://127.0.0.1:28894',
+      port: 7777,
+      bin: '/opt/opencode',
+      password: 'secret',
+      serviceFile: '/tmp/service.json',
+      noAttach: true,
+    })
+  })
 })
 
 describe('session lifetime', () => {

@@ -16,7 +16,7 @@
 - 跑通复杂流程（转换/量化/交叉编译/板端推理）必须封装成带参数校验的脚本或 Makefile 靶点。
 - 职责单一；跨层不访问实现细节；接口先行（先定接口再填实现）。
 ## 是什么
-- 手机浏览器远程驱动本机编码代理，接 Codex 与 Claude Code；单用户、无权限体系。
+- 手机浏览器远程驱动本机编码代理，接 Codex、Claude Code 与 OpenCode；单用户、无权限体系。
 - 后端唯一理由：app-server 拒绝带 `Origin` 头的 WS 升级，浏览器 WS 必带 → 浏览器不能直连，Node 后端充当 WS 客户端。
 ## 命令
 
@@ -31,7 +31,7 @@ npm run typecheck                       # 前后端 tsc；server 的 scripts/ �
 npm test / test:coverage
 npm test --workspace=@vibemobile/server -- src/codex/mapEvents.test.ts
 # 自 spawn CLI，无需服务：
-npm run test:approval / smoke
+npm run test:approval / smoke / smoke:opencode
 npx tsx apps/server/scripts/smoke-image.ts / smoke-claude.ts / test-claude.ts
 # 需服务在跑（<PIN>）；smoke:browser 需先 build，覆盖面最广：
 npm run test:hub / test:terminal / smoke:browser -- <PIN>
@@ -48,21 +48,20 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 ### provider 接缝
 - `providers/types.ts` 的 `AgentProvider` 是唯一接缝；`routes/`、`ws/hub.ts` provider-agnostic；前端只消费 `packages/protocol/src/events.ts` 的 `AgentEvent`；加 provider = 实现接口 + `index.ts` 里 `registry.register()`。
 
-| | Codex | Claude Code |
-|---|---|---|
-| 传输 | 后端 spawn 的常驻 app-server，JSON-RPC over WS | SDK `query()` |
-| 进程 | 长驻，服务全程复用 | 每回合一个子进程 |
-| 续接 | 订阅同一 thread | 首回合 `sessionId`，之后 `resume` |
-| 回合中插话 | `turn/steer` 折进当前回合 | 保持 stdin 打开，折进当前回合（不打断在跑的工具） |
-| 会话元数据 | app-server thread 记录给 `model`/`reasoningEffort` | 没有，自己存 |
-| 端口 | 占一个 | 不占 |
+| | Codex | Claude Code | OpenCode |
+|---|---|---|---|
+| 传输 | 后端 spawn 的常驻 app-server，JSON-RPC over WS | SDK `query()` | HTTP + SSE（v2 API） |
+| 进程 | 长驻，服务全程复用 | 每回合一个子进程 | 优先 attach 用户 service，否则私有 `serve` |
+| 续接 | 订阅同一 thread | 首回合 `sessionId`，之后 `resume` | 会话在服务端，事件流全局 |
+| 回合中插话 | `turn/steer` 折进当前回合 | 保持 stdin 打开，折进当前回合（不打断在跑的工具） | `prompt {delivery:'steer'}` |
+| 会话元数据 | app-server thread 记录给 `model`/`reasoningEffort` | 没有，自己存 | `opencode.db`；effort 来自 model variant |
+| 端口 | 占一个 | 不占 | 占一个（attach 用服务的） |
 
-- Claude session id 本地 `randomUUID()`，首回合经 `options.sessionId` 交给 CLI。
 - `config.ts` 的 `repoRoot()` 从模块位置往上找含 `workspaces` 的 package.json，不从 cwd（workspace 脚本 cwd 是 `apps/server`，会解析出第二个 `.vibemobile/`）；`packages/protocol` 不发产物、只被 `import type`，改它不用构建。
 ### 代理运行时（`agents/`）
-- 二进制约在 `<stateDir>/agents/<id>/<version>`，`current` 是 junction/symlink；升级只换目录，不碰应用 `node_modules`；解析优先级 `CODEX_BIN` → pack → 内置 → PATH，Claude 走 SDK 的 `pathToClaudeCodeExecutable`。
-- 版本范围（`~x.y.z`）只从 [manifest.ts](apps/server/src/agents/manifest.ts) 来，npm 解析最新补丁；客户端只能选 id，别加「latest」，minor/major 变更必须改 manifest（要重新验证协议措辞）。
-- Codex 换包后 `supervisor.restart()` 是进程级重启，进行中回合并丢；Claude 下一回合自动生效；新包起不来必须回滚 `current`。
+- 二进制约在 `<stateDir>/agents/<id>/<version>`，`current` 是 junction/symlink；升级只换目录，不碰应用 `node_modules`；解析优先级 `CODEX_BIN` → pack → 内置 → PATH，Claude 走 SDK 的 `pathToClaudeCodeExecutable`，OpenCode 是 `OPENCODE_BIN` → pack → 内置 → PATH（Windows 的 `.cmd` shim 必须经 `cmd.exe`）。
+- 版本范围（`~x.y.z` 或精确 pin）只从 [manifest.ts](apps/server/src/agents/manifest.ts) 来；Codex/Claude 用 `~` 吃补丁，OpenCode 的 HTTP API 是 experimental → 精确 pin `2.2.5`；客户端只能选 id，别加「latest」，minor/major 变更必须改 manifest（要重新验证协议措辞）。
+- Codex 换包后 `supervisor.restart()` 是进程级重启，进行中回合并丢；Claude 下一回合自动生效；OpenCode managed 模式重启私有 server，attach 的外部 service 不受影响；新包起不来必须回滚 `current`。
 - 更新是后台 job（`GET /api/agents` 轮询）；npm 用 `npm-cli.js` 直跑，别走 shell（安装路径可能带空格）。
 ### 应用升级（PM2）
 - 更新器是独立 PM2 进程 `<pm2Name>-updater`（PM2 会 treekill app 子进程）；`deploy/update.mjs` 只做构建/切换/回滚，feed 与触发在服务端。
@@ -90,19 +89,18 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 ## 规则
 ### 权限档位
 - 每回合生效的是输入框权限项，覆盖建会话预设（`startTurn()` 用 `opts.sandbox/approvalPolicy` 重算）；输入框必须从会话当前档开始（`SessionSummary.sandbox/approvalPolicy`，内存 `LiveSession` 优先、磁盘兜底）。
-- 读不到一律兜底「按需确认」，绝不用「上次在这个 App 选的档」；建会话 9 种组合，输入框只有固定卡（Claude 4 / Codex 3），6 种显示为「按需确认」；不变量：认不出的组合不点亮完全访问，屏幕上的档 == 下一回合发出去的那对。
-- `codex/permission.ts` 的 `SANDBOXES`/`APPROVAL_POLICIES` 是唯一运行期闸门（两字段都在枚举里才报）；档位改三处：`apps/web/src/lib/permission.ts`（`PERMISSIONS`/`permissionCardFor()`/`permissionCardsFor()`）与 `claude/permission.ts`（`permissionModeFor()`/`permissionOptionsFor()`）。
-- 「自动判断」Claude 专属：同信道 `approvalPolicy:'auto'` + `sandbox:'workspace-write'`；`isApprovalPolicy` 拦 Codex（静默无效）；`permissionCardsFor()` 未知 provider 给窄表；它下 `canUseTool` 0 次。
+- 读不到一律兜底「按需确认」，绝不用「上次在这个 App 选的档」；建会话 9 种组合，输入框只有固定卡（Claude 4 / Codex 3 / OpenCode 2），6 种显示为「按需确认」；不变量：认不出的组合不点亮完全访问，屏幕上的档 == 下一回合发出去的那对。
+- `codex/permission.ts` 的 `SANDBOXES`/`APPROVAL_POLICIES` 是唯一运行期闸门（两字段都在枚举里才报）；档位改四处：`apps/web/src/lib/permission.ts`（`PERMISSIONS`/`permissionCardFor()`/`permissionCardsFor()`）、`claude/permission.ts`（`permissionModeFor()`/`permissionOptionsFor()`）、`opencode/permission.ts`（`cardFromPair()`/`rulesetFor()`）。
+- 「自动判断」Claude 专属：同信道 `approvalPolicy:'auto'` + `sandbox:'workspace-write'`；`isApprovalPolicy` 拦 Codex（静默无效）；`permissionCardsFor()` 未知 provider 给窄表（OpenCode 只给 `ask`/`unattended`，无只读）；它下 `canUseTool` 0 次。
 - `permissionCardFor()` 的 `cards` 必需无默认（Radix 缺 item 会渲染空触发器），`Chat.tsx` 种子和 `<Composer>` 传同一列表。
 - `needsDangerousAck('auto')` 永远 false（单测钉着）：变真会设 `allowDangerouslySkipPermissions`，root 容器下 CLI `exit(1)`；「完全访问」= 无人值守，唯一能拿到无限制机器权限的入口。
 - `AskUserQuestion` 与权限共用 `canUseTool`；答案只走 `updatedInput.answers`（`{[问题原文]: label}`，多选 `', '` 连接）→ `type:'userInput'` + `ApprovalRequest.questions`，无 `acceptForSession`，`ApprovalSheet.tsx` 见到 `questions` 换表单；给不出答案一律拒绝，只接受形状对的（`answersFor` 返回 `null` 即拒），问题读不出退回普通审批卡，`bypassPermissions` 下照样调用。
-- Codex 侧同一形状：`questionsFor`/`answersForQuestions`，`questionIds` 按位置存（响应按 id 索引）。**未实测。**
 ### 会话与吊销
 - JWT 带 `ver`，`verifySession` 要求等于 `config.sessionVersion`；登录不递增（多设备在线），只在 `VIBEMOBILE_PIN` 真变（`verifyPin`）和 `POST /api/auth/logout-all` 吊销；`sessionVersion` 在 `state.json`，`bumpSessionVersion(config)` 先写盘再改内存；TTL 7 天，`POST /api/auth/logout` 只清 Cookie。
 ### 会话存档（`providers/sessionPrefs.ts`）
-- 各存各的词汇、不归一化：Claude `claude-sessions.json`（`permissionMode`），Codex `codex-sessions.json`（`sandbox`/`approvalPolicy`）；文件名与键名不可改（线上有记录）；归一化会把 Codex `(read-only, never)` 报成完全访问。
+- 各存各的词汇、不归一化：Claude `claude-sessions.json`（`permissionMode`），Codex `codex-sessions.json`（`sandbox`/`approvalPolicy`），OpenCode `opencode-sessions.json`（`sandbox`/`approvalPolicy`，只是两张卡的编码）；文件名与键名不可改（线上有记录）；归一化会把 Codex `(read-only, never)` 报成完全访问。
 - `startTurn` 记录 merge 结果而非 `opts`，且在 `await` 之前；`deleteSession` 的 `forget` 在 RPC 成功后（Claude 相反：先 forget 再删盘）；`archiveSession` 不 forget。
-- `archived` 只 Claude 存这里，`pinned` 两边都存（Codex 归档走 `thread/archive`）；`MAX_ENTRIES = 500` 淘汰会静默取消归档/置顶（接受，不修）。
+- `archived` 只 Claude 存这里（Codex 走 `thread/archive`，OpenCode 走 `PATCH archived`），`pinned` 三方都存；`MAX_ENTRIES = 500` 淘汰会静默取消归档/置顶（接受，不修）。
 - 恢复告警 `#noticed` 只发一次，走 `onNotice`（`onLog` 是 debug）；不读 Thread{Start,Resume,Fork}Response 的 Legacy 字段，不把记住的值塞进 `thread/resume`（会在刚打开时就设成完全访问）；不变量：界面档位 == 下一回合发出去的对。
 - Claude 的 `model`/`effort`/档位自己存：`#summaryFromLive`、`#summaryFromInfo`、`#spawnTurn` 三处；`session.effort` 必须进 `Options.effort`；fork 继承。
 ### Claude 后端
@@ -120,7 +118,9 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - `@openai/codex` 精确 pin（根 devDependencies，无 `^`）；升版需同意，流程：改 pin → `npm ci` → `npm run gen:codex-types` → diff → 核对措辞 → 跑 smoke/approval/image；Dockerfile 从 `package.json` 读。
 - 模型列表是二进制内置目录（支持新模型只能升级行，`listModels()` 纯转发）；`supervisor.ts` 用 `require.resolve`，不看 PATH/`CODEX_CLI_PATH`。
 - 「没有这个线程」只有措辞（`thread not loaded`/`no rollout found`/`is not materialized yet`），全 `-32600`，集中在 `CodexProvider` 顶部谓词；措辞不在类型里且换过；未知 id → `SessionNotFoundError`（`#threadRpc`），路由 404；别把「没有历史」和「没有这个线程」混用（会把新建会话变 404）；`DELETE` 404 前端当成功。
-- `packages/protocol/src/generated/` 已 gitignore、无人 import，仅协议参考。
+### OpenCode 后端
+- API experimental：`client.ts` 只信 `types.ts` 窄类型，未知事件忽略；版本闸门 `2.2.x`，manifest 精确 pin。`server.ts` 先读 service.json 并对齐 `/api/info.pid` 再 attach，发现不到才 spawn 私有 `serve`；**版本不匹配绝不 spawn 第二个**（同 DB 无会话锁）。
+- 权限两张卡：`ask` = `*/*/ask`，`unattended` = `*/*/allow`；`startTurn` 先 `POST /agent {build}` + `PATCH /permissions` 再 prompt，失败不 prompt。无 OS 沙箱，别加只读。事件：`session.idle` 只改状态，`session.execution.*` 才结束回合；工具名只在 `tool.input.started/called`，用 `toolNames` 缓存。断线无回放，重连用 active + pending + 最新消息重建；游标 `oc:<轮数>`；表单只支持选项/文本/数字/布尔/多选，`external` 不弹；出站图片 `Prompt.FileAttachment`，首版不回读历史。
 ### 图片
 - 图片落 `.vibemobile/images/`（`<sha256[:32]>.<ext>`），转写只放 `/api/images/<token>`；代理会话文件只读：不写 `~/.codex/sessions/**`、`~/.claude/projects/**`，`*-sessions.json` 不记图。
 - `ImageStore` 无内存态，可多实例同 `stateDir`；`SessionPrefsStore` 相反只能一个实例；无 `stateDir` = 无 store（不写 `images`，data URL 不上 item）。
@@ -147,4 +147,4 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - `FileContent.rev` = 读到字节的短 sha256，带且不匹配 `409 file_changed`；前端 409 必须保留草稿、只重读换 `rev`；路由 `bodyLimit` 必须 2 MiB（默认 1 MiB 在 handler 前 413）；`WorkspaceError.code` 可选，不给时响应体与旧版逐字节相同。
 - `FileEditor` 是 `FileBody` 的兄弟（textarea 自滚，不能逐行渲染）；草稿只能由 `content.text` 初始化，不能取 rows（5000 行以上会丢尾）；`content.truncated` 不可编辑；`MAX_EDIT_LINES` 守卫；编辑态整个头部替换为 取消/保存；脏草稿卸载时存模块作用域；`saveError` 与页面 `error` 分开（否则弹回目录丢草稿）。
 ### 平台
-- 端口分段：3xxx/5xxx HTTP，68xx codex app-server；开发/部署必须分开（supervisor 只探 `/readyz` 端口，撞上会静默接错）；`npm run dev` 预检；Windows 脚本 `.ps1` 带 BOM、`.bat` 纯 ASCII，二进制走 npm（`nssm-bin`），端口占用用 `connect` 判断（`SO_REUSEADDR` 允许多绑定）。
+- 端口分段：3xxx/5xxx HTTP，68xx 代理 sidecar（codex 6800/6900、opencode 6820/6920）；开发/部署必须分开（supervisor 只探 `/readyz` 端口，撞上会静默接错）；`npm run dev` 预检；Windows 脚本 `.ps1` 带 BOM、`.bat` 纯 ASCII，二进制走 npm（`nssm-bin`），端口占用用 `connect` 判断（`SO_REUSEADDR` 允许多绑定）。

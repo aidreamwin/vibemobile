@@ -11,6 +11,7 @@ import type { Stream } from './store'
 const PROVIDER_LABEL: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
+  opencode: 'OpenCode',
 }
 
 const STATUS: Record<string, string> = {

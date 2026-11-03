@@ -51,7 +51,7 @@ npm run start:hub
 ```
 
 访问 `http://127.0.0.1:5900`。未设置 PIN 时在 Hub 日志中查看自动生成值。默认
-同时启动 `local` runner（私有 API 回环 5901，Codex 6900）。
+同时启动 `local` runner（私有 API 回环 5901，Codex 6900，OpenCode 6920）。
 
 开发时可以直接跑 TS：
 
@@ -114,6 +114,7 @@ npm run start:runner
 | `PORT` | Hub 5900 |
 | `VIBEMOBILE_RUNNER_PORT` | runner 私有 HTTP 5901 |
 | `CODEX_PORT` | runner Codex 6900；分布式入口忽略外部 `CODEX_WS_URL` |
+| `OPENCODE_PORT` | runner OpenCode 6920；attach 模式仍可用 `OPENCODE_ATTACH_URL` |
 | `VIBEMOBILE_STATE_DIR` | Hub `.multi-runner/hub`；独立 runner `.multi-runner/runners/<id>` |
 | `VIBEMOBILE_DEFAULT_RUNNER_STATE_DIR` | Hub 托管默认 runner 的状态路径 |
 | `VIBEMOBILE_DEFAULT_RUNNER` | 默认启用；`off` 表示只运行 Hub |

@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify'
-import type { AgentsResponse } from '@vibemobile/protocol'
+import type { AgentRuntimeId, AgentsResponse } from '@vibemobile/protocol'
 import type { Config } from '../config.js'
-import type { CodexProvider } from '../codex/CodexProvider.js'
 import { agentStatuses, latestAvailableVersion, startAgentUpdate } from '../agents/installer.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
 import { requireAuth } from './guards.js'
@@ -20,10 +19,16 @@ import { requireAuth } from './guards.js'
 /** Injectable for tests: the real one runs npm in the background. */
 export type StartAgentUpdate = typeof startAgentUpdate
 
+/**
+ * What to do after a pack becomes `current`. Only long-lived children need a
+ * hook; Claude picks its pack up on the next turn by itself.
+ */
+export type AgentRestartHooks = Partial<Record<AgentRuntimeId, () => void | Promise<void>>>
+
 export function registerAgentRoutes(
   app: FastifyInstance,
   config: Config,
-  codex: CodexProvider,
+  restartHooks: AgentRestartHooks = {},
   startUpdate: StartAgentUpdate = startAgentUpdate,
 ): void {
   const auth = { preHandler: requireAuth(config) }
@@ -42,7 +47,7 @@ export function registerAgentRoutes(
     if (!isAgentRuntimeId(id)) return reply.code(404).send({ error: 'unknown_agent' })
     const started = startUpdate(config, id, {
       onLog: (line) => app.log.info(line),
-      onInstalled: id === 'codex' ? () => codex.restartAppServer() : undefined,
+      onInstalled: restartHooks[id],
     })
     if (!started) return reply.code(409).send({ error: 'update_running' })
     return reply.code(202).send({ data: agentStatuses(config) })

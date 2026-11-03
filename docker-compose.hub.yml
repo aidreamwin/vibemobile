@@ -49,5 +49,7 @@ services:
       # Optional agent configuration for the default runner:
       # - ~/.codex:/root/.codex
       # - ~/.claude:/root/.claude
+      # - ~/.config/opencode:/root/.config/opencode
+      # - ~/.local/share/opencode:/root/.local/share/opencode
 volumes:
   hub-data:

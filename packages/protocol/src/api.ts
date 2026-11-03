@@ -33,7 +33,7 @@ export interface ProviderStatus {
  * `node_modules`, and `missing` means neither could be resolved. A pack that is
  * installed but not active is listed in `installed`, not in `active`.
  */
-export type AgentRuntimeId = 'codex' | 'claude'
+export type AgentRuntimeId = 'codex' | 'claude' | 'opencode'
 
 export interface AgentRuntimeStatus {
   id: AgentRuntimeId

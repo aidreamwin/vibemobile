@@ -13,7 +13,7 @@ import { Button } from './ui/button'
 import Field from './Field'
 import SelectField from './SelectField'
 import { api } from '../lib/api'
-import { PERMISSIONS, permissionCardsFor, type PermissionCard } from '../lib/permission'
+import { PERMISSIONS, permissionCardsFor, usesPermissionCards, type PermissionCard } from '../lib/permission'
 import Sheet from './Sheet'
 import DirectoryPickerSheet from './DirectoryPickerSheet'
 
@@ -41,6 +41,15 @@ const PERMISSION_HINTS: Record<PermissionCard, string> = {
   unattended: '不限目录、不限联网，谨慎使用',
 }
 
+/**
+ * The card a new session starts on for each provider. Claude keeps its
+ * 自动判断 default; every other provider starts on the safe rung. opencode has
+ * no `auto` card, so it must not inherit Claude's.
+ */
+function defaultCard(provider: ProviderId): PermissionCard {
+  return provider === 'claude' ? 'auto' : (permissionCardsFor(provider)[0] ?? 'ask')
+}
+
 export default function NewSessionSheet({
   provider,
   providers,
@@ -65,7 +74,7 @@ export default function NewSessionSheet({
   const [model, setModel] = useState<string>('')
   const [sandbox, setSandbox] = useState<SandboxMode>('workspace-write')
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>('on-request')
-  const [claudePermission, setClaudePermission] = useState<PermissionCard>('auto')
+  const [cardPermission, setCardPermission] = useState<PermissionCard>(() => defaultCard(provider))
   const [models, setModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -79,6 +88,10 @@ export default function NewSessionSheet({
     // agent is meaningless here and would otherwise be sent as-is. Reset to
     // "默认模型" and let the server choose.
     setModel('')
+    // A card from the previous provider may not exist in the new list (Claude's
+    // 自动判断 is not offered for opencode/Codex); start from that provider's
+    // default, which is Claude's 自动判断 and the safe rung elsewhere.
+    setCardPermission(defaultCard(provider))
     api
       .models(provider)
       .then((res) => !cancelled && setModels(res.data))
@@ -100,10 +113,10 @@ export default function NewSessionSheet({
         provider,
         cwd,
         model: model || undefined,
-        ...(provider === 'claude'
+        ...(usesPermissionCards(provider)
           ? {
-              sandbox: PERMISSIONS[claudePermission].sandbox,
-              approvalPolicy: PERMISSIONS[claudePermission].approvalPolicy,
+              sandbox: PERMISSIONS[cardPermission].sandbox,
+              approvalPolicy: PERMISSIONS[cardPermission].approvalPolicy,
             }
           : { sandbox, approvalPolicy }),
       })
@@ -137,7 +150,7 @@ export default function NewSessionSheet({
         {(providers?.length ?? 0) > 1 && (
           <Field label="代理">
             <div className="space-y-1.5">
-              {providers!.map((p) => (
+              {providers?.map((p) => (
                 <Option
                   key={p.id}
                   selected={provider === p.id}
@@ -193,14 +206,14 @@ export default function NewSessionSheet({
           </div>
         </Field>
 
-        {provider === 'claude' ? (
+        {usesPermissionCards(provider) ? (
           <Field label="权限">
             <div className="space-y-1.5">
               {permissionCardsFor(provider).map((card) => (
                 <Option
                   key={card}
-                  selected={claudePermission === card}
-                  onClick={() => setClaudePermission(card)}
+                  selected={cardPermission === card}
+                  onClick={() => setCardPermission(card)}
                   label={PERMISSIONS[card].label}
                   hint={PERMISSION_HINTS[card]}
                   danger={card === 'unattended'}

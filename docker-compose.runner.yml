@@ -22,5 +22,7 @@ services:
       # - ./certs/ca.pem:/app/certs/ca.pem:ro
       # - ~/.codex:/root/.codex
       # - ~/.claude:/root/.claude
+      # - ~/.config/opencode:/root/.config/opencode
+      # - ~/.local/share/opencode:/root/.local/share/opencode
 volumes:
   runner-data:

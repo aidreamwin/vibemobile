@@ -97,6 +97,7 @@ const pm2Name = String(
 const hubPort = Number(env.PORT ?? 3000)
 const runnerPort = Number(env.VIBEMOBILE_RUNNER_PORT ?? 5901)
 const codexPort = Number(env.CODEX_PORT ?? 6900)
+const opencodePort = Number(env.OPENCODE_PORT ?? 6920)
 const tls = env.VIBEMOBILE_HUB_TLS === 'on'
 const stateDir = path.resolve(env.VIBEMOBILE_STATE_DIR ?? path.join(TARGET, 'data', role === 'hub' ? 'hub' : 'state'))
 const certDir = path.join(TARGET, 'data', 'certs')
@@ -129,7 +130,10 @@ for (const [key, value] of Object.entries({
   stamp,
   releaseDir,
   pm2Name,
-  ports: role === 'hub' ? `${hubPort}/${runnerPort}/${codexPort}` : `${runnerPort}/${codexPort}`,
+  ports:
+    role === 'hub'
+      ? `${hubPort}/${runnerPort}/${codexPort}/${opencodePort}`
+      : `${runnerPort}/${codexPort}/${opencodePort}`,
   tls,
   stateDir,
 }))
@@ -247,7 +251,9 @@ jobPhase('restarting')
 step('Swapping the PM2 process')
 try {
   pm2Delete(pm2Name)
-  await waitForPortsFree(role === 'hub' ? [hubPort, runnerPort, codexPort] : [runnerPort, codexPort])
+  await waitForPortsFree(
+    role === 'hub' ? [hubPort, runnerPort, codexPort, opencodePort] : [runnerPort, codexPort, opencodePort],
+  )
   pm2Start({ ecosystemFile, cwd: TARGET })
   jobPhase('healthcheck')
   await healthy()
@@ -271,7 +277,9 @@ try {
     try {
       writeAtomic(ecosystemFile, oldEcosystem)
       pm2Delete(pm2Name)
-      await waitForPortsFree(role === 'hub' ? [hubPort, runnerPort, codexPort] : [runnerPort, codexPort])
+      await waitForPortsFree(
+        role === 'hub' ? [hubPort, runnerPort, codexPort, opencodePort] : [runnerPort, codexPort, opencodePort],
+      )
       pm2Start({ ecosystemFile, cwd: TARGET })
       await healthy()
       jobPhase('rolled_back', 'rolled_back')

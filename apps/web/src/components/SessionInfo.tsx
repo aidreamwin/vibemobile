@@ -29,7 +29,14 @@ export default function SessionInfo({
       active = false
     }
   }, [])
-  const agent = provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : (provider ?? '未知')
+  const agent =
+    provider === 'claude'
+      ? 'Claude Code'
+      : provider === 'codex'
+        ? 'Codex'
+        : provider === 'opencode'
+          ? 'OpenCode'
+          : (provider ?? '未知')
   return (
     <Popover.Root>
       <Popover.Trigger asChild>

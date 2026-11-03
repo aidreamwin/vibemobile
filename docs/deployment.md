@@ -12,9 +12,11 @@
 | `5800` | 开发模式的后端 |
 | `5802` | 开发模式的前端（Vite） |
 | `6800` | 开发模式的 codex app-server |
+| `6820` | 开发模式的 opencode server（仅在发现不到后台 service 时） |
+| `6900` / `6920` | PM2 部署的 codex / opencode 端口 |
 | `6811` / `6812` | 一次性测试脚本各自的 app-server |
 
-规律：**3xxx / 5xxx 是浏览器直接访问的 HTTP，68xx 是 codex app-server。**
+规律：**3xxx / 5xxx 是浏览器直接访问的 HTTP，68xx 是代理 sidecar（codex / opencode）。**
 Claude Code 不占端口，它每回合现起一个子进程。
 
 开发和部署**必须**分开。supervisor 用轮询 `/readyz` 判断 app-server 就绪，这个
@@ -158,8 +160,11 @@ docker compose logs -f      # 看自动生成的 PIN（若未在 .env 指定）
 ```
 
 - 状态持久化在 `vibemobile-data` volume，工作区挂载到 `/app/workspace`。
-- 两个代理的登录态都不在镜像里：需要时挂载 `~/.codex` 和 `~/.claude`，或提供
-  `ANTHROPIC_*` 等环境变量。
+- 三个代理的登录态都不在镜像里：需要时挂载 `~/.codex`、`~/.claude`、`~/.config/opencode`，
+  或提供 `ANTHROPIC_*` 等环境变量。
+- opencode 在 Docker 里通常要显式 attach：传 `OPENCODE_ATTACH_URL` + `OPENCODE_SERVER_PASSWORD`，
+  并挂载 `~/.local/share/opencode`（会话库）和 `~/.config/opencode`（凭据）。不挂载就让
+  容器内的 agents 更新安装 `@opencode/cli`，但会话不会与宿主机 TUI 共享。
 - Codex CLI 在构建阶段单独装到 `/opt/codex-cli`，因为它在根
   `devDependencies` 里，会被 `npm prune --omit=dev` 删掉。版本从
   `package.json` 读取，不在 Dockerfile 里另写一份。
@@ -184,6 +189,11 @@ docker compose logs -f      # 看自动生成的 PIN（若未在 .env 指定）
 | `VIBEMOBILE_LOG` | `info` | `silent` / `info` / `debug` |
 | `CODEX_WS_URL` | — | 附加到已有的 app-server，而不是自己 spawn |
 | `CODEX_PORT` / `CODEX_BIN` | `8788` / PATH | 自建 app-server 时的端口与可执行文件 |
+| `OPENCODE_ATTACH_URL` | — | 附加到已有的 opencode service（也可用 `OPENCODE_URL`） |
+| `OPENCODE_SERVER_PASSWORD` | — | 附加 service 的密码；不填则读 `service.json` |
+| `OPENCODE_PORT` / `OPENCODE_BIN` | `6820` / PATH | 私有 `opencode serve` 的端口与可执行文件 |
+| `OPENCODE_SERVICE_FILE` | 用户 state 目录 | 覆盖 `~/.local/state/opencode/service.json` 的位置 |
+| `OPENCODE_NO_ATTACH` | 关 | 真值则跳过发现，总是起私有 server |
 
 **`VIBEMOBILE_TRUST_PROXY` 默认关闭是承重的。** 登录限流按客户端地址计数；开启
 后它信任客户端自己写的 `X-Forwarded-For`，任何人轮换这个头就能对登录 PIN 做

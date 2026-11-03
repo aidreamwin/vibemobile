@@ -55,6 +55,7 @@ const CONN_TEXT: Record<ConnectionState, { label: string; tone: string }> = {
 const LOGIN_COMMAND: Record<string, string> = {
   codex: 'codex login',
   claude: 'claude',
+  opencode: 'opencode auth login',
 }
 
 const LOGIN_FOLLOW_UP: Record<string, string> = {
@@ -65,6 +66,7 @@ const LOGIN_FOLLOW_UP: Record<string, string> = {
   // that quietly reverts to the CLI's built-in catalogue.
   claude:
     '并在其中完成登录；若走内网代理或网关，改在服务器上配置它的 ~/.claude/settings.json（ANTHROPIC_BASE_URL 与凭据）',
+  opencode: '并按提示选择要接入的模型提供方；VibeMobile 也可以直接使用无需凭据的免费模型',
 }
 
 /**
@@ -1049,7 +1051,10 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                       </Detail>
                     )}
                     {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
-                    <p>只下载到执行机器；Codex 更新会重启 app-server（当前回合中断），Claude 下一回合生效。</p>
+                    <p>
+                      只下载到执行机器；Codex 更新会重启 app-server，OpenCode 更新会重启它的 server（两者都会中断当前回合），
+                      Claude 下一回合生效；OpenCode attach 到外部 service 时，更新只对下次启动生效。
+                    </p>
                     {provider?.available && provider.authenticated === false && (
                       <p className="text-warning">
                         请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>

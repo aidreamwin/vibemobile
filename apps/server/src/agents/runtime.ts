@@ -31,6 +31,23 @@ const CODEX_PLATFORM: Record<string, { package: string; triple: string; file: st
   'win32-arm64': { package: '@openai/codex-win32-arm64', triple: 'aarch64-pc-windows-msvc', file: 'codex.exe' },
 }
 
+/**
+ * opencode ships one wrapper package plus per-platform optional deps. The
+ * wrapper's postinstall picks the right one (AVX2 vs baseline) and copies it
+ * to `bin/opencode(.exe)`; that copy is what a runtime pack should use first.
+ * If postinstall was skipped, the platform package is the fallback.
+ */
+const OPENCODE_PLATFORM: Record<string, string> = {
+  'linux-x64': '@opencode/cli-linux-x64',
+  'linux-arm64': '@opencode/cli-linux-arm64',
+  'linux-x64-musl': '@opencode/cli-linux-x64-musl',
+  'linux-arm64-musl': '@opencode/cli-linux-arm64-musl',
+  'darwin-x64': '@opencode/cli-darwin-x64',
+  'darwin-arm64': '@opencode/cli-darwin-arm64',
+  'win32-x64': '@opencode/cli-windows-x64',
+  'win32-arm64': '@opencode/cli-windows-arm64',
+}
+
 const CLAUDE_PLATFORM: Record<string, { package: string; file: string }> = {
   'linux-x64': { package: '@anthropic-ai/claude-code-linux-x64', file: 'claude' },
   'linux-arm64': { package: '@anthropic-ai/claude-code-linux-arm64', file: 'claude' },
@@ -123,8 +140,107 @@ export function claudeBinaryInPack(packRoot: string): string | null {
   return existsSync(bin) ? bin : null
 }
 
+function opencodeFileName(): string {
+  return process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+}
+
+/**
+ * The opencode binary inside an installed pack.
+ *
+ * The wrapper's postinstall output wins: it is the variant that was selected
+ * for this CPU (AVX2 vs baseline). The per-platform package is the fallback for
+ * an install whose scripts were skipped.
+ */
+export function opencodeBinaryInPack(packRoot: string): string | null {
+  const file = opencodeFileName()
+  const wrapper = path.join(packRoot, 'node_modules', '@opencode', 'cli', 'bin', file)
+  if (existsSync(wrapper)) return wrapper
+  const target = OPENCODE_PLATFORM[claudePlatformKey()]
+  if (target) {
+    const native = path.join(packRoot, 'node_modules', target, 'bin', file)
+    if (existsSync(native)) return native
+    const baseline = path.join(packRoot, 'node_modules', `${target}-baseline`, 'bin', file)
+    if (existsSync(baseline)) return baseline
+  }
+  return null
+}
+
 export function hasBinary(id: AgentRuntimeId, packRoot: string): boolean {
-  return id === 'codex' ? codexBinaryInPack(packRoot) !== null : claudeBinaryInPack(packRoot) !== null
+  if (id === 'codex') return codexBinaryInPack(packRoot) !== null
+  if (id === 'claude') return claudeBinaryInPack(packRoot) !== null
+  return opencodeBinaryInPack(packRoot) !== null
+}
+
+/**
+ * Find an executable on PATH.
+ *
+ * Windows has to be explicit: Node's `spawn` does not consult PATHEXT, so the
+ * npm shim (`opencode.cmd`) would not run when passed as `'opencode'`. Prefer
+ * the real `.exe`; wrap a `.cmd` with the command interpreter.
+ */
+function findOnPath(name: string): ResolvedCommand | null {
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
+  const candidates =
+    process.platform === 'win32'
+      ? [`${name}.exe`, `${name}.cmd`, name]
+      : [name]
+  for (const dir of dirs) {
+    for (const candidate of candidates) {
+      const file = path.join(dir, candidate)
+      if (!existsSync(file)) continue
+      if (process.platform === 'win32' && candidate.endsWith('.cmd')) {
+        // Prefer the real executable behind the npm shim: it avoids cmd.exe,
+        // PATHEXT, and paths containing spaces. The shim lives in a directory
+        // whose sibling `node_modules` (or the parent `node_modules/.bin`) holds
+        // the package.
+        const roots = [dir, path.basename(dir) === '.bin' ? path.dirname(dir) : null]
+        for (const root of roots) {
+          if (!root) continue
+          const direct = path.join(root, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe')
+          const nested = path.join(root, '@opencode', 'cli', 'bin', 'opencode.exe')
+          for (const binary of [direct, nested]) {
+            if (existsSync(binary)) return { cmd: binary, args: [] }
+          }
+        }
+        return { cmd: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', file] }
+      }
+      return { cmd: file, args: [] }
+    }
+  }
+  return null
+}
+
+/** The opencode entry point shipped in node_modules, if it is there at all. */
+export function bundledOpenCodeBin(): ResolvedCommand | null {
+  const file = opencodeFileName()
+  const target = OPENCODE_PLATFORM[claudePlatformKey()]
+  if (target) {
+    try {
+      const pkg = require.resolve(`${target}/package.json`)
+      const binary = path.join(path.dirname(pkg), 'bin', file)
+      if (existsSync(binary)) return { cmd: binary, args: [] }
+    } catch {
+      // Optional platform package absent; try the wrapper.
+    }
+  }
+  try {
+    const pkg = require.resolve('@opencode/cli/package.json')
+    const binary = path.join(path.dirname(pkg), 'bin', file)
+    if (existsSync(binary)) return { cmd: binary, args: [] }
+  } catch {
+    // Not a dependency of this repo, which is the normal case.
+  }
+  return null
+}
+
+/** opencode priority: explicit bin -> runtime pack -> bundled -> PATH. */
+export function resolveOpencodeBin(opts: { bin?: string; agentsDir?: string } = {}): ResolvedCommand {
+  if (opts.bin) return { cmd: opts.bin, args: [] }
+  if (opts.agentsDir) {
+    const packed = opencodeBinaryInPack(currentPackPath(opts.agentsDir, 'opencode'))
+    if (packed) return { cmd: packed, args: [] }
+  }
+  return bundledOpenCodeBin() ?? findOnPath('opencode') ?? { cmd: 'opencode', args: [] }
 }
 
 /** `<agentsDir>/<id>/current`, the only path the rest of the server reads. */
@@ -179,6 +295,17 @@ export function bundledAgentVersion(id: AgentRuntimeId): string | null {
   if (id === 'codex') {
     try {
       const pkg = require.resolve('@openai/codex/package.json')
+      const parsed = JSON.parse(readFileSync(pkg, 'utf8')) as { version?: unknown }
+      return typeof parsed.version === 'string' ? parsed.version : null
+    } catch {
+      return null
+    }
+  }
+  if (id === 'opencode') {
+    // Not a dependency of this repo; a developer who added it should see the
+    // version, and everyone else gets null until a runtime pack is installed.
+    try {
+      const pkg = require.resolve('@opencode/cli/package.json')
       const parsed = JSON.parse(readFileSync(pkg, 'utf8')) as { version?: unknown }
       return typeof parsed.version === 'string' ? parsed.version : null
     } catch {

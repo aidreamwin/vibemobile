@@ -10,6 +10,7 @@ import { registry } from './providers/registry.js'
 import { probeCache } from './providers/probeCache.js'
 import { CodexProvider } from './codex/CodexProvider.js'
 import { ClaudeProvider } from './claude/ClaudeProvider.js'
+import { OpencodeProvider } from './opencode/OpencodeProvider.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerSessionRoutes } from './routes/sessions.js'
 import { registerFileRoutes } from './routes/files.js'
@@ -84,22 +85,44 @@ const claude = new ClaudeProvider({
 })
 registry.register(claude)
 
+// Third, and never first: `registry.default` stays Codex. opencode has no
+// eager requirement either — attach discovery is cheap, and a missing binary
+// shows up in `probe()` like Claude's.
+const opencode = new OpencodeProvider({
+  workspaceRoots: config.workspaceRoots,
+  stateDir: config.stateDir,
+  agentsDir: config.agentsDir,
+  attachUrl: config.opencode.attachUrl,
+  port: config.opencode.port,
+  bin: config.opencode.bin,
+  password: config.opencode.password,
+  serviceFile: config.opencode.serviceFile,
+  noAttach: config.opencode.noAttach,
+  onLog: (line) => app.log.debug(line),
+  onNotice: (line) => app.log.warn(line),
+})
+registry.register(opencode)
+
 codex.on('reconnected', async () => {
   app.log.warn('app-server reconnected; re-subscribing known threads')
   await codex.resubscribeAll?.().catch((err) => app.log.error({ err }, 'resubscribe failed'))
 })
 codex.on('error', (err: Error) => app.log.error({ err }, 'codex provider error'))
 claude.on('error', (err: Error) => app.log.error({ err }, 'claude provider error'))
+opencode.on('error', (err: Error) => app.log.error({ err }, 'opencode provider error'))
 
 app.addHook('onClose', async () => {
-  await Promise.allSettled([codex.stop(), claude.stop()])
+  await Promise.allSettled([codex.stop(), claude.stop(), opencode.stop()])
 })
 
 // ------------------------------------------------------------------ routes
 
 registerHealthRoutes(app, config)
 registerAuthRoutes(app, config)
-registerAgentRoutes(app, config, codex)
+registerAgentRoutes(app, config, {
+  codex: () => codex.restartAppServer(),
+  opencode: () => opencode.restartServer(),
+})
 registerSystemRoutes(app, config)
 registerSessionRoutes(app, config)
 registerFileRoutes(app, config)
@@ -148,6 +171,13 @@ try {
 // CLI is spawned per turn. Any real problem (missing binary, bad credentials)
 // shows up in `probe()`, which is what the UI reads.
 await claude.start().catch((err) => app.log.error({ err }, 'claude provider failed to start'))
+
+// Attach to the user's opencode service when there is one, otherwise spawn a
+// private server. A failure is not fatal: the provider reports unavailable and
+// every request retries discovery.
+await opencode
+  .start()
+  .catch((err) => app.log.error({ err }, 'opencode provider failed to start — check `opencode auth login`'))
 
 // Warm the probe cache while nobody is waiting. `probe()` is not cheap —
 // Claude's spawns a ~230 MB native CLI binary — and the session list screen

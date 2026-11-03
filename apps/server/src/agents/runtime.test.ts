@@ -7,10 +7,13 @@ import {
   bundledAgentVersion,
   claudeBinaryInPack,
   codexBinaryInPack,
+  hasBinary,
   installedPacks,
+  opencodeBinaryInPack,
   readPackVersion,
   resolveClaudeBin,
   resolveCodexBin,
+  resolveOpencodeBin,
   satisfiesRange,
 } from './runtime.js'
 
@@ -68,6 +71,14 @@ function writeClaudePack(pack: string, version: string): void {
   const target = CLAUDE_TARGETS[platformKey()]
   if (!target) return
   const binary = path.join(pack, 'node_modules', target.pkg, target.file)
+  fs.mkdirSync(path.dirname(binary), { recursive: true })
+  fs.writeFileSync(binary, '')
+}
+
+function writeOpenCodePack(pack: string, version: string): void {
+  writePackage(pack, '@opencode/cli', version)
+  const file = process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+  const binary = path.join(pack, 'node_modules', '@opencode', 'cli', 'bin', file)
   fs.mkdirSync(path.dirname(binary), { recursive: true })
   fs.writeFileSync(binary, '')
 }
@@ -171,5 +182,19 @@ describe('runtime packs', () => {
     writeClaudePack(path.join(agentsDir, 'claude', '2.1.0'), '2.1.0')
     linkCurrent(agentsDir, 'claude', '2.1.0')
     expect(resolveClaudeBin(agentsDir)).toMatch(/claude[\\/]current/)
+  })
+
+  it('finds the opencode wrapper binary and resolves its pack', () => {
+    const pack = temp()
+    writeOpenCodePack(pack, '2.2.5')
+    expect(opencodeBinaryInPack(pack)).toContain('opencode')
+    expect(hasBinary('opencode', pack)).toBe(true)
+    expect(hasBinary('opencode', temp())).toBe(false)
+
+    const agentsDir = temp()
+    writeOpenCodePack(path.join(agentsDir, 'opencode', '2.2.5'), '2.2.5')
+    linkCurrent(agentsDir, 'opencode', '2.2.5')
+    expect(resolveOpencodeBin({ agentsDir }).cmd).toMatch(/opencode[\\/]current/)
+    expect(resolveOpencodeBin({ bin: '/custom/opencode', agentsDir }).cmd).toBe('/custom/opencode')
   })
 })

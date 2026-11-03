@@ -14,7 +14,9 @@ import type { Config } from '../config.js'
 import { AGENT_IDS, AGENT_RUNTIMES, isAgentRuntimeId } from './manifest.js'
 import { activeAgent, currentPackPath, hasBinary, installedPacks, readPackVersion, satisfiesRange } from './runtime.js'
 
-const INSTALL_TIMEOUT_MS = 10 * 60 * 1000
+// opencode's platform binary is ~260 MB; a slow registry can exceed the old
+// 10-minute bound. The job is already asynchronous and cancellable by restart.
+const INSTALL_TIMEOUT_MS = 20 * 60 * 1000
 
 interface Job {
   state: 'idle' | 'running' | 'error'

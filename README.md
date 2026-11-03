@@ -4,8 +4,8 @@
 
 # VibeMobile
 
-在手机浏览器里远程驱动本机的编码代理。目前支持 **Codex** 和 **Claude Code**
-两个后端，提供流式对话、审批弹窗、文件 Diff / 查看 / 编辑、直连终端和图片输入。
+在手机浏览器里远程驱动本机的编码代理。目前支持 **Codex**、**Claude Code** 和
+**OpenCode** 三个后端，提供流式对话、审批弹窗、文件 Diff / 查看 / 编辑、直连终端和图片输入。
 
 > **安全提示：VibeMobile 是单用户工具。** 登录后即可在宿主机上执行任意命令；
 > 「完全访问」档等同于无人值守。**不要直接暴露到公网** —— 需要公网访问时，请
@@ -14,8 +14,8 @@
 ## English
 
 VibeMobile is a mobile web remote control for coding agents running on your own
-machine. It supports **Codex** and **Claude Code** with streaming output,
-approval sheets, file diffs, a persistent terminal, and image input.
+machine. It supports **Codex**, **Claude Code**, and **OpenCode** with streaming
+output, approval sheets, file diffs, a persistent terminal, and image input.
 
 The Node backend is not optional: `codex app-server` rejects WebSocket upgrades
 that carry an `Origin` header, and browsers always send one, so the backend acts
@@ -43,8 +43,8 @@ expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
 
 ## 功能
 
-- **两个代理后端**：Codex（app-server JSON-RPC）和 Claude Code（Agent SDK），
-  前端只消费归一化事件。
+- **三个代理后端**：Codex（app-server JSON-RPC）、Claude Code（Agent SDK）和
+  OpenCode（HTTP + SSE；优先接入用户自己的后台 service），前端只消费归一化事件。
 - **流式输出**：逐 token 增量、推理过程、工具调用、计划（todo）和用量。
 - **审批**：命令 / 文件修改 / 权限请求以弹窗呈现；Claude 的
   `AskUserQuestion` 渲染成完整表单。
@@ -62,6 +62,7 @@ expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
 手机浏览器 ──HTTP/WS(局域网)──► Node 后端 ──WS(127.0.0.1)──► codex app-server
    React PWA      PIN → JWT       Fastify      JSON-RPC 客户端    （由后端 spawn 托管）
                                     ├── Claude Agent SDK（每回合一个子进程）
+                                    ├── opencode HTTP + SSE（attach 或私有 serve）
                                     └── node-pty（终端直连）
 ```
 
@@ -73,8 +74,8 @@ expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
 抽象；`routes/` 与 `ws/hub.ts` 完全 provider-agnostic。增加一个 provider =
 实现接口 + 在 `apps/server/src/index.ts` 里 `registry.register()`。
 
-两个后端的会话模型不同（常驻进程 vs 每回合一个子进程；续接方式；插话方式；
-元数据存储），详见 [docs/architecture.md](docs/architecture.md)。影响正确性的
+三个后端的会话模型不同（常驻进程 / 每回合一个子进程 / HTTP 服务；续接方式；
+插话方式；元数据存储），详见 [docs/architecture.md](docs/architecture.md)。影响正确性的
 接缝和“改错不会报错、只会静默出错”的约束集中在 [CLAUDE.md](CLAUDE.md)。
 
 ## 快速开始
@@ -159,13 +160,14 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 
 输入框上的权限项**每回合**决定沙箱和审批策略，并覆盖建会话时的预设。四档：
 
-| 档位 | Claude | Codex | 说明 |
-|---|---|---|---|
-| 按需确认 | `default` | `workspace-write` + `on-request` | 需要时弹审批 |
-| 只读 | `plan` | `read-only` | 只读探索 |
-| 自动判断 | `auto` | — | Claude 专属；**不弹审批**，判不了时直接拦掉动作 |
-| 完全访问 | `bypassPermissions` | `danger-full-access` | **无人值守**，不再有任何确认 |
+| 档位 | Claude | Codex | OpenCode | 说明 |
+|---|---|---|---|---|
+| 按需确认 | `default` | `workspace-write` + `on-request` | `*/* → ask` | 需要时弹审批 |
+| 只读 | `plan` | `read-only` | — | 只读探索 |
+| 自动判断 | `auto` | — | — | Claude 专属；**不弹审批**，判不了时直接拦掉动作 |
+| 完全访问 | `bypassPermissions` | `danger-full-access` | `*/* → allow` | **无人值守**，不再有任何确认 |
 
+- OpenCode 没有 OS 沙箱（`plan` 仍允许 shell），所以只提供「按需确认 / 完全访问」两张卡。
 - 读不到会话当前档位时一律兜底到「按需确认」，绝不填「上次选过的那档」。
 - 「自动判断」不向手机抛审批，屏幕上看不出它放过了什么；它也不能在建会话时选。
 - 「完全访问」是本应用里唯一能让一部手机拿到无限制机器权限的入口。
@@ -179,6 +181,8 @@ apps/server/src/
   codex/          AppServerClient · supervisor · mapEvents · permission
   claude/         ClaudeProvider · transcript · mapClaudeEvents / mapUtils
                   · runtime · turnInput · permission
+  opencode/       OpencodeProvider · client(HTTP+SSE) · server(attach/spawn)
+                  · transcript · mapEvents · permission
   providers/      AgentProvider 抽象 · registry · sessionPrefs · 分页
   images/         用户图片的内容寻址存储
   ws/             hub（事件扇出）· terminal（PTY 桥）
@@ -219,6 +223,9 @@ packages/protocol/src/
 - 图片缓存不跟随会话删除，也没有容量上限（整个删掉永远安全）。
 - Codex 的 `request_user_input` 链路只验证了一半。
 - 新建但未发消息的 Codex 会话，服务重启后找不回来。
+- OpenCode 没有 OS 沙箱，只有「按需确认 / 完全访问」；HTTP API 是 experimental，
+  版本与行为按 manifest 精确 pin。
+- OpenCode 断线后没有事件回放；进行中的回合靠消息重读恢复，可能缺少极短的增量。
 - UI 目前只有中文；未在真机 iOS Safari / Android Chrome 上完整验证。
 
 完整说明见 [docs/limitations.md](docs/limitations.md)。

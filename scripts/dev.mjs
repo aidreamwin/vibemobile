@@ -16,6 +16,7 @@
  *      3000 / 8788   部署段（HTTP / codex app-server，常驻，由 Windows 服务持有）
  *      5800 / 5802   开发段（后端 / 前端 Vite）
  *      6800          开发段的 codex app-server
+ *      6820          开发段的 opencode server（仅在发现不到后台 service 时）
  *      6811 / 6812   一次性测试脚本各自的 app-server
  *
  *    app-server 单独拎到 6800，而不是跟在 5800 后面排 5801：它和 HTTP 是两种
@@ -65,6 +66,7 @@ function arg(name) {
 
 const SERVER_PORT = Number(arg('server-port') ?? process.env.VIBEMOBILE_DEV_PORT ?? 5800)
 const CODEX_PORT = Number(arg('codex-port') ?? process.env.VIBEMOBILE_DEV_CODEX_PORT ?? 6800)
+const OPENCODE_PORT = Number(arg('opencode-port') ?? process.env.VIBEMOBILE_DEV_OPENCODE_PORT ?? 6820)
 const WEB_PORT = Number(arg('web-port') ?? process.env.VIBEMOBILE_DEV_WEB_PORT ?? 5802)
 
 const only = arg('only') ?? ''
@@ -139,13 +141,19 @@ if (wantServer) {
         `app-server 上，两边互相抢会话锁。`,
     )
   }
+  if (await occupied(OPENCODE_PORT)) {
+    problems.push(
+      `端口 ${OPENCODE_PORT} 已被占用。opencode provider 只有在发现不到用户后台 ` +
+        `service 时才会在这里起私有 server；占用会让它启动失败或接到陌生进程。`,
+    )
+  }
 }
 if (wantWeb && (await occupied(WEB_PORT))) {
   problems.push(`端口 ${WEB_PORT} 已被占用，前端起不来。`)
 }
 
 if (problems.length) {
-  const watched = [...(wantServer ? [SERVER_PORT, CODEX_PORT] : []), ...(wantWeb ? [WEB_PORT] : [])]
+  const watched = [...(wantServer ? [SERVER_PORT, CODEX_PORT, OPENCODE_PORT] : []), ...(wantWeb ? [WEB_PORT] : [])]
   console.error('\n开发模式无法启动：\n')
   for (const p of problems) console.error('  - ' + p)
   console.error('\n谁占着，以及怎么清理（Windows）：')
@@ -154,7 +162,7 @@ if (problems.length) {
   console.error('  taskkill /pid <PID> /T /F')
   console.error('      # /T 连子进程一起，别漏')
   console.error('\n或者整段退到备用端口（这种写法在 bash 和 cmd 里都能直接跑）：')
-  console.error('  node scripts/dev.mjs --server-port=5900 --codex-port=6801 --web-port=5902\n')
+  console.error('  node scripts/dev.mjs --server-port=5900 --codex-port=6801 --opencode-port=6802 --web-port=5902\n')
   process.exit(1)
 }
 
@@ -198,7 +206,9 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 console.log('')
 console.log('  VibeMobile 开发模式')
 console.log('')
-if (wantServer) console.log(`    后端   http://localhost:${SERVER_PORT}   (codex app-server :${CODEX_PORT})`)
+if (wantServer) {
+  console.log(`    后端   http://localhost:${SERVER_PORT}   (codex :${CODEX_PORT}, opencode :${OPENCODE_PORT})`)
+}
 if (wantWeb) console.log(`    前端   http://localhost:${WEB_PORT}`)
 console.log('')
 console.log('  已部署的服务仍在 3000 / 8788 上运行，互不干扰。')
@@ -208,6 +218,7 @@ if (wantServer) {
   start('server', path.join(ROOT, 'apps', 'server'), [TSX_CLI, 'watch', 'src/index.ts'], {
     PORT: String(SERVER_PORT),
     CODEX_PORT: String(CODEX_PORT),
+    OPENCODE_PORT: String(OPENCODE_PORT),
   })
 }
 

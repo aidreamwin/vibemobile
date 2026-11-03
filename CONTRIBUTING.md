@@ -15,8 +15,9 @@ CLI version is pinned deliberately; do not upgrade it in a drive-by change.
 ## 开始之前
 
 - **Node.js 20 或更高版本**（推荐 22，见 `.nvmrc`），npm，git。
-- 需要本机已登录至少一个代理：Codex（`codex login`）或 Claude Code
-  （`claude`）。没有登录态也能开发，只是对应会话无法真正执行回合。
+- 需要本机已登录至少一个代理：Codex（`codex login`）、Claude Code（`claude`）
+  或 OpenCode（`opencode auth login`；免费模型无需登录）。没有登录态也能开发，
+  只是对应会话无法真正执行回合。
 - **不要在 3000 端口上的部署服务上做测试。** 如果需要真实服务，用
   `npm run dev`（默认 5800/5802/6800），或者用独立端口和独立状态目录另起
   一套，例如：
@@ -76,6 +77,7 @@ npm run test:coverage  # 两个 workspace 各自输出 coverage/
 | `npx tsx apps/server/scripts/smoke-claude.ts` | 已登录的 Claude Code CLI |
 | `npx tsx apps/server/scripts/test-claude.ts` | 已登录的 Claude Code CLI（全链路） |
 | `npx tsx apps/server/scripts/smoke-image.ts` | 已登录的 Codex CLI |
+| `npm run smoke:opencode` | 已安装 opencode（PATH 或 runtime pack）；可访问免费模型 |
 | `npm run test:hub -- <PIN>` | 服务在跑 |
 | `npm run test:terminal -- <PIN>` | 服务在跑 |
 | `npm run smoke:browser -- <PIN>` | 服务在跑，且已构建前端；需要无头 Edge |

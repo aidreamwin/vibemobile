@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PERMISSIONS, PERMISSION_CARDS, permissionCardFor, permissionCardsFor } from './permission'
+import { PERMISSIONS, PERMISSION_CARDS, permissionCardFor, permissionCardsFor, usesPermissionCards } from './permission'
 
 const ALL = PERMISSION_CARDS
 const WITHOUT_AUTO = permissionCardsFor('codex')
@@ -60,6 +60,15 @@ describe('permissionCardsFor', () => {
     expect(permissionCardsFor('codex')).not.toContain('auto')
   })
 
+  it('offers only the two honest rungs for opencode', () => {
+    const cards = permissionCardsFor('opencode')
+    expect(cards).toEqual(['ask', 'unattended'])
+    expect(cards).not.toContain('auto')
+    expect(cards).not.toContain('readonly')
+    expect(usesPermissionCards('opencode')).toBe(true)
+    expect(usesPermissionCards('codex')).toBe(false)
+  })
+
   it('gives an unknown or missing provider the narrow list', () => {
     expect(permissionCardsFor(undefined)).toEqual(WITHOUT_AUTO)
     expect(permissionCardsFor('some-future-agent')).toEqual(WITHOUT_AUTO)
@@ -88,7 +97,7 @@ describe('permissionCardsFor', () => {
       [undefined, undefined],
       ['workspace-write', 'never'],
     ]
-    for (const list of [ALL, WITHOUT_AUTO]) {
+    for (const list of [ALL, WITHOUT_AUTO, permissionCardsFor('opencode')]) {
       for (const [sandbox, approvalPolicy] of pairs) {
         expect(list).toContain(permissionCardFor(sandbox, approvalPolicy, list))
       }

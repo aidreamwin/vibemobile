@@ -48,6 +48,13 @@ export const PERMISSION_CARDS: PermissionCard[] = ['ask', 'readonly', 'auto', 'u
 const CODEX_CARDS: PermissionCard[] = ['ask', 'readonly', 'unattended']
 
 /**
+ * opencode has no OS sandbox: its `plan` agent still allows `shell`, so a
+ * 只读 card would be a promise the backend cannot keep. Only the two honest
+ * rungs are offered.
+ */
+const OPENCODE_CARDS: PermissionCard[] = ['ask', 'unattended']
+
+/**
  * The cards to offer for a session, by provider.
  *
  * An unknown provider — which today means "the summary has not loaded yet" —
@@ -63,7 +70,14 @@ const CODEX_CARDS: PermissionCard[] = ['ask', 'readonly', 'unattended']
  * (it is a required field) — a property of that page, not of this type.
  */
 export function permissionCardsFor(provider: ProviderId | undefined): PermissionCard[] {
-  return provider === 'claude' ? PERMISSION_CARDS : CODEX_CARDS
+  if (provider === 'claude') return PERMISSION_CARDS
+  if (provider === 'opencode') return OPENCODE_CARDS
+  return CODEX_CARDS
+}
+
+/** Providers whose composer offers the one-card permission ladder. */
+export function usesPermissionCards(provider: ProviderId | undefined): boolean {
+  return provider === 'claude' || provider === 'opencode'
 }
 
 /**

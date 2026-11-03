@@ -64,6 +64,7 @@ Hub options:
   --port=3000              browser port
   --runner-port=3001       private loopback port of the default runner
   --codex-port=6900        codex app-server port of the default runner
+  --opencode-port=6920     opencode server port of the default runner
   --pin=123456             fixed PIN (omit to auto-generate on first start)
   --pin-file=<file>        read the PIN from a file instead of argv
   --tls                    generate a private CA and serve HTTPS/WSS
@@ -114,8 +115,13 @@ const pm2Name = String(one(args.pm2Name) ?? (role === 'hub' ? 'vibemobile' : 'vi
 const hubPort = role === 'hub' ? checkPort(Number(one(args.port) ?? 3000), 'port') : undefined
 const runnerPort = checkPort(Number(one(args.runnerPort) ?? (role === 'hub' ? hubPort + 1 : 5901)), 'runner port')
 const codexPort = checkPort(Number(one(args.codexPort) ?? 6900), 'codex port')
-if (role === 'hub' && new Set([hubPort, runnerPort, codexPort]).size !== 3) fail('ports must all be different')
-if (role === 'runner' && runnerPort === codexPort) fail('runner port and codex port must be different')
+const opencodePort = checkPort(Number(one(args.opencodePort) ?? 6920), 'opencode port')
+if (role === 'hub' && new Set([hubPort, runnerPort, codexPort, opencodePort]).size !== 4) {
+  fail('ports must all be different')
+}
+if (role === 'runner' && new Set([runnerPort, codexPort, opencodePort]).size !== 3) {
+  fail('runner, codex and opencode ports must be different')
+}
 
 const release = readRelease(ROOT)
 if (!release) {
@@ -214,6 +220,7 @@ const plan = {
   hubPort,
   runnerPort,
   codexPort,
+  opencodePort,
   workspaces,
   tls,
   noDefaultRunner,
@@ -352,7 +359,9 @@ step('Starting under PM2')
 // A re-install may be replacing a running app of the same name; remove only
 // that app, then prove the ports are actually free before binding.
 pm2Delete(pm2Name)
-await waitForPortsFree(role === 'hub' ? [hubPort, runnerPort, codexPort] : [runnerPort, codexPort])
+await waitForPortsFree(
+  role === 'hub' ? [hubPort, runnerPort, codexPort, opencodePort] : [runnerPort, codexPort, opencodePort],
+)
 pm2Start({ ecosystemFile, cwd: ROOT })
 
 if (role === 'hub') {
@@ -452,6 +461,7 @@ function hubEnv({ pin }) {
     VIBEMOBILE_ROOTS: joinRoots(workspaces),
     VIBEMOBILE_RUNNER_PORT: String(runnerPort),
     CODEX_PORT: String(codexPort),
+    OPENCODE_PORT: String(opencodePort),
     VIBEMOBILE_TERMINAL: args.noTerminal ? 'off' : 'on',
     VIBEMOBILE_LOG: 'info',
     ...updateEnv(),
@@ -496,6 +506,7 @@ function runnerEnv() {
     VIBEMOBILE_RUNNER_TOKEN: String(token),
     VIBEMOBILE_RUNNER_PORT: String(runnerPort),
     CODEX_PORT: String(codexPort),
+    OPENCODE_PORT: String(opencodePort),
     VIBEMOBILE_STATE_DIR: stateDir,
     VIBEMOBILE_ROOTS: joinRoots(workspaces),
     VIBEMOBILE_TERMINAL: args.noTerminal ? 'off' : 'on',

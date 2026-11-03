@@ -19,13 +19,18 @@ services:
       - VIBEMOBILE_TERMINAL=${VIBEMOBILE_TERMINAL:-on}
       - VIBEMOBILE_SHELL=/bin/bash
       - CODEX_WS_URL=${CODEX_WS_URL:-}
+      - OPENCODE_ATTACH_URL=${OPENCODE_ATTACH_URL:-}
+      - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:-}
+      - OPENCODE_PORT=${OPENCODE_PORT:-6820}
     volumes:
       # 持久化 vibemobile 的登录 PIN 和 JWT 密钥
       - vibemobile-data:/app/data
-      # 挂载宿主机工作区（供两个代理操作）
+      # 挂载宿主机工作区（供三个代理操作）
       - ${HOST_WORKSPACE_DIR:-.}:/app/workspace
-      # 可选：两个代理的登录态都不在镜像里，要在容器内用哪个就挂哪个
+      # 可选：三个代理的登录态都不在镜像里，要在容器内用哪个就挂哪个
       # - ~/.codex:/root/.codex
       # - ~/.claude:/root/.claude
+      # - ~/.config/opencode:/root/.config/opencode
+      # - ~/.local/share/opencode:/root/.local/share/opencode
 volumes:
   vibemobile-data:

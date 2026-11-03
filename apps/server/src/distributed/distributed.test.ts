@@ -28,6 +28,7 @@ const config: Config = {
   sessionVersion: 1,
   workspaceRoots: [],
   codex: { port: 0 },
+  opencode: { port: 0 },
   stateDir: '',
   agentsDir: '',
   installDir: '',

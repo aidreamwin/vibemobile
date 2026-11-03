@@ -16,7 +16,7 @@
 - **「自动判断」是 Claude 专属，且不向手机抛审批。** 实测 `canUseTool` 被调用
   0 次，工作区内外的写/删都会执行；分类器判不了时**直接拦掉动作**，手机上看
   不出它放过了什么。它也不能在建会话时选，只能在输入框里切换。
-- **「完全访问」在两个后端都等同于无人值守。** 手机点一下之后不再有任何确认。
+- **「完全访问」在三个后端都等同于无人值守。** 手机点一下之后不再有任何确认。
   这是本应用里唯一能让一部手机拿到无限制机器权限的入口 —— 暴露到公网前请
   三思，见 [SECURITY.md](../SECURITY.md)。
 - **单用户设计**，没有多用户、角色、ACL 或配额。
@@ -36,6 +36,23 @@
 - **Codex 的协议措辞会随版本变化。** `thread not loaded` /
   `no rollout found` / `is not materialized yet` 都只能按文案识别，升级 Codex
   时必须逐条重新验证。
+
+## OpenCode
+
+- **没有 OS 沙箱。** 只有「按需确认 / 完全访问」两张卡；`plan` agent 仍允许
+  shell，所以不提供「只读」。
+- **HTTP API 是 experimental。** 版本按 manifest 精确 pin；attach 只接受 `2.2.x`，
+  其他版本报告不可用而不是另起一个 server。
+- **断线没有事件回放。** 重连时用 active 列表、待审批/表单和最新消息重建进行中
+  的回合；极短的增量可能缺失，刷新后以 transcript 为准。
+- **表单只支持选项/文本/数字/布尔/多选。** `external`（OAuth 等）留给 opencode
+  客户端；不渲染的表单会让回合停在等待状态。
+- **和桌面 TUI 共享会话时没有锁。** 两边同时驱动同一会话可能互相覆盖；优先
+  attach 到同一个后台 service，避免两个 server 共库。
+- **首版不做** fork、历史图片回读、斜杠命令、diff/revert/PTY 代理。
+- **服务账户可能看不到用户配置。** Windows 服务 / PM2 以别的账户运行时，
+  `service.json`、模型凭据和会话 DB 都可能对不上；用 `OPENCODE_ATTACH_URL`
+  或显式 `OPENCODE_SERVICE_FILE` / `HOME`。
 
 ## 转写与媒体
 

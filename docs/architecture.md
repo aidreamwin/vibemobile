@@ -10,9 +10,10 @@ flowchart LR
   phone["手机浏览器<br/>React PWA"] -- HTTP / WS<br/>PIN → JWT --> server["Node 后端<br/>Fastify"]
   server -- "JSON-RPC over WS<br/>127.0.0.1" --> appserver["codex app-server<br/>由后端 spawn"]
   server -- "Agent SDK query()<br/>每回合一个子进程" --> claude["Claude Code CLI"]
+  server -- "HTTP + SSE<br/>attach 或私有 serve" --> opencode["opencode v2 API"]
   server -- "node-pty" --> shell["持久 shell"]
   server -- "读写" --> workspace["workspaceRoots"]
-  server -- "回放" --> transcripts["~/.codex / ~/.claude<br/>（只读）"]
+  server -- "回放" --> transcripts["~/.codex / ~/.claude / opencode.db<br/>（只读）"]
 ```
 
 ## 为什么必须由后端代理
@@ -30,7 +31,8 @@ WS 客户端。这是约束，不是取舍。
 
 ```text
 routes/  ws/  ──►  AgentProvider  ──►  CodexProvider
-                   （归一化事件）  └──►  ClaudeProvider
+                   （归一化事件）  ├──►  ClaudeProvider
+                                   └──►  OpencodeProvider
 ```
 
 - `routes/` 和 `ws/hub.ts` 完全 provider-agnostic。
@@ -39,16 +41,16 @@ routes/  ws/  ──►  AgentProvider  ──►  CodexProvider
 - 增加一个 provider = 实现 `AgentProvider` + 在 `apps/server/src/index.ts` 里
   `registry.register()`。
 
-两个后端的会话模型不同：
+三个后端的会话模型不同：
 
-| | Codex | Claude Code |
-|---|---|---|
-| 传输 | 常驻 app-server，JSON-RPC over WS | SDK `query()` |
-| 进程 | 一个长驻进程，服务全程复用 | 每回合一个子进程，回合结束即退出 |
-| 续接 | 订阅同一个 thread | 首回合传 `sessionId`，之后传 `resume` |
-| 回合中插话 | 原生 `turn/steer` | 保持 stdin 打开，消息折进当前回合 |
-| 会话元数据 | app-server 的 thread 记录 | 没有对应物，由本服务存档 |
-| 端口 | 占一个 | 不占 |
+| | Codex | Claude Code | OpenCode |
+|---|---|---|---|
+| 传输 | 常驻 app-server，JSON-RPC over WS | SDK `query()` | HTTP + SSE（v2 API） |
+| 进程 | 一个长驻进程，服务全程复用 | 每回合一个子进程，回合结束即退出 | 优先 attach 用户 service，否则私有 `serve` |
+| 续接 | 订阅同一个 thread | 首回合传 `sessionId`，之后传 `resume` | 会话在服务端，事件流全局 |
+| 回合中插话 | 原生 `turn/steer` | 保持 stdin 打开，消息折进当前回合 | `prompt {delivery:'steer'}` 折进当前 execution |
+| 会话元数据 | app-server 的 thread 记录 | 没有对应物，由本服务存档 | `opencode.db` / service |
+| 端口 | 占一个 | 不占 | 占一个（attach 时用服务的） |
 
 Claude 的 session id 由本服务用 `randomUUID()` 生成，第一回合通过
 `options.sessionId` 交给 CLI —— 这是「每回合一个子进程」仍能有稳定路由 id 的原因。
@@ -64,6 +66,9 @@ Claude 侧的文件分工：
 | `claude/turnInput.ts` | 保持打开的 streaming input |
 | `claude/runtime.ts` | 探针、模型标签、超时、config 目录等无状态辅助 |
 | `claude/permission.ts` | 权限卡 ↔ `permissionMode` 的纯映射 |
+
+OpenCode 侧：`client.ts`（HTTP+SSE）、`server.ts`（attach/spawn）、`transcript.ts`
+（消息 → 回合）、`mapEvents.ts`（SSE → `AgentEvent`）、`permission.ts`（两张卡和表单）。
 
 ## 会话路由
 
@@ -103,9 +108,13 @@ Claude 侧的文件分工：
 - `packages/protocol/src/events.ts` 的 `AgentEvent` 是前后端唯一契约。
 - `?items=` 表示「大约多少个渲染条目」，`?limit=` 表示轮数；两者共用一个游标。
 - 分页切在整轮边界；只要还有更旧的轮就绝不返回空页。
-- Codex 的游标来自 app-server；Claude 的游标是自铸的 `c:<跳过的轮数>`。
+- Codex 的游标来自 app-server；Claude 的游标是自铸的 `c:<跳过的轮数>`；
+  OpenCode 是 `oc:<跳过的轮数>`——API 的游标是消息级的，按轮数自铸才能保证
+  每页切在整轮边界。
 - Claude 的转写读取会跨压缩边界分段，每段独立排序，边界作为可见的
   `compaction` item 插入。
+- OpenCode 的断线没有事件回放：重连时用 `/api/session/active`、待审批/表单
+  列表和最新消息重建进行中的回合。
 
 ## 图片
 
@@ -145,7 +154,7 @@ Claude 侧的文件分工：
 默认状态目录是 `.vibemobile/`，包含：
 
 - `state.json`：JWT 签名密钥和 PIN
-- `codex-sessions.json` / `claude-sessions.json`：会话元数据存档
+- `codex-sessions.json` / `claude-sessions.json` / `opencode-sessions.json`：会话元数据存档
 - `images/`：图片缓存（纯缓存，可整个删除）
 
 **这些文件都已被 gitignore，不能提交。**

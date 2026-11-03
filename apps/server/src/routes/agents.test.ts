@@ -4,7 +4,6 @@ import path from 'node:path'
 import Fastify from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Config } from '../config.js'
-import type { CodexProvider } from '../codex/CodexProvider.js'
 import { registerAgentRoutes } from './agents.js'
 
 const dirs: string[] = []
@@ -20,30 +19,38 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
 
-function build(startUpdate = vi.fn(() => true)) {
+function build(startUpdate = vi.fn((..._args: unknown[]) => true)) {
   const app = Fastify()
-  const codex = { restartAppServer: vi.fn(async () => {}) } as unknown as CodexProvider
-  registerAgentRoutes(app, tempConfig(), codex, startUpdate)
-  return { app, startUpdate, codex }
+  const codex = vi.fn(async () => {})
+  const opencode = vi.fn(async () => {})
+  registerAgentRoutes(app, tempConfig(), { codex, opencode }, startUpdate)
+  return { app, startUpdate, codex, opencode }
 }
 
 describe('agent runtime routes', () => {
-  it('reports both agents with their supported version', async () => {
+  it('reports every agent with its supported version', async () => {
     const { app } = build()
     const res = await app.inject({ method: 'GET', url: '/api/agents' })
     expect(res.statusCode).toBe(200)
     const body = res.json() as { data: { id: string; supported: string; updating: boolean }[] }
-    expect(body.data.map((agent) => agent.id)).toEqual(['codex', 'claude'])
+    expect(body.data.map((agent) => agent.id)).toEqual(['codex', 'claude', 'opencode'])
     expect(body.data[0]?.supported).toMatch(/^~\d+\.\d+\.\d+/)
+    expect(body.data[2]?.supported).toBe('2.2.5')
     expect(body.data.every((agent) => agent.updating === false)).toBe(true)
     await app.close()
   })
 
   it('starts an update for a known agent and rejects an unknown one', async () => {
-    const { app, startUpdate } = build()
+    const { app, startUpdate, opencode } = build()
     const ok = await app.inject({ method: 'POST', url: '/api/agents/codex/update' })
     expect(ok.statusCode).toBe(202)
     expect(startUpdate).toHaveBeenCalledWith(expect.anything(), 'codex', expect.anything())
+
+    const next = await app.inject({ method: 'POST', url: '/api/agents/opencode/update' })
+    expect(next.statusCode).toBe(202)
+    const hooks = startUpdate.mock.calls.at(-1)?.[2] as { onInstalled?: () => void }
+    hooks.onInstalled?.()
+    expect(opencode).toHaveBeenCalled()
 
     const missing = await app.inject({ method: 'POST', url: '/api/agents/other/update' })
     expect(missing.statusCode).toBe(404)

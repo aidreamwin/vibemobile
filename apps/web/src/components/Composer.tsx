@@ -74,6 +74,9 @@ interface Props {
 }
 
 const EFFORT_LABELS: Record<string, string> = {
+  default: '默认',
+  none: '无',
+  minimal: '极低',
   low: '低',
   medium: '中',
   high: '高',
