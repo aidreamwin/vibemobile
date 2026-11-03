@@ -451,6 +451,23 @@ describe('ClaudeEventMapper — turn lifecycle', () => {
     expect(second.at).toBeLessThanOrEqual(t1)
   })
 
+  it('closes the active turn when the result echoes the folded steer uuid', () => {
+    // The SDK documents that a folded send can take the echo over (a synthetic
+    // meta turn always does). An unknown uuid used to be dropped as foreign,
+    // which left the turn running forever once the provider stopped ending the
+    // run on results it could not attribute.
+    const { m, events } = mapper()
+    const { turnId } = m.beginTurn('first', 'cmd-1')
+    m.interject('change of plan', 'cmd-2')
+
+    m.handle({ type: 'result', subtype: 'success', is_error: false, user_message_uuid: 'cmd-2' })
+
+    expect(events.find((e) => e.kind === 'turn.completed')).toMatchObject({
+      turnId,
+      status: 'completed',
+    })
+  })
+
   it('starts a turn when a steer arrives with nothing running', () => {
     // The heartbeat case: the turn ended a moment before the message landed.
     // Delivering it as a new turn beats rejecting it.

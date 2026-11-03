@@ -69,7 +69,7 @@ import { UnknownApprovalError } from '../providers/types.js'
 import type { AgentProvider, CreateSessionOptions, ListSessionsOptions, ProviderProbe } from '../providers/types.js'
 import { pageTurnsByItems } from '../providers/page.js'
 import { readGitInfo } from '../providers/git.js'
-import { ClaudeEventMapper } from './mapClaudeEvents.js'
+import { ClaudeEventMapper, resultEchoes } from './mapClaudeEvents.js'
 import { toolDisplayTitle } from './mapUtils.js'
 import { SessionPrefsStore } from '../providers/sessionPrefs.js'
 import { capImages, MAX_PER_MESSAGE, ImageStore } from '../images/store.js'
@@ -152,6 +152,16 @@ interface LiveRun {
   query: Query
   interrupted: boolean
   input: TurnInput
+  /**
+   * Every uuid this run has sent into the CLI: the opening prompt, plus each
+   * message folded in by `steer`.
+   *
+   * A subprocess can write a `result` for a turn the CLI started on its own —
+   * the queued `<task-notification>` it drains on resume is the common case —
+   * and that frame arrives BEFORE the real turn's frames. Only a result that
+   * echoes one of these uuids ends this run; see `#spawnTurn`.
+   */
+  uuids: Set<string>
   /** False after the turn's result frame; the process may still be draining. */
   accepting: boolean
 }
@@ -1086,6 +1096,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       const folded = session.mapper.interject(text, steerUuid, imageIds)
       if (folded.folded) {
         run.input.push(steerUuid, input)
+        run.uuids.add(steerUuid)
         session.updatedAt = Date.now()
         return
       }
@@ -1198,6 +1209,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       query: q,
       interrupted: false,
       input,
+      uuids: new Set([push.commandUuid]),
       accepting: true,
     }
 
@@ -1219,15 +1231,29 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
           // exits and `#pump` can start anything queued behind it; `accepting`
           // goes false first so a steer racing this frame is queued instead of
           // written into a stream that is about to end.
+          //
+          // Only a result that echoes a uuid this run sent ends it. On resume
+          // the CLI first drains queued `<task-notification>` events as its own
+          // synthetic turn and writes that turn's result BEFORE the real one;
+          // treating it as the end froze the real turn: `draining` then muted
+          // every later frame, so the phone sat on "inProgress" with only the
+          // user's bubble while the answer was written to the JSONL.
           if (msg.type === 'result' && session.run?.turnId === push.turnId) {
             const finishedRun = session.run
-            finishedRun.accepting = false
-            // The logical turn is complete even if its subprocess is still
-            // draining a background child. Free `run` so the queue can move.
-            session.run = null
-            session.draining.set(push.turnId, finishedRun)
-            input.close()
-            this.#pump(session)
+            const echoes = resultEchoes(msg)
+            const ours = echoes.some((uuid) => finishedRun.uuids.has(uuid))
+            // A result naming no send at all is still ours when it reports a
+            // failure (API error / zeroed startup result); a SUCCESSFUL one is
+            // a synthetic turn the CLI minted for itself.
+            if (ours || (echoes.length === 0 && Boolean((msg as any).is_error))) {
+              finishedRun.accepting = false
+              // The logical turn is complete even if its subprocess is still
+              // draining a background child. Free `run` so the queue can move.
+              session.run = null
+              session.draining.set(push.turnId, finishedRun)
+              input.close()
+              this.#pump(session)
+            }
           }
           session.updatedAt = Date.now()
         }

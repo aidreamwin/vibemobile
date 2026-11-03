@@ -211,10 +211,12 @@ export class ClaudeEventMapper {
    * bubble is filed against the active turn and `turn.started` is not emitted
    * again.
    *
-   * `commandUuid` is deliberately NOT put into `#byCommand`: the result frame
-   * echoes the uuid of the prompt that started the turn, not the folded one
-   * (only synthetic/meta turns take the later echo over). Mapping it would
-   * make the result unresolvable.
+   * `commandUuid` is mapped to the active turn as well: the measured result
+   * frame echoes the uuid of the prompt that STARTED the turn, which is
+   * already mapped, but the SDK documents that a folded send takes the echo
+   * over on a synthetic/meta turn. Either way the outcome must resolve to this
+   * turn — leaving the folded uuid unknown made a fold-taken echo look like a
+   * foreign result.
    *
    * With no active turn there is nothing to fold into; fall back to starting
    * one so a heartbeat that arrives a moment late is still delivered.
@@ -233,6 +235,7 @@ export class ClaudeEventMapper {
       at: Date.now(),
     }
     this.#track(item, turn.turnId)
+    if (commandUuid) this.#byCommand.set(commandUuid, turn.turnId)
     this.#emit({ kind: 'item.completed', threadId: this.threadId, turnId: turn.turnId, item })
     return { turnId: turn.turnId, folded: true }
   }
@@ -740,11 +743,7 @@ export class ClaudeEventMapper {
     // which the singular echo names only the last one. Binding by the list is
     // what the field is for: a merged batch or a folded steer can make the
     // singular name a send that is not the one that opened our turn.
-    const echoes: string[] = Array.isArray(msg?.user_message_uuids)
-      ? msg.user_message_uuids.filter((id: unknown): id is string => typeof id === 'string')
-      : []
-    const singular = typeof msg?.user_message_uuid === 'string' ? msg.user_message_uuid : undefined
-    if (singular && !echoes.includes(singular)) echoes.push(singular)
+    const echoes = resultEchoes(msg)
 
     let turnId: string | undefined
     for (const echo of echoes) {
@@ -801,6 +800,24 @@ export class ClaudeEventMapper {
     this.#track(item, this.#turn.turnId)
     this.#emit({ kind: 'item.updated', threadId: this.threadId, turnId: this.#turn.turnId, item })
   }
+}
+
+/**
+ * Every send uuid a `result` frame echoes: the singular (the LAST consumed
+ * send) plus the full list, which is what lets a consumer find its own send
+ * anywhere in a merged batch or a turn that folded messages in.
+ *
+ * Empty when the frame names no send at all — a synthetic/meta turn the CLI
+ * minted itself, or a zeroed/delivery-failure result.
+ */
+export function resultEchoes(msg: unknown): string[] {
+  const frame = msg as { user_message_uuid?: unknown; user_message_uuids?: unknown }
+  const echoes: string[] = Array.isArray(frame?.user_message_uuids)
+    ? frame.user_message_uuids.filter((id: unknown): id is string => typeof id === 'string')
+    : []
+  const singular = typeof frame?.user_message_uuid === 'string' ? frame.user_message_uuid : undefined
+  if (singular && !echoes.includes(singular)) echoes.push(singular)
+  return echoes
 }
 
 /** Tool results arrive as a string, an array of content blocks, or neither. */
