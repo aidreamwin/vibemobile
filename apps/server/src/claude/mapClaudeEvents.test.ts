@@ -469,6 +469,61 @@ describe('ClaudeEventMapper — turn lifecycle', () => {
     expect((closed as any).turnId).toBe(first.turnId)
   })
 
+  it('ignores a successful result it cannot attribute to a turn it started', () => {
+    // Observed on resume: the CLI drains a queued `<task-notification>` as a
+    // synthetic meta turn and writes that turn's result ~0.5 s after the spawn,
+    // before the prompt's own turn starts. The frame carries no
+    // `user_message_uuid` (the CLI minted the meta turn itself), and closing
+    // our turn on it silenced the real reply for the rest of the session.
+    const { m, events } = mapper()
+    const { turnId } = m.beginTurn('当前进度', 'cmd-1')
+
+    m.handle({ type: 'result', subtype: 'success', is_error: false })
+    // A meta turn's own uuid is just as foreign to this mapper.
+    m.handle({ type: 'result', subtype: 'success', is_error: false, user_message_uuid: 'meta-1' })
+
+    expect(events.some((e) => e.kind === 'turn.completed')).toBe(false)
+
+    // The real frames and the real result still land on the open turn.
+    m.handle({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg-1' } } })
+    m.handle({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    })
+    m.handle({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '## 当前进度' },
+      },
+    })
+    m.handle({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } })
+    m.handle({ type: 'result', subtype: 'success', is_error: false, user_message_uuid: 'cmd-1' })
+    expect(events.find((e) => e.kind === 'turn.completed')).toMatchObject({
+      turnId,
+      status: 'completed',
+    })
+    expect(m.itemsForTurn(turnId).some((i) => i.kind === 'message' && i.role === 'assistant')).toBe(true)
+  })
+
+  it('binds a batched result through any uuid in user_message_uuids', () => {
+    // The singular echo names only the LAST send of a merged batch; the list is
+    // what lets a consumer find its own send anywhere in the turn.
+    const { m, events } = mapper()
+    const { turnId } = m.beginTurn('a', 'cmd-1')
+
+    m.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      user_message_uuid: 'somebody-else',
+      user_message_uuids: ['cmd-1', 'somebody-else'],
+    })
+
+    expect(events.find((e) => e.kind === 'turn.completed')).toMatchObject({ turnId, status: 'completed' })
+  })
+
   it('never emits more than one turn.completed per turn, however it is called', () => {
     const { m, events } = mapper()
     m.beginTurn('a', 'cmd-1')

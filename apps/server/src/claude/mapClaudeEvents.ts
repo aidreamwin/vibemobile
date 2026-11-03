@@ -736,9 +736,35 @@ export class ClaudeEventMapper {
   // ------------------------------------------------------------- turn result
 
   #handleResult(msg: any): void {
-    const commandUuid = msg?.user_message_uuid
-    const turnId = commandUuid ? this.#byCommand.get(commandUuid) : undefined
-    if (commandUuid) this.#byCommand.delete(commandUuid)
+    // The SDK lists every send this turn consumed (`user_message_uuids`), of
+    // which the singular echo names only the last one. Binding by the list is
+    // what the field is for: a merged batch or a folded steer can make the
+    // singular name a send that is not the one that opened our turn.
+    const echoes: string[] = Array.isArray(msg?.user_message_uuids)
+      ? msg.user_message_uuids.filter((id: unknown): id is string => typeof id === 'string')
+      : []
+    const singular = typeof msg?.user_message_uuid === 'string' ? msg.user_message_uuid : undefined
+    if (singular && !echoes.includes(singular)) echoes.push(singular)
+
+    let turnId: string | undefined
+    for (const echo of echoes) {
+      turnId = this.#byCommand.get(echo) ?? turnId
+      this.#byCommand.delete(echo)
+    }
+
+    // A SUCCESSFUL result that names no send of ours is not our turn. On resume
+    // the CLI drains queued `<task-notification>` events as synthetic meta
+    // turns and writes their result before the prompt's turn even starts; such
+    // a result carries no `user_message_uuid` (the CLI minted that turn itself)
+    // or only the meta prompt's. Closing the active turn on it used to seal the
+    // user's turn half a second in: every later frame is dropped by the
+    // null-turn guards, and `getTranscript` keeps slicing the JSONL copy out,
+    // so the phone shows an empty completed turn that no reload can repair.
+    //
+    // Failures keep the old fallback — an anonymous error result is how an API
+    // failure that never got a turn echo (500 / zeroed startup result) is
+    // reported, and `mapClaudeEvents.test.ts` pins that shape.
+    if (!turnId && (echoes.length > 0 || !msg?.is_error)) return
 
     if (msg?.usage) {
       const targetTurn = turnId ?? this.#turn?.turnId
