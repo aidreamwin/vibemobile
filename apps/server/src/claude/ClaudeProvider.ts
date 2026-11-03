@@ -146,6 +146,16 @@ interface PendingPush {
   turnInput: AgentInput[]
 }
 
+interface LiveRun {
+  turnId: string
+  commandUuid: string
+  query: Query
+  interrupted: boolean
+  input: TurnInput
+  /** False after the turn's result frame; the process may still be draining. */
+  accepting: boolean
+}
+
 interface LiveSession {
   id: string
   cwd: string
@@ -167,19 +177,9 @@ interface LiveSession {
   status: SessionStatus
   mapper: ClaudeEventMapper
   /** The turn currently running, or null when nothing is in flight. */
-  run: {
-    turnId: string
-    commandUuid: string
-    query: Query
-    interrupted: boolean
-    /**
-     * The open stdin stream for this turn's subprocess. `steer` pushes into it
-     * so the CLI can fold the message into the running turn.
-     */
-    input: TurnInput
-    /** False once a `result` frame lands: no more messages are accepted. */
-    accepting: boolean
-  } | null
+  run: LiveRun | null
+  /** Runs whose result arrived but whose subprocess has not exited yet. */
+  draining: Map<string, LiveRun>
   /**
    * The newest turn, kept after it ends so the transcript can render it.
    *
@@ -682,6 +682,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       status: 'idle',
       mapper: this.#makeMapper(id),
       run: null,
+      draining: new Map(),
       lastTurn: null,
       pending: [],
       approvals: new Map(),
@@ -734,6 +735,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       status: 'idle',
       mapper: this.#makeMapper(sessionId),
       run: null,
+      draining: new Map(),
       lastTurn: null,
       pending: [],
       approvals: new Map(),
@@ -1208,14 +1210,24 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
             if (version) this.#cliVersion = version
             this.#noteCommands(session, msg)
           }
-          session.mapper.handle(msg)
+          // Once the result has detached this subprocess from the logical
+          // session, late drain frames (for example a background-task
+          // notification) must not be attributed to whichever newer turn the
+          // mapper is currently rendering.
+          if (!session.draining.has(push.turnId)) session.mapper.handle(msg)
           // The result ends this subprocess's one turn. Close stdin so the CLI
           // exits and `#pump` can start anything queued behind it; `accepting`
           // goes false first so a steer racing this frame is queued instead of
           // written into a stream that is about to end.
           if (msg.type === 'result' && session.run?.turnId === push.turnId) {
-            session.run.accepting = false
+            const finishedRun = session.run
+            finishedRun.accepting = false
+            // The logical turn is complete even if its subprocess is still
+            // draining a background child. Free `run` so the queue can move.
+            session.run = null
+            session.draining.set(push.turnId, finishedRun)
             input.close()
+            this.#pump(session)
           }
           session.updatedAt = Date.now()
         }
@@ -1229,6 +1241,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
         session.mapper.finish('failed', '代理进程提前退出，未返回执行结果。', push.turnId)
         input.close()
         if (session.run?.turnId === push.turnId) session.run = null
+        session.draining.delete(push.turnId)
         this.#settleApprovals(session, push.turnId, 'The turn ended before this was answered.')
         this.#pump(session)
       }
@@ -1260,7 +1273,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
 
   /** Start the next queued turn, if the previous one has finished. */
   #pump(session: LiveSession): void {
-    if (session.run) return
+    if (session.run?.accepting) return
     const next = session.pending.shift()
     if (!next) return
     this.#spawnTurn(session, next)
@@ -1349,7 +1362,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       if (turnId !== null && approval.turnId !== turnId) continue
       this.#settleApproval(session, approval, message)
     }
-    if (session.status !== 'idle' && session.approvals.size === 0 && !session.run) {
+    if (session.status !== 'idle' && session.approvals.size === 0 && !session.run && session.pending.length === 0) {
       session.status = 'idle'
       this.#emit({ kind: 'session.status', threadId: session.id, status: 'idle' })
     }
