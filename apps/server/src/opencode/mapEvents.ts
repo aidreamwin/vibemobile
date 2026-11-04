@@ -65,6 +65,7 @@ interface LiveSession {
   text: Map<string, string>
   reasoning: Map<string, string>
   toolInput: Map<string, string>
+  toolArgs: Map<string, Record<string, unknown>>
   toolNames: Map<string, string>
   model: OpencodeModelRef | null
   lastUsage: Usage | null
@@ -95,6 +96,7 @@ function emptySession(id: string): LiveSession {
     text: new Map(),
     reasoning: new Map(),
     toolInput: new Map(),
+    toolArgs: new Map(),
     toolNames: new Map(),
     model: null,
     lastUsage: null,
@@ -120,6 +122,24 @@ function contentText(content: unknown): string {
     .join('\n')
 }
 
+/**
+ * Tool arguments as an object.
+ *
+ * `tool.called` usually carries an object, but the streamed input and some
+ * providers deliver a JSON string. Parsing both here keeps the card's
+ * parameters visible regardless of which shape arrives first.
+ */
+function parseToolArgs(value: unknown): Record<string, unknown> | null {
+  const record = asRecord(value)
+  if (record) return record
+  if (typeof value !== 'string' || value.trim() === '') return null
+  try {
+    return asRecord(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
+
 function itemStatus(state: OpencodeToolState): 'running' | 'done' | 'failed' {
   if (state.status === 'completed') return 'done'
   if (state.status === 'error') return 'failed'
@@ -134,6 +154,16 @@ function toolInput(state: OpencodeToolState): unknown {
   return state.input
 }
 
+/** Some tools put the rendered result in metadata instead of content. */
+function metadataOutput(metadata: Record<string, unknown> | undefined): string {
+  if (!metadata) return ''
+  for (const key of ['output', 'stdout', 'result']) {
+    const value = metadata[key]
+    if (typeof value === 'string' && value) return value
+  }
+  return ''
+}
+
 function toolItem(id: string, name: string, state: OpencodeToolState, cwd: string | undefined): AgentItem {
   if (commandName(name)) {
     const input =
@@ -144,7 +174,10 @@ function toolItem(id: string, name: string, state: OpencodeToolState, cwd: strin
         ? state.metadata
         : undefined
     const exitCandidate = metadata?.exitCode ?? metadata?.exit
-    const output = state.status === 'completed' || state.status === 'error' ? contentText(state.content) : ''
+    const output =
+      state.status === 'completed' || state.status === 'error'
+        ? contentText(state.content) || metadataOutput(metadata)
+        : ''
     return {
       kind: 'command',
       id: `oc:tool:${id}`,
@@ -162,7 +195,9 @@ function toolItem(id: string, name: string, state: OpencodeToolState, cwd: strin
     title: name,
     status: itemStatus(state),
     input: toolInput(state),
-    ...(state.status === 'completed' || state.status === 'error' ? { output: contentText(state.content) } : {}),
+    ...(state.status === 'completed' || state.status === 'error'
+      ? { output: contentText(state.content) || metadataOutput(state.metadata) }
+      : {}),
     ...(state.status === 'error' ? { error: state.error.message } : {}),
   }
 }
@@ -524,6 +559,7 @@ export class OpencodeEventMapper {
     session.text.clear()
     session.reasoning.clear()
     session.toolInput.clear()
+    session.toolArgs.clear()
     session.toolNames.clear()
     session.compactionId = null
     session.compactionText = ''
@@ -792,6 +828,21 @@ export class OpencodeEventMapper {
     return session.toolNames.get(id) ?? 'tool'
   }
 
+  /**
+   * The arguments are only carried by `tool.called` (and the streamed input);
+   * `progress`/`success`/`failed` have just the id. Success used to overwrite
+   * the cached input with `{}`, which is why every completed shell card lost
+   * its command and every edit card showed empty parameters.
+   */
+  #toolArgs(session: LiveSession, id: string, data: Record<string, unknown>): Record<string, unknown> {
+    const fromEvent = parseToolArgs(data.input)
+    if (fromEvent) {
+      session.toolArgs.set(id, fromEvent)
+      return fromEvent
+    }
+    return session.toolArgs.get(id) ?? {}
+  }
+
   #toolInputStart(session: LiveSession, data: Record<string, unknown>): void {
     const message = this.#assistantMessage(data)
     const id = this.#toolId(data)
@@ -799,6 +850,7 @@ export class OpencodeEventMapper {
     const name = this.#toolName(session, id, data)
     session.toolNames.set(id, name)
     session.toolInput.set(id, '')
+    session.toolArgs.delete(id)
     this.#emitItem(
       session,
       message.turnId,
@@ -829,6 +881,8 @@ export class OpencodeEventMapper {
     const name = this.#toolName(session, id, data)
     const text = asString(data.text) ?? session.toolInput.get(id) ?? ''
     session.toolInput.set(id, text)
+    const parsed = parseToolArgs(text)
+    if (parsed) session.toolArgs.set(id, parsed)
     this.#emitItem(
       session,
       message.turnId,
@@ -844,7 +898,7 @@ export class OpencodeEventMapper {
     const name = this.#toolName(session, id, data)
     const state: OpencodeToolState = {
       status: 'running',
-      input: asRecord(data.input) ?? {},
+      input: this.#toolArgs(session, id, data),
       metadata: asRecord(data.metadata) ?? {},
     }
     this.#emitItem(session, message.turnId, toolItem(id, name, state, this.#opts.cwdOf(session.id)), 'updated')
@@ -856,7 +910,7 @@ export class OpencodeEventMapper {
     const id = this.#toolId(data)
     if (!message || !id) return
     const name = this.#toolName(session, id, data)
-    const input = asRecord(data.input) ?? {}
+    const input = this.#toolArgs(session, id, data)
     const state: OpencodeToolState = {
       status: 'running',
       input,
@@ -870,7 +924,7 @@ export class OpencodeEventMapper {
     const id = this.#toolId(data)
     if (!message || !id) return
     const name = this.#toolName(session, id, data)
-    const input = asRecord(data.input) ?? {}
+    const input = this.#toolArgs(session, id, data)
     const content = Array.isArray(data.content) ? (data.content as OpencodeToolContent[]) : []
     const error = asStructuredError(data.error)
     const state: OpencodeToolState =

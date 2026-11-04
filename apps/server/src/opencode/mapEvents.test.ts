@@ -99,6 +99,84 @@ describe('opencode event mapper', () => {
     expect(mapper.isRunning('ses_1')).toBe(false)
   })
 
+  it('keeps tool arguments and command output when the result event omits input', () => {
+    const { events, mapper, frame, inbox } = harness()
+    mapper.track('ses_1')
+    mapper.beginTurn('ses_1', inbox)
+    mapper.handle(frame('session.execution.started', { sessionID: 'ses_1' }))
+
+    mapper.handle(
+      frame('session.tool.input.started', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_shell',
+        name: 'shell',
+      }),
+    )
+    mapper.handle(
+      frame('session.tool.called', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_shell',
+        input: { command: 'ls -la' },
+      }),
+    )
+    // success carries content/metadata only — no input, no name.
+    mapper.handle(
+      frame('session.tool.success', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_shell',
+        content: [{ type: 'text', text: 'file-a' }],
+        metadata: { exitCode: 0 },
+      }),
+    )
+    const command = events.find((event) => event.kind === 'item.completed' && event.item.kind === 'command')
+    expect(command?.kind === 'item.completed' && command.item.kind === 'command' ? command.item.command : null).toBe(
+      'ls -la',
+    )
+    expect(command?.kind === 'item.completed' && command.item.kind === 'command' ? command.item.output : null).toBe(
+      'file-a',
+    )
+    expect(command?.kind === 'item.completed' && command.item.kind === 'command' ? command.item.exitCode : null).toBe(0)
+
+    mapper.handle(
+      frame('session.tool.input.started', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_edit',
+        name: 'edit',
+      }),
+    )
+    mapper.handle(
+      frame('session.tool.called', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_edit',
+        input: { filePath: 'test.txt', oldString: 'foo', newString: 'bar' },
+      }),
+    )
+    mapper.handle(
+      frame('session.tool.success', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_edit',
+        content: [{ type: 'text', text: 'Edited test.txt' }],
+      }),
+    )
+    const edit = events.find(
+      (event) => event.kind === 'item.completed' && event.item.kind === 'tool' && event.item.id === 'oc:tool:call_edit',
+    )
+    expect(edit?.kind === 'item.completed' && edit.item.kind === 'tool' ? edit.item.input : null).toEqual({
+      filePath: 'test.txt',
+      oldString: 'foo',
+      newString: 'bar',
+    })
+    expect(edit?.kind === 'item.completed' && edit.item.kind === 'tool' ? edit.item.output : null).toBe(
+      'Edited test.txt',
+    )
+  })
+
   it('folds a steered message into the running turn and completes on interruption', () => {
     const { events, mapper, frame, inbox } = harness()
     mapper.track('ses_1')
