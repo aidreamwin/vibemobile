@@ -13,14 +13,13 @@
  */
 import type { AgentItem, ItemStatus, TranscriptTurn, TurnStatus } from '@vibemobile/protocol'
 import { pageTurnsByItems } from '../providers/page.js'
+import { toolItem } from './tools.js'
 import type {
   OpencodeAssistantMessage,
   OpencodeCompactionMessage,
   OpencodeMessage,
   OpencodeMessageList,
   OpencodeShellMessage,
-  OpencodeToolPart,
-  OpencodeToolState,
   OpencodeUserMessage,
 } from './types.js'
 
@@ -34,61 +33,6 @@ export function parseCursor(cursor: string | undefined): number {
 
 export function formatCursor(skip: number): string {
   return `${CURSOR_PREFIX}${skip}`
-}
-
-function toolStatus(state: OpencodeToolState): ItemStatus {
-  if (state.status === 'completed') return 'done'
-  if (state.status === 'error') return 'failed'
-  return 'running'
-}
-
-function textOf(content: unknown): string {
-  if (!Array.isArray(content)) return ''
-  return content
-    .map((part) => {
-      if (typeof part !== 'object' || part === null) return ''
-      const value = part as { type?: unknown; text?: unknown; uri?: unknown }
-      if (value.type === 'text' && typeof value.text === 'string') return value.text
-      if (value.type === 'file' && typeof value.uri === 'string') return value.uri
-      return ''
-    })
-    .filter(Boolean)
-    .join('\n')
-}
-
-function inputOf(state: OpencodeToolState): unknown {
-  if (state.status === 'streaming') return state.input
-  return state.input
-}
-
-function shellCommandOf(part: OpencodeToolPart): string {
-  const state = part.state
-  if (state.status === 'streaming') return state.input
-  const input = state.input as Record<string, unknown>
-  const value = input.command ?? input.cmd ?? input.script
-  return typeof value === 'string' ? value : ''
-}
-
-function shellName(name: string): boolean {
-  return /(^|_)(bash|shell|execute|terminal|command)$/i.test(name) || /^(bash|shell|execute)$/i.test(name)
-}
-
-function commandItem(part: OpencodeToolPart, cwd: string | undefined): AgentItem {
-  const state = part.state
-  const metadata =
-    state.status === 'running' || state.status === 'completed' || state.status === 'error' ? state.metadata : undefined
-  const exitCandidate = metadata?.exitCode ?? metadata?.exit
-  const exitCode = typeof exitCandidate === 'number' ? exitCandidate : null
-  const output = state.status === 'completed' || state.status === 'error' ? textOf(state.content) : ''
-  return {
-    kind: 'command',
-    id: `oc:tool:${part.id}`,
-    command: shellCommandOf(part),
-    ...(cwd ? { cwd } : {}),
-    status: toolStatus(state),
-    output,
-    exitCode,
-  }
 }
 
 function retryItem(message: OpencodeAssistantMessage): AgentItem | null {
@@ -107,21 +51,6 @@ function retryItem(message: OpencodeAssistantMessage): AgentItem | null {
   }
 }
 
-function toolItem(part: OpencodeToolPart, cwd: string | undefined): AgentItem {
-  if (shellName(part.name)) return commandItem(part, cwd)
-  const state = part.state
-  return {
-    kind: 'tool',
-    id: `oc:tool:${part.id}`,
-    name: part.name,
-    title: part.name,
-    status: toolStatus(state),
-    input: inputOf(state),
-    ...(state.status === 'completed' || state.status === 'error' ? { output: textOf(state.content) } : {}),
-    ...(state.status === 'error' ? { error: state.error.message } : {}),
-  }
-}
-
 function assistantItems(message: OpencodeAssistantMessage, cwd: string | undefined): AgentItem[] {
   const items: AgentItem[] = []
   let textOrdinal = 0
@@ -137,7 +66,7 @@ function assistantItems(message: OpencodeAssistantMessage, cwd: string | undefin
         content: [part.text],
       })
     } else {
-      items.push(toolItem(part, cwd))
+      items.push(toolItem(part.id, part.name, part.state, cwd))
     }
   }
   const retry = retryItem(message)

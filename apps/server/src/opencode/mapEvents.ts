@@ -25,6 +25,7 @@ import {
   PERMISSION_REQUEST_PREFIX,
   permissionToApproval,
 } from './permission.js'
+import { toolItem } from './tools.js'
 import type {
   OpencodeEventFrame,
   OpencodeForm,
@@ -108,20 +109,6 @@ function emptySession(id: string): LiveSession {
   }
 }
 
-function contentText(content: unknown): string {
-  if (!Array.isArray(content)) return ''
-  return content
-    .map((part) => {
-      if (typeof part !== 'object' || part === null) return ''
-      const value = part as { type?: unknown; text?: unknown; uri?: unknown }
-      if (value.type === 'text' && typeof value.text === 'string') return value.text
-      if (value.type === 'file' && typeof value.uri === 'string') return value.uri
-      return ''
-    })
-    .filter(Boolean)
-    .join('\n')
-}
-
 /**
  * Tool arguments as an object.
  *
@@ -137,68 +124,6 @@ function parseToolArgs(value: unknown): Record<string, unknown> | null {
     return asRecord(JSON.parse(value))
   } catch {
     return null
-  }
-}
-
-function itemStatus(state: OpencodeToolState): 'running' | 'done' | 'failed' {
-  if (state.status === 'completed') return 'done'
-  if (state.status === 'error') return 'failed'
-  return 'running'
-}
-
-function commandName(name: string): boolean {
-  return /^(bash|shell|execute|terminal)$/i.test(name) || /(^|_)(bash|shell|execute)$/i.test(name)
-}
-
-function toolInput(state: OpencodeToolState): unknown {
-  return state.input
-}
-
-/** Some tools put the rendered result in metadata instead of content. */
-function metadataOutput(metadata: Record<string, unknown> | undefined): string {
-  if (!metadata) return ''
-  for (const key of ['output', 'stdout', 'result']) {
-    const value = metadata[key]
-    if (typeof value === 'string' && value) return value
-  }
-  return ''
-}
-
-function toolItem(id: string, name: string, state: OpencodeToolState, cwd: string | undefined): AgentItem {
-  if (commandName(name)) {
-    const input =
-      typeof state.input === 'object' && state.input !== null ? (state.input as Record<string, unknown>) : {}
-    const command = typeof input.command === 'string' ? input.command : typeof input.cmd === 'string' ? input.cmd : ''
-    const metadata =
-      state.status === 'running' || state.status === 'completed' || state.status === 'error'
-        ? state.metadata
-        : undefined
-    const exitCandidate = metadata?.exitCode ?? metadata?.exit
-    const output =
-      state.status === 'completed' || state.status === 'error'
-        ? contentText(state.content) || metadataOutput(metadata)
-        : ''
-    return {
-      kind: 'command',
-      id: `oc:tool:${id}`,
-      command,
-      ...(cwd ? { cwd } : {}),
-      status: itemStatus(state),
-      output,
-      ...(typeof exitCandidate === 'number' ? { exitCode: exitCandidate } : {}),
-    }
-  }
-  return {
-    kind: 'tool',
-    id: `oc:tool:${id}`,
-    name,
-    title: name,
-    status: itemStatus(state),
-    input: toolInput(state),
-    ...(state.status === 'completed' || state.status === 'error'
-      ? { output: contentText(state.content) || metadataOutput(state.metadata) }
-      : {}),
-    ...(state.status === 'error' ? { error: state.error.message } : {}),
   }
 }
 

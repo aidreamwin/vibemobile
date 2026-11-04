@@ -84,6 +84,48 @@ describe('messagesToTurns', () => {
     expect(must(turns[0]).items.filter((item) => item.kind === 'message')).toHaveLength(3)
   })
 
+  it('maps edit tool state to a fileChange item with the patch', () => {
+    const edit: OpencodeMessage = {
+      id: 'a_edit',
+      type: 'assistant',
+      time: { created: 1, completed: 2 },
+      agent: 'build',
+      model: { id: 'm', providerID: 'opencode' },
+      content: [
+        {
+          type: 'tool',
+          id: 'call_edit',
+          name: 'edit',
+          state: {
+            status: 'completed',
+            input: { filePath: 'test.txt', oldString: 'foo', newString: 'bar' },
+            content: [{ type: 'text', text: 'Edited test.txt' }],
+            metadata: {
+              files: [{ file: 'test.txt', patch: 'Index: test.txt\n--- a/test.txt\n+++ b/test.txt\n@@\n-foo\n+bar' }],
+            },
+          },
+          time: { created: 1 },
+        },
+      ],
+    }
+    const items =
+      messagesToTurns([user('u1', 0, 'q'), edit, idle('i1', 3, 'succeeded')], { cwd: 'D:/w' })[0]?.items ?? []
+    expect(items).toEqual([
+      expect.objectContaining({ kind: 'message', id: 'oc:user:u1' }),
+      expect.objectContaining({
+        kind: 'fileChange',
+        id: 'oc:tool:call_edit',
+        changes: [
+          expect.objectContaining({
+            path: expect.stringContaining('test.txt'),
+            kind: 'update',
+            diff: expect.stringContaining('-foo'),
+          }),
+        ],
+      }),
+    ])
+  })
+
   it('keeps per-kind ordinals for text and reasoning parts', () => {
     const message: OpencodeMessage = {
       id: 'a1',

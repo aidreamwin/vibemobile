@@ -162,19 +162,55 @@ describe('opencode event mapper', () => {
         assistantMessageID: 'msg_a',
         id: 'call_edit',
         content: [{ type: 'text', text: 'Edited test.txt' }],
+        metadata: {
+          files: [{ file: 'test.txt', patch: 'Index: test.txt\n--- a/test.txt\n+++ b/test.txt\n@@\n-foo\n+bar' }],
+        },
       }),
     )
     const edit = events.find(
-      (event) => event.kind === 'item.completed' && event.item.kind === 'tool' && event.item.id === 'oc:tool:call_edit',
+      (event) =>
+        event.kind === 'item.completed' && event.item.kind === 'fileChange' && event.item.id === 'oc:tool:call_edit',
     )
-    expect(edit?.kind === 'item.completed' && edit.item.kind === 'tool' ? edit.item.input : null).toEqual({
-      filePath: 'test.txt',
-      oldString: 'foo',
-      newString: 'bar',
+    expect(edit?.kind === 'item.completed' && edit.item.kind === 'fileChange' ? edit.item.changes : null).toEqual([
+      expect.objectContaining({
+        path: expect.stringContaining('test.txt'),
+        kind: 'update',
+        diff: expect.stringContaining('-foo'),
+      }),
+    ])
+
+    mapper.handle(
+      frame('session.tool.input.started', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_read',
+        name: 'read',
+      }),
+    )
+    mapper.handle(
+      frame('session.tool.called', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_read',
+        input: { path: 'a.txt' },
+      }),
+    )
+    mapper.handle(
+      frame('session.tool.success', {
+        sessionID: 'ses_1',
+        assistantMessageID: 'msg_a',
+        id: 'call_read',
+        content: [{ type: 'text', text: 'hello' }],
+      }),
+    )
+    const read = events.find(
+      (event) => event.kind === 'item.completed' && event.item.kind === 'tool' && event.item.id === 'oc:tool:call_read',
+    )
+    expect(read?.kind === 'item.completed' && read.item.kind === 'tool' ? read.item.input : null).toEqual({
+      path: 'a.txt',
     })
-    expect(edit?.kind === 'item.completed' && edit.item.kind === 'tool' ? edit.item.output : null).toBe(
-      'Edited test.txt',
-    )
+    expect(read?.kind === 'item.completed' && read.item.kind === 'tool' ? read.item.output : null).toBe('hello')
+    expect(read?.kind === 'item.completed' && read.item.kind === 'tool' ? read.item.title : null).toBe('读取 a.txt')
   })
 
   it('folds a steered message into the running turn and completes on interruption', () => {
