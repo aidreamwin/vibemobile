@@ -16,7 +16,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import type { AgentProfile, AgentProfilesResponse, AgentRuntimeId, NativeAgentProfile } from '@vibemobile/protocol'
+import type { AgentProfile, AgentProfilesResponse, AgentRuntimeId, ModelInfo, NativeAgentProfile } from '@vibemobile/protocol'
 import { api } from '../lib/api'
 import SelectField from './SelectField'
 import Sheet from './Sheet'
@@ -84,6 +84,7 @@ function editorSnapshot(
   providerId: string,
   aliases: Record<string, string>,
   models: string[],
+  contextWindows: Record<string, number>,
 ) {
   return JSON.stringify([
     name.trim(),
@@ -94,6 +95,7 @@ function editorSnapshot(
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => [key, value.trim()]),
     [...models].sort(),
+    Object.entries(contextWindows).sort(([a], [b]) => a.localeCompare(b)),
   ])
 }
 
@@ -114,6 +116,7 @@ export default function AgentProfilesSection() {
   const [providerId, setProviderId] = useState('')
   const [modelAliases, setModelAliases] = useState<Record<string, string>>({})
   const [providerModels, setProviderModels] = useState<string[]>([])
+  const [modelContextWindows, setModelContextWindows] = useState<Record<string, number>>({})
   const [newModel, setNewModel] = useState('')
   const [fetchingModels, setFetchingModels] = useState(false)
   const [modelFetchError, setModelFetchError] = useState<string | null>(null)
@@ -152,7 +155,7 @@ export default function AgentProfilesSection() {
       (!panel.profile ||
         clearKey ||
         apiKey.trim() ||
-        editorSnapshot(name, baseUrl, model, providerId, modelAliases, providerModels) !== initialValues),
+        editorSnapshot(name, baseUrl, model, providerId, modelAliases, providerModels, modelContextWindows) !== initialValues),
   )
 
   function edit(profile?: AgentProfile) {
@@ -171,6 +174,7 @@ export default function AgentProfilesSection() {
         isNative(profile) ? (profile.providerId ?? '') : '',
         aliases,
         models,
+        isNative(profile) ? {} : { ...(profile?.modelContextWindows ?? {}) },
       ),
     )
     setEditingKey(false)
@@ -186,6 +190,7 @@ export default function AgentProfilesSection() {
     setProviderModels(
       models,
     )
+    setModelContextWindows(isNative(profile) ? {} : { ...(profile?.modelContextWindows ?? {}) })
     setNewModel('')
     setModelFetchError(null)
     setError(null)
@@ -216,7 +221,13 @@ export default function AgentProfilesSection() {
         ? await api.fetchAgentProfileModels(selected, panel.profile.id)
         : await api.fetchUnsavedAgentProfileModels(selected, { baseUrl: baseUrl.trim(), ...(apiKey ? { apiKey } : {}) })
       const fetched = result.data.map((item) => item.id).filter(Boolean)
+      const fetchedContextWindows = Object.fromEntries(
+        result.data
+          .filter((item): item is ModelInfo & { contextWindow: number } => Boolean(item.contextWindow))
+          .map((item) => [item.id, item.contextWindow]),
+      )
       setProviderModels((current) => [...new Set([...current, ...fetched])].slice(0, 100))
+      setModelContextWindows((current) => ({ ...current, ...fetchedContextWindows }))
       if (!model.trim() && fetched.length === 1) setModel(fetched[0])
     } catch (err) {
       setModelFetchError(errorLabel(err))
@@ -239,7 +250,10 @@ export default function AgentProfilesSection() {
             modelAliases,
             ...(selected === 'opencode' ? { models: providerModels } : {}),
           }
-        : { models: [...new Set([...providerModels, ...(model.trim() ? [model.trim()] : [])])] }),
+        : {
+            models: [...new Set([...providerModels, ...(model.trim() ? [model.trim()] : [])])],
+            modelContextWindows,
+          }),
     }
     void action(() =>
       panel.profile ? api.updateAgentProfile(selected, panel.profile.id, body) : api.createAgentProfile(selected, body),

@@ -32,6 +32,7 @@ describe('runner agent profiles', () => {
       apiKey: 'secret',
       model: 'model-a',
       models: ['model-a', 'model-b'],
+      modelContextWindows: { 'model-a': 200000 },
     })
     const profile = store.response().data.codex[0]
     expect(profile).toBeDefined()
@@ -41,13 +42,14 @@ describe('runner agent profiles', () => {
       baseUrl: 'https://api.example.test/v1',
       model: 'model-a',
       models: ['model-a', 'model-b'],
+      modelContextWindows: { 'model-a': 200000 },
       hasApiKey: true,
       active: false,
     })
     expect(JSON.stringify(store.response())).not.toContain('secret')
     await store.activate('codex', profile.id)
     const restored = new AgentProfileStore(dir)
-    expect(restored.current('codex')).toMatchObject({ id: profile.id, apiKey: 'secret' })
+    expect(restored.current('codex')).toMatchObject({ id: profile.id, apiKey: 'secret', modelContextWindows: { 'model-a': 200000 } })
   })
 
   it('preserves a key when editing other fields and supports clearing it', async () => {

@@ -95,6 +95,19 @@ import { claudeProfileOptions, type AgentConnection } from '../agents/profileRun
 import { buildTurns, MAX_CURSOR_SKIP, readTranscriptMessages, UUID_RE } from './transcript.js'
 import { TurnInput } from './turnInput.js'
 
+function contextWindowField(value: any): { contextWindow?: number } {
+  const candidate =
+    value?.contextWindow ??
+    value?.context_window ??
+    value?.context_length ??
+    value?.max_context_length ??
+    value?.maxContextLength ??
+    value?.limits?.context
+  return typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0
+    ? { contextWindow: candidate }
+    : {}
+}
+
 export interface ClaudeProviderOptions {
   connection?: AgentConnection
   /** Workspace roots the agent may operate in. First entry is the default. */
@@ -277,6 +290,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
    * `modelUsage.contextWindow` once a turn has run.
    */
   #resolvedModels = new Map<string, string>()
+  #catalogueContextWindows = new Map<string, number>()
   #started = false
 
   constructor(opts: ClaudeProviderOptions) {
@@ -432,8 +446,11 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
     const init = await this.#readInit()
     const models = (init as any)?.models ?? []
     this.#resolvedModels.clear()
+    this.#catalogueContextWindows.clear()
     const result: ModelInfo[] = models.map((m: any) => {
       this.#resolvedModels.set(String(m.value), String(m.resolvedModel ?? m.value))
+      const contextWindow = contextWindowField(m).contextWindow
+      if (contextWindow) this.#catalogueContextWindows.set(String(m.value), contextWindow)
       return {
         id: m.value,
         displayName: label(m),
@@ -441,11 +458,16 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
         // The CLI reports no per-model default, so this is the documented one for
         // the whole session. See DEFAULT_EFFORT.
         defaultEffort: m.supportsEffort ? DEFAULT_EFFORT : undefined,
+        ...contextWindowField(m),
       }
     })
     const configured = this.#connection?.()?.model
     if (configured) {
-      const entry = result.find((model) => model.id === configured) ?? { id: configured, displayName: configured }
+      const entry = result.find((model) => model.id === configured) ?? {
+        id: configured,
+        displayName: configured,
+        ...contextWindowField({ contextWindow: this.#profileContextWindow(configured) }),
+      }
       return [entry, ...result.filter((model) => model.id !== configured)]
     }
     return result
@@ -624,6 +646,10 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       projectId: info.cwd ?? null,
       status: live?.status ?? 'idle',
       model: live?.model ?? remembered?.model ?? null,
+      contextWindow:
+        live?.contextWindow ??
+        (remembered?.contextModel === (live?.model ?? remembered?.model) ? remembered?.contextWindow : undefined) ??
+        this.#profileContextWindow(live?.model ?? remembered?.model),
       reasoningEffort: live?.effort ?? remembered?.effort ?? null,
       // All three fall back the same way: live state first, then what this
       // session was last told, then the default. The permission pair matters
@@ -647,6 +673,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       projectId: live.cwd,
       status: live.status,
       model: live.model,
+      contextWindow: live.contextWindow ?? this.#profileContextWindow(live.model),
       reasoningEffort: live.effort,
       ...permissionOptionsFor(live.permissionMode),
       createdAt: live.createdAt,
@@ -694,6 +721,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       cwd: opts.cwd,
       title: null,
       model: opts.model ?? this.#connection?.()?.model ?? null,
+      contextWindow: this.#profileContextWindow(opts.model ?? this.#connection?.()?.model),
       // Creation has no effort picker; the first turn's composer supplies one.
       effort: null,
       permissionMode: permissionModeFor(opts.sandbox, opts.approvalPolicy),
@@ -744,6 +772,8 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       // on whatever this session was last driven with; losing that here was
       // why a restart put every session back on the CLI's default model.
       model: remembered?.model ?? null,
+      contextWindow:
+        remembered?.contextModel === remembered?.model ? remembered?.contextWindow : this.#profileContextWindow(remembered?.model),
       effort: remembered?.effort ?? null,
       // Restored for the same reason the two above are, and it is the one that
       // was reported as a bug: a session set to 完全访问 came back on the
@@ -1042,6 +1072,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
     if (opts?.model) {
       if (opts.model !== session.model) session.contextWindow = undefined
       session.model = opts.model
+      if (!session.contextWindow) session.contextWindow = this.#profileContextWindow(session.model)
     }
     if (opts?.effort) session.effort = opts.effort
     if (opts?.sandbox || opts?.approvalPolicy) {
@@ -1512,6 +1543,13 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
 
   // --------------------------------------------------------------- helpers
 
+  #profileContextWindow(model?: string | null): number | undefined {
+    if (!model) return undefined
+    const value = this.#connection?.()?.modelContextWindows?.[model]
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value
+    return this.#catalogueContextWindows.get(model)
+  }
+
   #baseOptions(cwd: string): Options {
     // Re-resolved per spawn: a runtime pack switched from the settings page
     // must be used by the very next turn. Null means the SDK's bundled CLI.
@@ -1547,6 +1585,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
           // next turn's auto-compact budget is sized from the real model.
           if (event.kind === 'usage.updated' && event.usage.contextWindow) {
             live.contextWindow = event.usage.contextWindow
+            if (live.model) this.#prefs.set(sessionId, { contextWindow: live.contextWindow, contextModel: live.model })
           }
           // `lastTurn` is created in `startTurn`/`steer`, where the turn id and
           // its command uuid are both in hand; here we only record how it

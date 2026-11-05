@@ -68,11 +68,19 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
     const profile = isAgentRuntimeId(provider.id) ? profiles?.current(provider.id) : undefined
     const saved = profile?.models ?? []
     const configured = profile?.model ?? ''
+    const savedContextWindows = profile?.modelContextWindows ?? {}
     const known = new Set(detected.map((model) => model.id))
-    const manual = saved.filter((id) => !known.has(id)).map((id) => ({ id, displayName: id }))
+    const manual = saved
+      .filter((id) => !known.has(id))
+      .map((id) => ({ id, displayName: id, ...(savedContextWindows[id] ? { contextWindow: savedContextWindows[id] } : {}) }))
     if (configured && !known.has(configured) && !saved.includes(configured))
-      manual.unshift({ id: configured, displayName: configured })
-    return { data: [...manual, ...detected] }
+      manual.unshift({ id: configured, displayName: configured, ...(savedContextWindows[configured] ? { contextWindow: savedContextWindows[configured] } : {}) })
+    const enriched = detected.map((model) =>
+      model.contextWindow || !savedContextWindows[model.id]
+        ? model
+        : { ...model, contextWindow: savedContextWindows[model.id] },
+    )
+    return { data: [...manual, ...enriched] }
   })
 
   // ------------------------------------------------------------- projects

@@ -25,6 +25,13 @@ import type {
 import { AppServerClient, type ServerRequestContext } from './AppServerClient.js'
 import { AppServerSupervisor } from './supervisor.js'
 import type { AgentConnection } from '../agents/profileRuntime.js'
+
+function contextWindowField(value: any): { contextWindow?: number } {
+  const candidate = value?.contextWindow ?? value?.context_window ?? value?.context_length ?? value?.max_context_length
+  return typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0
+    ? { contextWindow: candidate }
+    : {}
+}
 import {
   answersForQuestions,
   mapNotification,
@@ -441,6 +448,7 @@ export class CodexProvider extends EventEmitter {
       displayName: m.displayName ?? m.name ?? m.id,
       efforts: m.supportedReasoningEfforts?.map((e: any) => e.reasoningEffort ?? e) ?? undefined,
       defaultEffort: m.defaultReasoningEffort ?? undefined,
+      ...contextWindowField(m),
     }))
     const configured = this.#connection?.()?.model
     if (configured) {
@@ -449,6 +457,7 @@ export class CodexProvider extends EventEmitter {
     }
     return models
   }
+
 
   async listProjects(): Promise<Project[]> {
     const projects = await Promise.all(

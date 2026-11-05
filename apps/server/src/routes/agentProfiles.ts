@@ -183,8 +183,27 @@ function normalizeModels(payload: unknown): ModelInfo[] {
     if (!id || seen.has(id)) return []
     seen.add(id)
     const displayName = typeof value === 'string' ? id : String((value as any)?.displayName ?? (value as any)?.name ?? id).trim() || id
-    return [{ id, displayName }]
+    const contextWindow = typeof value === 'string' ? undefined : contextWindowOf(value as Record<string, unknown>)
+    return [{ id, displayName, ...(contextWindow ? { contextWindow } : {}) }]
   })
+}
+
+/** Providers use several names for the same model limit. Keep the wire DTO stable. */
+function contextWindowOf(value: Record<string, unknown>): number | undefined {
+  const nested = value.limits && typeof value.limits === 'object' ? (value.limits as Record<string, unknown>) : undefined
+  const candidates = [
+    value.contextWindow,
+    value.context_window,
+    value.context_length,
+    value.max_context_length,
+    value.maxContextLength,
+    nested?.context,
+    nested?.contextWindow,
+    nested?.context_length,
+  ]
+  const result = candidates.find((candidate) => typeof candidate === 'number' || (typeof candidate === 'string' && /^\d+$/.test(candidate)))
+  const number = typeof result === 'string' ? Number(result) : result
+  return typeof number === 'number' && Number.isSafeInteger(number) && number > 0 && number <= 10_000_000 ? number : undefined
 }
 
 function failure(error: unknown, reply: import('fastify').FastifyReply) {

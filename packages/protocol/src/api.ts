@@ -67,6 +67,8 @@ export interface AgentProfile {
   model: string | null
   /** Models manually saved for this provider profile. */
   models: string[]
+  /** Context window sizes learned from the provider's model catalogue. */
+  modelContextWindows?: Record<string, number>
   hasApiKey: boolean
   active: boolean
   updatedAt: number
@@ -111,6 +113,8 @@ export interface AgentProfileRequest {
   modelAliases?: Record<string, string>
   /** Model ids to keep available in the provider/session picker. */
   models?: string[]
+  /** Context windows keyed by model id, learned from the provider catalogue. */
+  modelContextWindows?: Record<string, number>
 }
 
 // ------------------------------------------------------------ app updates
@@ -207,6 +211,8 @@ export interface ModelInfo {
   efforts?: string[]
   /** The provider's default effort when a turn does not override it. */
   defaultEffort?: string
+  /** Maximum context window reported by the provider, in tokens. */
+  contextWindow?: number
 }
 
 /** A workspace root the agent may operate in. */
@@ -279,6 +285,8 @@ export interface SessionSummary {
   projectId?: string | null
   status: SessionStatus
   model?: string | null
+  /** Known model context window, when the provider or profile can determine it. */
+  contextWindow?: number
   createdAt: number
   updatedAt: number
   /** True when the agent is blocked waiting on the user. */

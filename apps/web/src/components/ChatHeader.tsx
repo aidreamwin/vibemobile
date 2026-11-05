@@ -90,7 +90,7 @@ export default function ChatHeader({
             {/* After the cwd, not before it: the path truncates, this never
                 does. It renders nothing until a usage report arrives, which
                 is why nothing here reserves space for it. */}
-            <UsageChip usage={usage} provider={session?.provider} />
+            <UsageChip usage={usage} contextWindow={session?.contextWindow} provider={session?.provider} />
           </div>
         </div>
         <DisplaySettings />

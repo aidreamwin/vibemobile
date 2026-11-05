@@ -11,6 +11,7 @@ export interface StoredAgentProfile {
   apiKey: string
   model: string
   models: string[]
+  modelContextWindows?: Record<string, number>
   updatedAt: number
 }
 
@@ -57,7 +58,7 @@ function field(value: unknown, max: number): string {
 
 export function cleanProfile(
   input: AgentProfileRequest,
-): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model' | 'models'> {
+): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model' | 'models' | 'modelContextWindows'> {
   const name = field(input?.name, 100)
   if (!name) throw new AgentProfileError('invalid_agent_profile_name')
   const baseUrl = field(input?.baseUrl, 2048)
@@ -85,12 +86,29 @@ export function cleanProfile(
     )
   )
     throw new AgentProfileError('invalid_agent_profile_value')
+  const contextWindows = input.modelContextWindows ?? {}
+  if (
+    !contextWindows ||
+    typeof contextWindows !== 'object' ||
+    Array.isArray(contextWindows) ||
+    Object.keys(contextWindows).length > 100 ||
+    Object.entries(contextWindows).some(
+      ([key, value]) =>
+        !key.trim() ||
+        key.length > 200 ||
+        !Number.isSafeInteger(value) ||
+        value <= 0 ||
+        value > 10_000_000,
+    )
+  )
+    throw new AgentProfileError('invalid_agent_profile_value')
   return {
     name,
     baseUrl: baseUrl.replace(/\/+$/, ''),
     apiKey: field(input?.apiKey, 2000),
     model: field(input?.model, 200),
     models: [...new Set(models.map((value) => value.trim()))],
+    modelContextWindows: Object.fromEntries(Object.entries(contextWindows)),
   }
 }
 
@@ -114,7 +132,9 @@ export class AgentProfileStore {
 
   get(agent: AgentRuntimeId, id: string): StoredAgentProfile | undefined {
     const profile = this.#data.profiles[agent].find((item) => item.id === id)
-    return profile ? { ...profile, models: [...profile.models] } : undefined
+    return profile
+      ? { ...profile, models: [...profile.models], modelContextWindows: { ...(profile.modelContextWindows ?? {}) } }
+      : undefined
   }
 
   response(): AgentProfilesResponse {
@@ -127,6 +147,9 @@ export class AgentProfileStore {
           baseUrl: profile.baseUrl || null,
           model: profile.model || null,
           models: [...profile.models],
+          ...(Object.keys(profile.modelContextWindows ?? {}).length
+            ? { modelContextWindows: { ...(profile.modelContextWindows ?? {}) } }
+            : {}),
           hasApiKey: Boolean(profile.apiKey),
           active: this.#data.active[agent] === profile.id,
           updatedAt: profile.updatedAt,
@@ -268,7 +291,11 @@ export class AgentProfileStore {
           if (!/^profile-[a-f0-9]{16}$/.test(item.id) || ids.has(item.id) || !Number.isFinite(item.updatedAt))
             throw new Error('profile')
           ids.add(item.id)
-          return { id: item.id, ...cleanProfile({ ...item, models: item.models ?? [] }), updatedAt: item.updatedAt }
+          return {
+            id: item.id,
+            ...cleanProfile({ ...item, models: item.models ?? [], modelContextWindows: item.modelContextWindows ?? {} }),
+            updatedAt: item.updatedAt,
+          }
         })
         const selected = value.active[agent]
         if (selected !== null && !ids.has(selected)) throw new Error('active')

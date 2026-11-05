@@ -121,15 +121,25 @@ describe('runner profile API', () => {
     expect(id).toBeDefined()
     const fetchMock = vi.fn().mockImplementation(
       () =>
-        new Response(JSON.stringify({ data: [{ id: 'model-a', name: 'Model A' }, { model: 'model-b' }, { id: 'model-a' }] }), {
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'model-a', name: 'Model A', context_length: 200000 }, { model: 'model-b' }, { id: 'model-a' }],
+          }),
+          {
           status: 200,
           headers: { 'content-type': 'application/json' },
-        }),
+          },
+        ),
     )
     vi.stubGlobal('fetch', fetchMock)
     const result = await app.inject({ method: 'GET', url: `/api/agent-profiles/codex/${id}/models` })
     expect(result.statusCode).toBe(200)
-    expect(result.json()).toEqual({ data: [{ id: 'model-a', displayName: 'Model A' }, { id: 'model-b', displayName: 'model-b' }] })
+    expect(result.json()).toEqual({
+      data: [
+        { id: 'model-a', displayName: 'Model A', contextWindow: 200000 },
+        { id: 'model-b', displayName: 'model-b' },
+      ],
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       'https://gateway.example.test/v1/models',
       expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer private-key' }) }),
@@ -141,7 +151,12 @@ describe('runner profile API', () => {
       payload: { baseUrl: 'https://gateway.example.test', apiKey: 'temporary-key' },
     })
     expect(unsaved.statusCode).toBe(200)
-    expect(unsaved.json()).toEqual({ data: [{ id: 'model-a', displayName: 'Model A' }, { id: 'model-b', displayName: 'model-b' }] })
+    expect(unsaved.json()).toEqual({
+      data: [
+        { id: 'model-a', displayName: 'Model A', contextWindow: 200000 },
+        { id: 'model-b', displayName: 'model-b' },
+      ],
+    })
     expect(unsaved.body).not.toContain('temporary-key')
     vi.unstubAllGlobals()
   })

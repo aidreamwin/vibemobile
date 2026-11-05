@@ -71,6 +71,9 @@ import type { ApprovalPolicy, SandboxMode } from '@vibemobile/protocol'
 
 export interface SessionPrefs {
   model?: string
+  /** Last context window observed for that model, so a reopened session can render it. */
+  contextWindow?: number
+  contextModel?: string
   effort?: string
   /**
    * Claude only: the SDK mode this session was last driven with.
@@ -156,6 +159,8 @@ export class SessionPrefsStore {
     sessionId: string,
     patch: {
       model?: string
+      contextWindow?: number
+      contextModel?: string
       effort?: string
       permissionMode?: string
       sandbox?: SandboxMode
@@ -166,6 +171,8 @@ export class SessionPrefsStore {
   ): void {
     const next: Partial<SessionPrefs> = {}
     if (patch.model !== undefined) next.model = patch.model
+    if (patch.contextWindow !== undefined) next.contextWindow = patch.contextWindow
+    if (patch.contextModel !== undefined) next.contextModel = patch.contextModel
     if (patch.effort !== undefined) next.effort = patch.effort
     if (patch.permissionMode !== undefined) next.permissionMode = patch.permissionMode
     if (patch.sandbox !== undefined) next.sandbox = patch.sandbox
@@ -212,6 +219,8 @@ export class SessionPrefsStore {
     if (!from) return
     this.set(toSessionId, {
       model: from.model,
+      contextWindow: from.contextWindow,
+      contextModel: from.contextModel,
       effort: from.effort,
       permissionMode: from.permissionMode,
       sandbox: from.sandbox,
