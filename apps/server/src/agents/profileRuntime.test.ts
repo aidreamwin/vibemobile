@@ -16,8 +16,8 @@ describe('agent profile launch overrides', () => {
   it('passes Codex credentials through child environment, never command line', () => {
     const launch = codexProfileLaunch(profile)
     expect(launch.args.join(' ')).not.toContain(profile.apiKey)
-    expect(launch.args).toContain('model_providers.vibemobile.env_key="VIBEMOBILE_CODEX_API_KEY"')
-    expect(launch.args).toContain('model_providers.vibemobile.wire_api="responses"')
+    expect(launch.args).toContain('model_providers.custom.env_key="VIBEMOBILE_CODEX_API_KEY"')
+    expect(launch.args).toContain('model_providers.custom.wire_api="responses"')
     expect(launch.env.VIBEMOBILE_CODEX_API_KEY).toBe(profile.apiKey)
     expect(codexProfileLaunch()).toEqual({ args: [], env: {} })
   })

@@ -9,8 +9,11 @@ export function codexProfileLaunch(profile?: StoredAgentProfile): { args: string
   const values: Record<string, string | boolean> = {}
   const env: NodeJS.ProcessEnv = {}
   if (profile.baseUrl || profile.apiKey) {
-    const prefix = 'model_providers.vibemobile'
-    values.model_provider = 'vibemobile'
+    // Codex app-server filters thread/list by the active provider key. Keep
+    // profile overrides under the user's existing `custom` key so runner can
+    // see and resume sessions created by desktop Codex.
+    const prefix = 'model_providers.custom'
+    values.model_provider = 'custom'
     values[`${prefix}.name`] = profile.name
     values[`${prefix}.base_url`] = profile.baseUrl || 'https://api.openai.com/v1'
     values[`${prefix}.wire_api`] = 'responses'
