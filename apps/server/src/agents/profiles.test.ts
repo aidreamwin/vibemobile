@@ -31,6 +31,7 @@ describe('runner agent profiles', () => {
       baseUrl: 'https://api.example.test/v1',
       apiKey: 'secret',
       model: 'model-a',
+      models: ['model-a', 'model-b'],
     })
     const profile = store.response().data.codex[0]
     expect(profile).toBeDefined()
@@ -39,6 +40,7 @@ describe('runner agent profiles', () => {
       name: '公司网关',
       baseUrl: 'https://api.example.test/v1',
       model: 'model-a',
+      models: ['model-a', 'model-b'],
       hasApiKey: true,
       active: false,
     })

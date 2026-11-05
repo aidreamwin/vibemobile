@@ -120,7 +120,6 @@ export default function AgentProfilesSection() {
 
   const agent = AGENTS.find((item) => item.id === selected) ?? AGENTS[0]
   const profiles = data.data[selected]
-  const active = profiles.find((profile) => profile.active)
   const limitation = data.limitations?.[selected]
   const native = data.native?.[selected]
   const nativeEditor = panel?.kind === 'edit' && isNative(panel.profile) ? panel.profile : undefined
@@ -139,9 +138,11 @@ export default function AgentProfilesSection() {
   function edit(profile?: AgentProfile) {
     const aliases = isNative(profile) ? { ...profile.modelAliases } : {}
     const models =
-      isNative(profile) && profile.providerId
-        ? (profile.providers.find((item) => item.id === profile.providerId)?.models ?? [])
-        : []
+      isNative(profile)
+        ? profile.providerId
+          ? (profile.providers.find((item) => item.id === profile.providerId)?.models ?? [])
+          : []
+        : [...new Set([...(profile?.models ?? []), ...(profile?.model ? [profile.model] : [])])]
     setInitialValues(
       editorSnapshot(
         profile?.name ?? '',
@@ -163,9 +164,7 @@ export default function AgentProfilesSection() {
     setProviderId(isNative(profile) ? (profile.providerId ?? '') : '')
     setModelAliases(isNative(profile) ? { ...profile.modelAliases } : {})
     setProviderModels(
-      isNative(profile) && profile.providerId
-        ? (profile.providers.find((item) => item.id === profile.providerId)?.models ?? [])
-        : [],
+      models,
     )
     setNewModel('')
     setError(null)
@@ -189,7 +188,7 @@ export default function AgentProfilesSection() {
   function save() {
     if (busy || !changed || panel?.kind !== 'edit' || (!nativeEditor && !name.trim())) return
     const body = {
-      ...(nativeEditor ? {} : { name: name.trim() }),
+      name: name.trim(),
       baseUrl: baseUrl.trim(),
       model: model.trim(),
       ...(clearKey ? { apiKey: '' } : apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
@@ -200,7 +199,7 @@ export default function AgentProfilesSection() {
             modelAliases,
             ...(selected === 'opencode' ? { models: providerModels } : {}),
           }
-        : {}),
+        : { models: [...new Set([...providerModels, ...(model.trim() ? [model.trim()] : [])])] }),
     }
     void action(() =>
       panel.profile ? api.updateAgentProfile(selected, panel.profile.id, body) : api.createAgentProfile(selected, body),
@@ -233,60 +232,30 @@ export default function AgentProfilesSection() {
           ))}
         </fieldset>
 
-        {!loading && loaded && native && (
-          <div className="space-y-2 border-b border-border/70 px-4 py-3">
-            <div className="flex items-center gap-3">
-              <div
-                className={`flex size-7 shrink-0 items-center justify-center rounded-full ${native.active && !limitation ? 'bg-success/10 text-success' : 'bg-secondary text-muted-foreground'}`}
-                aria-hidden="true"
-              >
-                {native.active && !limitation ? <Check className="size-3.5" /> : <Server className="size-3.5" />}
-              </div>
-              <div className="min-w-0 flex-1 space-y-1">
-                <p className="truncate text-sm font-medium">现有配置</p>
-                {native.active && !limitation && <span className="sr-only">正在使用</span>}
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || Boolean(native.error)}
-                onClick={() => edit(native)}
-                className="h-11 shrink-0 rounded-xl px-3 text-[13px]"
-              >
-                <Pencil className="size-3.5" />
-                编辑
-              </Button>
-            </div>
-            {native.error && (
-              <p role="alert" className="text-xs text-destructive">
-                {ERROR_LABELS[native.error] ?? native.error}
-              </p>
-            )}
-            {active && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy || Boolean(limitation)}
-                onClick={() => {
-                  setError(null)
-                  setPanel({ kind: 'activate' })
-                }}
-                className="h-11 rounded-xl text-[13px]"
-              >
-                使用现有配置
-              </Button>
-            )}
-          </div>
-        )}
-
         {loading ? (
           <div className="flex items-center justify-center gap-2 px-4 py-7 text-xs text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" /> 读取配置中…
           </div>
         ) : !loaded ? (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">配置读取失败，请重试。</p>
-        ) : profiles.length ? (
+        ) : profiles.length || native ? (
           <div className="divide-y divide-border/70">
+            {native && (
+              <div className="flex min-w-0 items-center gap-2 py-3 pl-4 pr-1">
+                <div className={`flex size-7 shrink-0 items-center justify-center rounded-full ${native.active && !limitation ? 'bg-success/10 text-success' : 'bg-secondary text-muted-foreground'}`}>
+                  {native.active && !limitation ? <Check className="size-3.5" /> : <Server className="size-3.5" />}
+                </div>
+                <button type="button" onClick={() => edit(native)} disabled={busy || Boolean(native.error)} className="min-h-11 min-w-0 flex-1 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" aria-label={`Edit ${native.name}`}>
+                  <span className="block truncate text-[13px] font-medium">{native.name}</span>
+                </button>
+                {!native.active && (
+                  <Button variant="outline" size="sm" disabled={busy || Boolean(limitation)} onClick={() => { setError(null); setPanel({ kind: 'activate', profile: native }) }} className="h-11 rounded-xl px-3 text-[13px]">
+                    Use
+                  </Button>
+                )}
+                {native.error && <span className="text-xs text-destructive">Error</span>}
+              </div>
+            )}
             {profiles.map((profile) => (
               <div key={profile.id} className="flex min-w-0 items-center gap-2 py-3 pl-4 pr-1">
                 <div
@@ -381,7 +350,7 @@ export default function AgentProfilesSection() {
                 disabled={
                   busy ||
                   !changed ||
-                  Boolean(!nativeEditor && !name.trim()) ||
+                  !name.trim() ||
                   Boolean(!nativeEditor && panel.profile?.active && limitation)
                 }
                 className="h-12 w-full rounded-xl text-sm"
@@ -408,8 +377,7 @@ export default function AgentProfilesSection() {
             className="px-4 pt-3 pb-5"
           >
             <fieldset disabled={busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
-              {!nativeEditor && (
-                <label htmlFor="agent-profile-name" className="block space-y-2 text-xs text-muted-foreground">
+              <label htmlFor="agent-profile-name" className="block space-y-2 text-xs text-muted-foreground">
                   <span>
                     配置名称 <span className="text-destructive">*</span>
                   </span>
@@ -422,8 +390,7 @@ export default function AgentProfilesSection() {
                     required
                     className="h-12 rounded-xl text-base md:text-base"
                   />
-                </label>
-              )}
+              </label>
               {nativeEditor && nativeEditor.providers.length > 0 && (
                 <div className="space-y-2 text-xs text-muted-foreground">
                   <span>供应商</span>
@@ -555,7 +522,7 @@ export default function AgentProfilesSection() {
                   </>
                 )}
               </div>
-              {selected === 'opencode' && nativeEditor && (
+              {(!nativeEditor || selected === 'opencode') && (
                 <details className="group rounded-xl border border-border/70">
                   <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-3 text-sm [&::-webkit-details-marker]:hidden">
                     <span className="flex-1">模型管理</span>

@@ -22,9 +22,11 @@ import { loadConfig } from '../config.js'
 import { registry } from '../providers/registry.js'
 import type { AgentProvider, ListSessionsOptions } from '../providers/types.js'
 import { registerSessionRoutes } from './sessions.js'
+import { AgentProfileStore } from '../agents/profiles.js'
 
 let dir: string
 let app: ReturnType<typeof Fastify>
+let profiles: AgentProfileStore
 
 /** What reached the provider, which is what these tests are asserting about. */
 let listings: ListSessionsOptions[] = []
@@ -98,7 +100,8 @@ beforeEach(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vm-sessions-route-'))
   const config = loadConfig({ authDisabled: true, stateDir: dir })
   app = Fastify()
-  registerSessionRoutes(app, config)
+  profiles = new AgentProfileStore(dir)
+  registerSessionRoutes(app, config, profiles)
   await app.ready()
 })
 
@@ -114,7 +117,21 @@ if (!registry.get('alpha')) {
   registry.register(stub('alpha', 'a', true))
   registry.register(stub('beta', 'b', true))
   registry.register(stub('gamma', 'g', false))
+  registry.register(stub('codex', 'c', true))
 }
+
+describe('GET /api/providers/:provider/models', () => {
+  it('merges models saved on the active provider profile', async () => {
+    await profiles.create('codex', { name: 'Gateway', models: ['proxy-model'] })
+    const id = profiles.response().data.codex[0]?.id
+    expect(id).toBeDefined()
+    if (!id) return
+    await profiles.activate('codex', id)
+    const res = await app.inject('/api/providers/codex/models')
+    expect(res.statusCode).toBe(200)
+    expect(res.json().data).toEqual([{ id: 'proxy-model', displayName: 'proxy-model' }])
+  })
+})
 
 describe('GET /api/sessions', () => {
   it('passes a search term through to the provider', async () => {

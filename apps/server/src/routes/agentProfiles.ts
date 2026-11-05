@@ -21,7 +21,13 @@ export function registerAgentProfileRoutes(
       ? {
           ...result,
           native: Object.fromEntries(
-            AGENT_IDS.map((agent) => [agent, nativeStore.read(agent, result.active[agent] === null)]),
+            AGENT_IDS.map((agent) => [
+              agent,
+              {
+                ...nativeStore.read(agent, result.active[agent] === null),
+                ...(store.nativeName(agent) ? { name: store.nativeName(agent) } : {}),
+              },
+            ]),
           ) as NonNullable<AgentProfilesResponse['native']>,
         }
       : result
@@ -59,9 +65,11 @@ export function registerAgentProfileRoutes(
       try {
         if (req.params.id === 'native') {
           if (!nativeStore) return reply.code(404).send({ error: 'agent_profile_not_found' })
-          return await run(() =>
-            store.editNative(agent, () => nativeStore.update(agent, req.body), !limitations()?.[agent]),
-          )
+          return await run(async () => {
+            const { name, ...nativeInput } = req.body
+            await store.editNative(agent, () => nativeStore.update(agent, nativeInput), !limitations()?.[agent])
+            if (name !== undefined) await store.renameNative(agent, name)
+          })
         }
         return await run(() => store.update(agent, req.params.id, req.body))
       } catch (err) {

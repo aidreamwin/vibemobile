@@ -8,6 +8,7 @@ const profile: StoredAgentProfile = {
   baseUrl: 'https://gateway.example.test/v1',
   apiKey: 'private-test-token',
   model: 'custom-model',
+  models: ['custom-model'],
   updatedAt: 1,
 }
 

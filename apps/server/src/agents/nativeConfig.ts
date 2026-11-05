@@ -112,6 +112,7 @@ export class NativeAgentConfigStore {
       name: '执行机现有配置',
       baseUrl: null,
       model: null,
+      models: [],
       hasApiKey: false,
       active,
       updatedAt: 0,

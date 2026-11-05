@@ -10,6 +10,7 @@ import type {
   SessionSummary,
 } from '@vibemobile/protocol'
 import { Button } from './ui/button'
+import { Input } from './ui/input'
 import Field from './Field'
 import SelectField from './SelectField'
 import { api } from '../lib/api'
@@ -187,16 +188,28 @@ export default function NewSessionSheet({
         </Field>
 
         <Field label="模型">
-          <SelectField
-            value={model}
-            onChange={setModel}
-            disabled={modelsLoading || models.length === 0}
-            ariaLabel="选择模型"
-            options={[
-              { value: '', label: '默认模型' },
-              ...models.map((item) => ({ value: item.id, label: item.displayName || item.id })),
-            ]}
-          />
+          {models.length > 0 ? (
+            <SelectField
+              value={model}
+              onChange={setModel}
+              disabled={modelsLoading}
+              ariaLabel="select model"
+              options={[
+                { value: '', label: 'Default model' },
+                ...models.map((item) => ({ value: item.id, label: item.displayName || item.id })),
+              ]}
+            />
+          ) : (
+            <Input
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="Model ID (optional)"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="h-12 rounded-xl font-mono text-base md:text-base"
+            />
+          )}
           <div className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
             {modelsLoading
               ? '正在读取可用模型…'

@@ -158,7 +158,7 @@ registerAgentProfileRoutes(
   new NativeAgentConfigStore(config.stateDir),
 )
 registerSystemRoutes(app, config)
-registerSessionRoutes(app, config)
+registerSessionRoutes(app, config, agentProfiles)
 registerFileRoutes(app, config)
 registerImageRoutes(app, config)
 registerHub(app, config)

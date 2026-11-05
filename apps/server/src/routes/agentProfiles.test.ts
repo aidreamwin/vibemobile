@@ -50,10 +50,13 @@ describe('runner profile API', () => {
     const updated = await app.inject({
       method: 'PATCH',
       url: '/api/agent-profiles/claude/native',
-      payload: { revision: native?.revision, baseUrl: 'https://updated.example.test' },
+      payload: { revision: native?.revision, name: '阿里云', baseUrl: 'https://updated.example.test' },
     })
     expect(updated.statusCode).toBe(200)
-    expect(updated.json<AgentProfilesResponse>().native?.claude.baseUrl).toBe('https://updated.example.test')
+    expect(updated.json<AgentProfilesResponse>().native?.claude).toMatchObject({
+      name: '阿里云',
+      baseUrl: 'https://updated.example.test',
+    })
     expect(updated.body).not.toContain('native-secret')
     expect(JSON.parse(fs.readFileSync(path.join(dir, '.claude/settings.json'), 'utf8'))).toMatchObject({
       theme: 'dark',

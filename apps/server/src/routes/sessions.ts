@@ -6,6 +6,8 @@ import { probeCache } from '../providers/probeCache.js'
 import { SessionInUseError, SessionNotFoundError } from '../providers/types.js'
 import { requireAuth } from './guards.js'
 import { resolveDirectory, WorkspaceError } from '../files/workspace.js'
+import type { AgentProfileStore } from '../agents/profiles.js'
+import { isAgentRuntimeId } from '../agents/manifest.js'
 
 /**
  * The sentinel `?provider=` value meaning "every provider, merged".
@@ -46,7 +48,7 @@ function notFoundOr(err: unknown, reply: FastifyReply) {
   throw err
 }
 
-export function registerSessionRoutes(app: FastifyInstance, config: Config): void {
+export function registerSessionRoutes(app: FastifyInstance, config: Config, profiles?: AgentProfileStore): void {
   const auth = { preHandler: requireAuth(config) }
 
   // ------------------------------------------------------------ providers
@@ -62,7 +64,15 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config): voi
 
   app.get<{ Params: { provider: string } }>('/api/providers/:provider/models', auth, async (req) => {
     const provider = registry.require(req.params.provider)
-    return { data: await provider.listModels() }
+    const detected = await provider.listModels()
+    const profile = isAgentRuntimeId(provider.id) ? profiles?.current(provider.id) : undefined
+    const saved = profile?.models ?? []
+    const configured = profile?.model ?? ''
+    const known = new Set(detected.map((model) => model.id))
+    const manual = saved.filter((id) => !known.has(id)).map((id) => ({ id, displayName: id }))
+    if (configured && !known.has(configured) && !saved.includes(configured))
+      manual.unshift({ id: configured, displayName: configured })
+    return { data: [...manual, ...detected] }
   })
 
   // ------------------------------------------------------------- projects

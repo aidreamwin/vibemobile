@@ -10,6 +10,7 @@ export interface StoredAgentProfile {
   baseUrl: string
   apiKey: string
   model: string
+  models: string[]
   updatedAt: number
 }
 
@@ -17,6 +18,7 @@ interface ProfileFile {
   version: 1
   active: Record<AgentRuntimeId, string | null>
   profiles: Record<AgentRuntimeId, StoredAgentProfile[]>
+  nativeNames: Partial<Record<AgentRuntimeId, string>>
 }
 
 export class AgentProfileError extends Error {
@@ -38,6 +40,7 @@ function emptyFile(): ProfileFile {
     version: 1,
     active: { codex: null, claude: null, opencode: null },
     profiles: { codex: [], claude: [], opencode: [] },
+    nativeNames: {},
   }
 }
 
@@ -54,7 +57,7 @@ function field(value: unknown, max: number): string {
 
 export function cleanProfile(
   input: AgentProfileRequest,
-): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model'> {
+): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model' | 'models'> {
   const name = field(input?.name, 100)
   if (!name) throw new AgentProfileError('invalid_agent_profile_name')
   const baseUrl = field(input?.baseUrl, 2048)
@@ -69,11 +72,25 @@ export function cleanProfile(
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search)
       throw new AgentProfileError('invalid_agent_profile_url')
   }
+  const models = input.models ?? []
+  if (
+    !Array.isArray(models) ||
+    models.length > 100 ||
+    models.some(
+      (value) =>
+        typeof value !== 'string' ||
+        value.length > 200 ||
+        !value.trim() ||
+        [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127),
+    )
+  )
+    throw new AgentProfileError('invalid_agent_profile_value')
   return {
     name,
     baseUrl: baseUrl.replace(/\/+$/, ''),
     apiKey: field(input?.apiKey, 2000),
     model: field(input?.model, 200),
+    models: [...new Set(models.map((value) => value.trim()))],
   }
 }
 
@@ -104,6 +121,7 @@ export class AgentProfileStore {
           name: profile.name,
           baseUrl: profile.baseUrl || null,
           model: profile.model || null,
+          models: [...profile.models],
           hasApiKey: Boolean(profile.apiKey),
           active: this.#data.active[agent] === profile.id,
           updatedAt: profile.updatedAt,
@@ -111,6 +129,20 @@ export class AgentProfileStore {
       ]),
     ) as AgentProfilesResponse['data']
     return { data, active: { ...this.#data.active } }
+  }
+
+  nativeName(agent: AgentRuntimeId): string | undefined {
+    return this.#data.nativeNames[agent]
+  }
+
+  async renameNative(agent: AgentRuntimeId, name: string): Promise<void> {
+    const cleaned = field(name, 100)
+    if (!cleaned) throw new AgentProfileError('invalid_agent_profile_name')
+    if (this.#busy) throw new AgentProfileError('agent_profile_busy', 409)
+    const next = structuredClone(this.#data)
+    next.nativeNames[agent] = cleaned
+    this.#persist(next)
+    this.#data = next
   }
 
   async create(agent: AgentRuntimeId, input: AgentProfileRequest): Promise<void> {
@@ -231,11 +263,17 @@ export class AgentProfileStore {
           if (!/^profile-[a-f0-9]{16}$/.test(item.id) || ids.has(item.id) || !Number.isFinite(item.updatedAt))
             throw new Error('profile')
           ids.add(item.id)
-          return { id: item.id, ...cleanProfile(item), updatedAt: item.updatedAt }
+          return { id: item.id, ...cleanProfile({ ...item, models: item.models ?? [] }), updatedAt: item.updatedAt }
         })
         const selected = value.active[agent]
         if (selected !== null && !ids.has(selected)) throw new Error('active')
         result.active[agent] = selected
+      }
+      if (value.nativeNames && typeof value.nativeNames === 'object' && !Array.isArray(value.nativeNames)) {
+        for (const agent of AGENT_IDS) {
+          const name = value.nativeNames[agent]
+          if (name !== undefined) result.nativeNames[agent] = field(name, 100)
+        }
       }
       return result
     } catch {

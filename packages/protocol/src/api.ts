@@ -65,6 +65,8 @@ export interface AgentProfile {
   name: string
   baseUrl: string | null
   model: string | null
+  /** Models manually saved for this provider profile. */
+  models: string[]
   hasApiKey: boolean
   active: boolean
   updatedAt: number
@@ -107,7 +109,7 @@ export interface AgentProfileRequest {
   revision?: string
   providerId?: string
   modelAliases?: Record<string, string>
-  /** OpenCode provider model ids. Existing model options are preserved. */
+  /** Model ids to keep available in the provider/session picker. */
   models?: string[]
 }
 
