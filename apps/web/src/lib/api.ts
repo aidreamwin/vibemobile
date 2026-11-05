@@ -121,6 +121,13 @@ export const api = {
 
   // ---- runner-local agent profiles ----
   agentProfiles: () => request<AgentProfilesResponse>('/api/agent-profiles'),
+  fetchAgentProfileModels: (agent: AgentRuntimeId, id: string) =>
+    request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}/models`),
+  fetchUnsavedAgentProfileModels: (agent: AgentRuntimeId, body: { baseUrl: string; apiKey?: string }) =>
+    request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/models`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   createAgentProfile: (agent: AgentRuntimeId, body: AgentProfileRequest) =>
     request<AgentProfilesResponse>(`/api/agent-profiles/${agent}`, { method: 'POST', body: JSON.stringify(body) }),
   updateAgentProfile: (agent: AgentRuntimeId, id: string, body: Partial<AgentProfileRequest>) =>

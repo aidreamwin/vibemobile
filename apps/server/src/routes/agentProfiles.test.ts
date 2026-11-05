@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import cookie from '@fastify/cookie'
 import Fastify, { type FastifyInstance } from 'fastify'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentProfilesResponse } from '@vibemobile/protocol'
 import type { Config } from '../config.js'
 import { AgentProfileStore } from '../agents/profiles.js'
@@ -108,5 +108,41 @@ describe('runner profile API', () => {
     const missing = await app.inject({ method: 'POST', url: '/api/agent-profiles/codex/missing/activate' })
     expect(missing.statusCode).toBe(404)
     expect(missing.json()).toEqual({ error: 'agent_profile_not_found' })
+  })
+
+  it('fetches and normalizes models for a saved profile without exposing its key', async () => {
+    const app = await build()
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/agent-profiles/codex',
+      payload: { name: 'Gateway', baseUrl: 'https://gateway.example.test/v1', apiKey: 'private-key' },
+    })
+    const id = created.json<AgentProfilesResponse>().data.codex[0]?.id
+    expect(id).toBeDefined()
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Response(JSON.stringify({ data: [{ id: 'model-a', name: 'Model A' }, { model: 'model-b' }, { id: 'model-a' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await app.inject({ method: 'GET', url: `/api/agent-profiles/codex/${id}/models` })
+    expect(result.statusCode).toBe(200)
+    expect(result.json()).toEqual({ data: [{ id: 'model-a', displayName: 'Model A' }, { id: 'model-b', displayName: 'model-b' }] })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://gateway.example.test/v1/models',
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer private-key' }) }),
+    )
+    expect(result.body).not.toContain('private-key')
+    const unsaved = await app.inject({
+      method: 'POST',
+      url: '/api/agent-profiles/claude/models',
+      payload: { baseUrl: 'https://gateway.example.test', apiKey: 'temporary-key' },
+    })
+    expect(unsaved.statusCode).toBe(200)
+    expect(unsaved.json()).toEqual({ data: [{ id: 'model-a', displayName: 'Model A' }, { id: 'model-b', displayName: 'model-b' }] })
+    expect(unsaved.body).not.toContain('temporary-key')
+    vi.unstubAllGlobals()
   })
 })

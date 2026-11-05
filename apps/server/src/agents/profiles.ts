@@ -112,6 +112,11 @@ export class AgentProfileStore {
     return profile ? { ...profile } : undefined
   }
 
+  get(agent: AgentRuntimeId, id: string): StoredAgentProfile | undefined {
+    const profile = this.#data.profiles[agent].find((item) => item.id === id)
+    return profile ? { ...profile, models: [...profile.models] } : undefined
+  }
+
   response(): AgentProfilesResponse {
     const data = Object.fromEntries(
       AGENT_IDS.map((agent) => [

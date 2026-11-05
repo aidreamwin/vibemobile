@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, ChevronRight, LoaderCircle, MoreVertical, Pencil, Plus, Server, Trash2, X } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  Code2,
+  Download,
+  HardDrive,
+  LoaderCircle,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Server,
+  Sparkles,
+  Terminal,
+  Trash2,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import type { AgentProfile, AgentProfilesResponse, AgentRuntimeId, NativeAgentProfile } from '@vibemobile/protocol'
 import { api } from '../lib/api'
 import SelectField from './SelectField'
@@ -7,10 +23,10 @@ import Sheet from './Sheet'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
-const AGENTS: { id: AgentRuntimeId; name: string }[] = [
-  { id: 'codex', name: 'Codex' },
-  { id: 'claude', name: 'Claude' },
-  { id: 'opencode', name: 'OpenCode' },
+const AGENTS: { id: AgentRuntimeId; name: string; icon: LucideIcon; accent: string; tint: string }[] = [
+  { id: 'codex', name: 'Codex', icon: Code2, accent: 'text-sky-400', tint: 'bg-sky-400/10' },
+  { id: 'claude', name: 'Claude', icon: Sparkles, accent: 'text-amber-400', tint: 'bg-amber-400/10' },
+  { id: 'opencode', name: 'OpenCode', icon: Terminal, accent: 'text-violet-400', tint: 'bg-violet-400/10' },
 ]
 
 const ERROR_LABELS: Record<string, string> = {
@@ -37,6 +53,8 @@ const ERROR_LABELS: Record<string, string> = {
   agent_native_backup_failed: '原配置备份失败，未修改现有配置。请检查状态目录权限。',
   agent_native_provider_missing: '请选择现有供应商；要使用新供应商，请先添加配置。',
   agent_native_env_key: '此供应商从环境变量读取密钥，请在执行机上修改该环境变量。',
+  agent_profile_models_unavailable: '无法获取模型列表，请检查接口地址和密钥。',
+  agent_profile_models_timeout: '获取模型列表超时，请稍后重试。',
 }
 
 function isNative(profile?: AgentProfile): profile is NativeAgentProfile {
@@ -97,6 +115,8 @@ export default function AgentProfilesSection() {
   const [modelAliases, setModelAliases] = useState<Record<string, string>>({})
   const [providerModels, setProviderModels] = useState<string[]>([])
   const [newModel, setNewModel] = useState('')
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [modelFetchError, setModelFetchError] = useState<string | null>(null)
   const [editingKey, setEditingKey] = useState(false)
   const [confirmClearKey, setConfirmClearKey] = useState(false)
   const [initialValues, setInitialValues] = useState('')
@@ -167,6 +187,7 @@ export default function AgentProfilesSection() {
       models,
     )
     setNewModel('')
+    setModelFetchError(null)
     setError(null)
     setPanel({ kind: 'edit', profile })
   }
@@ -182,6 +203,25 @@ export default function AgentProfilesSection() {
       setError(errorLabel(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function fetchModels() {
+    if (fetchingModels || busy || panel?.kind !== 'edit' || isNative(panel.profile)) return
+    if (!panel.profile && !baseUrl.trim()) return
+    setFetchingModels(true)
+    setModelFetchError(null)
+    try {
+      const result = panel.profile
+        ? await api.fetchAgentProfileModels(selected, panel.profile.id)
+        : await api.fetchUnsavedAgentProfileModels(selected, { baseUrl: baseUrl.trim(), ...(apiKey ? { apiKey } : {}) })
+      const fetched = result.data.map((item) => item.id).filter(Boolean)
+      setProviderModels((current) => [...new Set([...current, ...fetched])].slice(0, 100))
+      if (!model.trim() && fetched.length === 1) setModel(fetched[0])
+    } catch (err) {
+      setModelFetchError(errorLabel(err))
+    } finally {
+      setFetchingModels(false)
     }
   }
 
@@ -225,8 +265,9 @@ export default function AgentProfilesSection() {
                 setSelected(item.id)
                 setError(null)
               }}
-              className={`tap min-h-11 min-w-0 rounded-lg px-2 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-ring ${selected === item.id ? 'bg-secondary font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`tap relative flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-ring ${selected === item.id ? `${item.tint} font-medium text-foreground shadow-sm ring-1 ring-inset ring-current/15` : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'}`}
             >
+              <item.icon className={`size-4 shrink-0 ${selected === item.id ? item.accent : ''}`} />
               {item.name}
             </button>
           ))}
@@ -242,11 +283,15 @@ export default function AgentProfilesSection() {
           <div className="divide-y divide-border/70">
             {native && (
               <div className="flex min-w-0 items-center gap-2 py-3 pl-4 pr-1">
-                <div className={`flex size-7 shrink-0 items-center justify-center rounded-full ${native.active && !limitation ? 'bg-success/10 text-success' : 'bg-secondary text-muted-foreground'}`}>
-                  {native.active && !limitation ? <Check className="size-3.5" /> : <Server className="size-3.5" />}
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <HardDrive className="size-3.5" />
                 </div>
                 <button type="button" onClick={() => edit(native)} disabled={busy || Boolean(native.error)} className="min-h-11 min-w-0 flex-1 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" aria-label={`Edit ${native.name}`}>
-                  <span className="block truncate text-[13px] font-medium">{native.name}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate text-[13px] font-medium">{native.name}</span>
+                    <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">执行机现有</span>
+                    {native.active && !limitation && <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">当前使用</span>}
+                  </span>
                 </button>
                 {!native.active && (
                   <Button variant="outline" size="sm" disabled={busy || Boolean(limitation)} onClick={() => { setError(null); setPanel({ kind: 'activate', profile: native }) }} className="h-11 rounded-xl px-3 text-[13px]">
@@ -258,10 +303,10 @@ export default function AgentProfilesSection() {
             )}
             {profiles.map((profile) => (
               <div key={profile.id} className="flex min-w-0 items-center gap-2 py-3 pl-4 pr-1">
-                <div
-                  className={`flex size-7 shrink-0 items-center justify-center rounded-full ${profile.active && !limitation ? 'bg-success/10 text-success' : 'bg-secondary text-muted-foreground'}`}
+                  <div
+                  className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-secondary text-muted-foreground"
                 >
-                  {profile.active && !limitation ? <Check className="size-3.5" /> : <Server className="size-3.5" />}
+                  <Server className="size-3.5" />
                 </div>
                 <button
                   type="button"
@@ -269,7 +314,10 @@ export default function AgentProfilesSection() {
                   className="min-h-11 min-w-0 flex-1 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-ring"
                   aria-label={`编辑 ${profile.name}`}
                 >
-                  <span className="block truncate text-[13px] font-medium">{profile.name}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate text-[13px] font-medium">{profile.name}</span>
+                    {profile.active && !limitation && <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">当前使用</span>}
+                  </span>
                 </button>
                 {!profile.active && (
                   <Button
@@ -530,6 +578,24 @@ export default function AgentProfilesSection() {
                     <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
                   </summary>
                   <div className="space-y-3 px-3 pb-3">
+                    {!nativeEditor && (
+                      <div className="flex items-center gap-2 rounded-xl bg-secondary/40 p-2">
+                        <Download className="size-4 shrink-0 text-primary" />
+                        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+                          {panel.profile ? '从供应商同步可用模型' : '填写接口地址后即可获取模型列表'}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="h-10 shrink-0 rounded-lg px-3 text-xs"
+                          disabled={(!panel.profile && !baseUrl.trim()) || fetchingModels || busy}
+                          onClick={() => void fetchModels()}
+                        >
+                          {fetchingModels ? <LoaderCircle className="size-4 animate-spin" /> : '获取模型列表'}
+                        </Button>
+                      </div>
+                    )}
+                    {modelFetchError && <p className="text-xs text-destructive">{modelFetchError}</p>}
                     <p className="text-xs text-muted-foreground">点选模型设为默认，最多添加 100 个。</p>
                     {providerModels.length > 0 ? (
                       <div className="divide-y divide-border/60">
