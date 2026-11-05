@@ -18,16 +18,20 @@ import { Sheet as SheetRoot, SheetContent, SheetHeader, SheetTitle } from './ui/
 export default function Sheet({
   title,
   label,
+  closeLabel = '取消',
   onClose,
   children,
+  footer,
   dismissable = true,
 }: {
   title?: string
   /** Accessible name for a sheet that draws its own heading instead of using
    *  `title`; without it a screen reader hears the generic fallback. */
   label?: string
+  closeLabel?: string
   onClose: () => void
   children: React.ReactNode
+  footer?: React.ReactNode
   dismissable?: boolean
 }) {
   return (
@@ -48,7 +52,7 @@ export default function Sheet({
         className="safe-bottom max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-t border-input bg-card shadow-2xl shadow-black/50"
       >
         <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-input" aria-hidden="true" />
-        <SheetHeader className="flex-row items-center gap-0 px-4 pt-2 pb-1">
+        <SheetHeader className="shrink-0 flex-row items-center gap-0 px-4 pt-2 pb-1">
           {/* Always present: a titleless dialog has no accessible name, and
               every sheet here would be titleless without this. */}
           <SheetTitle className={title ? 'flex-1 text-left text-base font-medium' : 'sr-only'}>
@@ -56,13 +60,14 @@ export default function Sheet({
           </SheetTitle>
           {title && dismissable && (
             <button type="button" onClick={onClose} className="tap text-sm text-muted-foreground" aria-label="关闭">
-              取消
+              {closeLabel}
             </button>
           )}
         </SheetHeader>
         {/* touch-pan-y keeps iOS from reading a horizontal drag in the sheet
             body as a back-navigation gesture. */}
-        <div className="scroll-y max-h-[74dvh] touch-pan-y">{children}</div>
+        <div className="scroll-y min-h-0 max-h-[74dvh] touch-pan-y">{children}</div>
+        {footer && <div className="shrink-0 border-t border-border/70 bg-card px-4 py-3">{footer}</div>}
       </SheetContent>
     </SheetRoot>
   )

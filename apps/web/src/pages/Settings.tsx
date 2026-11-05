@@ -2,23 +2,20 @@ import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import AgentProfilesSection from '../components/AgentProfilesSection'
 import { useCallback, useEffect, useState } from 'react'
-import { Popover } from 'radix-ui'
 import {
   ArrowUpCircle,
   ChevronRight,
-  CircleAlert,
   FolderOpen,
-  Info,
   LoaderCircle,
   LogOut,
   MoreVertical,
+  Plus,
   RefreshCw,
   Settings as SettingsIcon,
 } from 'lucide-react'
 import type {
   AgentRuntimeId,
   AgentRuntimeStatus,
-  BuildInfo,
   HealthResponse,
   ProviderStatus,
   RunnerInfo,
@@ -28,6 +25,7 @@ import { errorLabel, jobRunning, phaseLabel, useSystemStore } from '../lib/syste
 import CopyButton from '../components/CopyButton'
 import { Hint } from '../components/ui/tooltip'
 import { api } from '../lib/api'
+import { agentStatus } from '../lib/agentStatus'
 import { runnerId, runnerSwitchUrl } from '../lib/runner'
 import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
 import { WEB_BUILD, buildLabel, builtAtLabel, halvesDiverge, serverRestartPending, uptimeLabel } from '../lib/build'
@@ -297,7 +295,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
 
           <AgentProfilesSection />
 
-          <SystemUpdateSection />
+          <SystemUpdateSection runnerName={runners.find((runner) => runner.id === runnerId)?.name} />
 
           <Section title="工作区">
             <div className="flex min-w-0 items-center pl-4 pr-1">
@@ -334,7 +332,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
               {projects.map((project) => (
                 <Detail
                   key={project.id}
-                  label={project.isGitRepo ? 'Git · ' + (project.gitBranch || '未命名分支') : '目录'}
+                  label={project.isGitRepo ? `Git · ${project.gitBranch || '未命名分支'}` : '目录'}
                 >
                   <code>{project.path}</code>
                 </Detail>
@@ -348,12 +346,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
           </Section>
 
           {hub && (
-            <Section title="执行机器">
-              {managedRunners.length === 0 && (
-                <p className="px-4 py-3 text-xs text-muted-foreground">
-                  还没有远程执行机。添加后，把生成的两行变量写进执行机的 .env.runner。
-                </p>
-              )}
+            <Section title="远程执行机">
               {managedRunners.map((runner) => (
                 <div key={runner.id} className="flex min-h-14 min-w-0 items-center gap-2 py-2 pl-4 pr-1">
                   <span
@@ -362,7 +355,6 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
                   />
                   <span className="min-w-0 flex-1 truncate text-sm">
                     <span className="font-medium text-foreground/90">{runner.name}</span>
-                    <span className="ml-2 font-mono text-[11px] text-muted-foreground">{runner.id}</span>
                   </span>
                   <span className={`shrink-0 text-xs ${runner.online ? 'text-success' : 'text-muted-foreground'}`}>
                     {runner.online ? '在线' : '离线'}
@@ -381,18 +373,18 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
                   </button>
                 </div>
               ))}
-              <div className="px-4 py-3">
+              <div className="px-3 py-2.5">
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="ghost"
                   onClick={() => {
                     setRunnerName('')
                     setRunnerSheetError(null)
                     setRunnerSheet({ kind: 'create' })
                   }}
-                  className="tap h-11 w-full text-[14px]"
+                  className="tap h-11 w-full justify-start rounded-xl text-sm text-primary"
                 >
-                  添加执行机
+                  <Plus aria-hidden="true" className="size-4" /> 添加执行机
                 </Button>
               </div>
             </Section>
@@ -408,12 +400,20 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
               </Detail>
               <Detail label="实时通道">{CONN_TEXT[conn].label}</Detail>
             </InfoRow>
-            <BuildRow
-              label="前端"
-              build={WEB_BUILD}
-              note={builtAtLabel(WEB_BUILD) ? '构建于 ' + builtAtLabel(WEB_BUILD) : '开发模式（Vite 实时编译）'}
-            />
-            <BuildRow label="服务端" build={server} note={serverNote} />
+            <InfoRow label="版本信息" value={WEB_BUILD.version}>
+              <Detail label="前端版本">{WEB_BUILD.version}</Detail>
+              <Detail label="前端构建">
+                <code>{buildLabel(WEB_BUILD)}</code>
+              </Detail>
+              <p>{builtAtLabel(WEB_BUILD) ? `构建于 ${builtAtLabel(WEB_BUILD)}` : '开发模式'}</p>
+              <Detail label="服务端版本">{server?.version ?? '读取中…'}</Detail>
+              {server && (
+                <Detail label="服务端构建">
+                  <code>{buildLabel(server)}</code>
+                </Detail>
+              )}
+              {serverNote && <p>{serverNote}</p>}
+            </InfoRow>
             {restartPending && (
               <p role="status" className="px-4 py-3 text-xs text-warning">
                 服务端有新构建，待重启生效。
@@ -424,23 +424,23 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
                 前后端构建提交不一致。
               </p>
             )}
-            <InfoRow label="安全" value={location.protocol === 'https:' ? 'HTTPS' : 'HTTP'}>
+          </Section>
+
+          <Section title="安全">
+            <InfoRow label="连接保护" value={location.protocol === 'https:' ? 'HTTPS' : 'HTTP'}>
               <p>登录凭据通过 httpOnly Cookie 保存。公网访问应使用 HTTPS 反向代理。</p>
             </InfoRow>
-            <div className="flex min-h-14 items-center gap-3 pl-4 pr-1">
-              <span className="min-w-0 flex-1 text-xs text-muted-foreground">让所有已登录设备立即失效</span>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setLogoutAllError(null)
-                  setLogoutAllOpen(true)
-                }}
-                className="tap h-10 shrink-0 px-3 text-[13px]"
-              >
-                登出所有设备
-              </Button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setLogoutAllError(null)
+                setLogoutAllOpen(true)
+              }}
+              className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left text-sm text-destructive transition-colors active:bg-destructive/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+            >
+              登出所有设备
+              <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground/60" />
+            </button>
           </Section>
 
           <Section title="关于">
@@ -453,7 +453,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
             type="button"
             onClick={logout}
             disabled={busy}
-            className="tap mt-6 w-full gap-2 rounded-xl border border-border py-2 text-sm text-destructive active:bg-destructive/10 disabled:opacity-50"
+            className="tap mt-8 min-h-12 w-full gap-2 rounded-2xl border border-border text-sm text-destructive active:bg-destructive/10 disabled:opacity-50"
           >
             <LogOut aria-hidden="true" className="size-4" />
             {busy ? '退出中…' : '退出登录'}
@@ -660,7 +660,7 @@ const UPDATE_REASONS: Record<string, string> = {
   update_via_hub: '随 Hub 升级',
 }
 
-function SystemUpdateSection() {
+function SystemUpdateSection({ runnerName }: { runnerName?: string }) {
   const { current, hub, loading, currentError, hubError, load, start } = useSystemStore()
   const [confirming, setConfirming] = useState<'current' | 'hub' | null>(null)
   const [starting, setStarting] = useState(false)
@@ -697,12 +697,12 @@ function SystemUpdateSection() {
 
   return (
     <>
-      <Section title="应用升级">
+      <Section title="更新">
         {!current && <div className="px-4 py-3 text-sm text-muted-foreground">{currentError ?? '加载中…'}</div>}
         {current && (
           <UpdateRow
             status={current}
-            label={inRunner ? `执行机 ${runnerId}` : 'Hub（本机）'}
+            label={inRunner ? (current.sharedInstall ? '本机执行机' : runnerName || '当前执行机') : 'Hub'}
             error={currentError}
             loading={loading}
             onCheck={() => void load({ force: true })}
@@ -712,7 +712,7 @@ function SystemUpdateSection() {
         {inRunner && hub && (
           <UpdateRow
             status={hub}
-            label="Hub（本机）"
+            label="Hub"
             error={hubError}
             loading={loading}
             onCheck={() => void load({ hub: true, force: true })}
@@ -774,25 +774,24 @@ function UpdateRow({
   const latest = status.latest?.serverVersion
 
   let line: string
-  if (status.sharedInstall) line = '随 Hub 升级'
+  if (status.sharedInstall) line = '跟随 Hub 更新'
   else if (!status.supported) line = UPDATE_REASONS[status.reason ?? ''] ?? '不支持一键升级'
   else if (running) line = phaseLabel(job?.phase)
   else if (failed) line = job?.status === 'rolled_back' ? '已回滚' : '升级失败'
   else if (status.feedError === 'update_not_configured') line = '未配置更新源'
   else if (status.feedError) line = '无法检查更新'
-  else if (status.updateAvailable && latest) line = `可升级到 ${latest}`
-  else line = `已是最新 · ${currentVersion}`
+  else if (status.updateAvailable && latest) line = '可更新'
+  else line = '已是最新'
 
   return (
-    <div className="px-4 py-2.5">
-      <div className="flex min-h-8 items-center gap-2">
-        <span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
-        {failed && <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />}
-        <span className={`min-w-0 flex-1 truncate text-xs ${failed ? 'text-destructive' : 'text-muted-foreground'}`}>
-          {line}
-        </span>
-
-        {status.supported &&
+    <div>
+      <InfoRow
+        label={label}
+        value={
+          <span className={failed ? 'text-destructive' : status.updateAvailable ? 'text-primary' : ''}>{line}</span>
+        }
+        action={
+          status.supported &&
           !status.sharedInstall &&
           (running ? (
             <LoaderCircle aria-label="升级中" className="size-4 shrink-0 animate-spin text-muted-foreground" />
@@ -802,7 +801,7 @@ function UpdateRow({
                 type="button"
                 size="icon-sm"
                 variant="ghost"
-                className="tap text-primary"
+                className="tap size-11 text-primary"
                 disabled={loading}
                 onClick={onUpgrade}
                 aria-label="升级"
@@ -816,7 +815,7 @@ function UpdateRow({
                 type="button"
                 size="icon-sm"
                 variant="ghost"
-                className="tap"
+                className="tap size-11"
                 disabled={loading}
                 onClick={onCheck}
                 aria-label="检查更新"
@@ -824,25 +823,25 @@ function UpdateRow({
                 <RefreshCw className="size-4" />
               </Button>
             </Hint>
-          ))}
-
+          ))
+        }
+      >
+        <Detail label="当前版本">{currentVersion}</Detail>
+        <Detail label="更新状态">{line}</Detail>
+        {latest && <Detail label="可用版本">{latest}</Detail>}
+        {status.feedError === 'update_not_configured' && <p>请在执行机配置更新源。</p>}
         {!status.supported && !status.sharedInstall && status.manualCommand && (
-          <Hint content={<span className="break-all font-mono">{status.manualCommand}</span>}>
-            <span>
-              <CopyButton getText={() => status.manualCommand ?? ''} label="复制更新命令" />
-            </span>
-          </Hint>
+          <div className="flex items-start gap-2 rounded-xl bg-secondary p-3">
+            <code className="min-w-0 flex-1 break-all text-xs">{status.manualCommand}</code>
+            <CopyButton getText={() => status.manualCommand ?? ''} label="复制更新命令" />
+          </div>
         )}
-      </div>
-
-      {status.feedError === 'update_not_configured' && (
-        <p className="mt-0.5 text-[11px] text-muted-foreground">配置 VIBEMOBILE_UPDATE_* 后可一键升级</p>
-      )}
+      </InfoRow>
       {status.feedError && status.feedError !== 'update_not_configured' && (
-        <p className="mt-0.5 text-[11px] text-destructive">{errorLabel(status.feedError)}</p>
+        <p className="px-4 pb-3 text-xs text-destructive">{errorLabel(status.feedError)}</p>
       )}
-      {error && <p className="mt-0.5 text-[11px] text-destructive">{error}</p>}
-      {failed && job?.error && <p className="mt-0.5 text-[11px] text-destructive">{errorLabel(job.error)}</p>}
+      {error && <p className="px-4 pb-3 text-xs text-destructive">{error}</p>}
+      {failed && job?.error && <p className="px-4 pb-3 text-xs text-destructive">{errorLabel(job.error)}</p>}
 
       {status.logTail && (failed || running) && (
         <details className="mt-0.5">
@@ -931,39 +930,22 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
         const name = agent?.displayName ?? provider?.displayName ?? id
         const checked = latest[id]
         const newer = agent && checked && checked !== agent.active ? checked : null
-        const providerState = provider
-          ? provider.available
-            ? provider.authenticated === false
-              ? '未登录'
-              : '可用'
-            : '不可用'
-          : '…'
-        const warn = !provider || !provider.available || provider.authenticated === false || Boolean(agent?.error)
-        const dot =
-          !provider || !provider.available
-            ? 'bg-destructive'
-            : provider.authenticated === false
-              ? 'bg-warning'
-              : 'bg-success'
+        const status = agentStatus(agent, provider, checked)
 
         return (
-          <div key={id} className="flex min-h-12 items-center gap-2 pl-4 pr-2">
-            <span className={`size-1.5 shrink-0 rounded-full ${dot}`} aria-hidden />
-            <span className="text-sm font-medium text-foreground">{name}</span>
-            <span className={`text-xs ${warn ? 'text-warning' : 'text-muted-foreground'}`}>{providerState}</span>
-            <span className="font-mono text-[11px] text-muted-foreground/80">{agent?.active ?? '—'}</span>
-            {newer && <span className="truncate text-[11px] text-primary">→ {newer}</span>}
-            <span className="min-w-0 flex-1" />
-
-            {agent?.error && (
-              <Hint content={agent.error}>
-                <span className="shrink-0">
-                  <CircleAlert aria-label="错误" className="size-3.5 text-destructive" />
-                </span>
-              </Hint>
-            )}
-
-            {agent &&
+          <InfoRow
+            key={id}
+            label={name}
+            value={
+              <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                <span className={status.tone}>{status.label}</span>
+                {status.version && (
+                  <span className="font-mono text-[11px] text-muted-foreground/70">{status.version}</span>
+                )}
+              </span>
+            }
+            action={
+              agent &&
               (agent.updating ? (
                 <LoaderCircle aria-label="更新中" className="size-4 shrink-0 animate-spin text-muted-foreground" />
               ) : newer ? (
@@ -972,7 +954,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                     type="button"
                     size="icon-sm"
                     variant="ghost"
-                    className="tap text-primary"
+                    className="tap size-11 text-primary"
                     disabled={busy === id}
                     onClick={() => void update(id)}
                     aria-label={`升级到 ${newer}`}
@@ -986,7 +968,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                     type="button"
                     size="icon-sm"
                     variant="ghost"
-                    className="tap"
+                    className="tap size-11"
                     disabled={checking === id}
                     onClick={() => void check(id)}
                     aria-label="检查更新"
@@ -995,82 +977,58 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                   </Button>
                 </Hint>
               ) : (
-                <Hint content="升级">
+                <Hint content={agent.active ? '更新' : '安装'}>
                   <Button
                     type="button"
                     size="icon-sm"
                     variant="ghost"
-                    className="tap text-primary"
+                    className="tap size-11 text-primary"
                     disabled={busy === id}
                     onClick={() => void update(id)}
-                    aria-label="升级"
+                    aria-label={agent.active ? '更新' : '安装'}
                   >
                     <ArrowUpCircle className="size-4" />
                   </Button>
                 </Hint>
-              ))}
-
-            <Popover.Root>
-              <Popover.Trigger asChild>
-                <button
-                  type="button"
-                  aria-label={`${name}详情`}
-                  className="tap shrink-0 rounded-xl text-muted-foreground/60 transition-colors active:bg-secondary data-[state=open]:text-primary"
-                >
-                  <Info aria-hidden="true" className="size-4" strokeWidth={1.7} />
-                </button>
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content
-                  aria-label={`${name}详情`}
-                  side="top"
-                  align="end"
-                  sideOffset={6}
-                  collisionPadding={12}
-                  onOpenAutoFocus={(event) => event.preventDefault()}
-                  className="z-50 max-h-[var(--radix-popover-content-available-height)] w-72 max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-border bg-popover px-3.5 py-3 text-xs leading-relaxed text-muted-foreground shadow-xl outline-none [overflow-wrap:anywhere]"
-                >
-                  <div className="mb-2 font-medium text-foreground">{name}</div>
-                  <div className="space-y-2">
-                    {provider?.version && (
-                      <Detail label="代理版本">
-                        <code>{provider.version}</code>
-                      </Detail>
-                    )}
-                    {provider?.detail && <Detail label="详情">{provider.detail}</Detail>}
-                    {agent && (
-                      <Detail label="运行时版本">
-                        <code>{agent.active ?? '未找到'}</code>
-                      </Detail>
-                    )}
-                    {agent && (
-                      <Detail label="来源">
-                        {agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知'}
-                      </Detail>
-                    )}
-                    {agent && (
-                      <Detail label="支持范围">
-                        <code>{agent.supported}</code>
-                      </Detail>
-                    )}
-                    {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
-                    <p>
-                      只下载到执行机器；Codex 更新会重启 app-server，OpenCode 更新会重启它的
-                      server（两者都会中断当前回合）， Claude 下一回合生效；OpenCode attach 到外部 service
-                      时，更新只对下次启动生效。
-                    </p>
-                    {provider?.available && provider.authenticated === false && (
-                      <p className="text-warning">
-                        请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
-                        {LOGIN_FOLLOW_UP[id] ? ` ${LOGIN_FOLLOW_UP[id]}` : ''}
-                      </p>
-                    )}
-                  </div>
-                  <Popover.Arrow className="fill-popover" width={10} height={5} />
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
-          </div>
+              ))
+            }
+          >
+            {agent?.error && <p className="text-destructive">{agent.error}</p>}
+            <div className="space-y-2">
+              {provider?.version && (
+                <Detail label="代理版本">
+                  <code>{provider.version}</code>
+                </Detail>
+              )}
+              {provider?.detail && <Detail label="详情">{provider.detail}</Detail>}
+              {agent && (
+                <Detail label="运行时版本">
+                  <code>{agent.active ?? '未找到'}</code>
+                </Detail>
+              )}
+              {agent && (
+                <Detail label="来源">
+                  {agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知'}
+                </Detail>
+              )}
+              {agent && (
+                <Detail label="支持范围">
+                  <code>{agent.supported}</code>
+                </Detail>
+              )}
+              {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
+              <p>
+                只下载到执行机器；Codex 更新会重启 app-server，OpenCode 更新会重启它的 server（两者都会中断当前回合），
+                Claude 下一回合生效；OpenCode attach 到外部 service 时，更新只对下次启动生效。
+              </p>
+              {provider?.available && provider.authenticated === false && (
+                <p className="text-warning">
+                  请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
+                  {LOGIN_FOLLOW_UP[id] ? ` ${LOGIN_FOLLOW_UP[id]}` : ''}
+                </p>
+              )}
+            </div>
+          </InfoRow>
         )
       })}
       {error && ids.length > 0 && <div className="px-4 pb-2 text-xs text-destructive">{error}</div>}
@@ -1080,57 +1038,50 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="mt-5">
-      <div className="px-1 pb-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{title}</div>
-      <div className="surface-list divide-y divide-border shadow-sm">{children}</div>
-    </div>
+    <section className="mt-6" aria-label={title}>
+      <h2 className="px-1 pb-2 text-xs font-medium text-muted-foreground">{title}</h2>
+      <div className="surface-list overflow-hidden divide-y divide-border/70 shadow-sm">{children}</div>
+    </section>
   )
 }
 
-function BuildRow({ label, build, note }: { label: string; build?: BuildInfo | null; note?: string }) {
+function InfoRow({
+  label,
+  value,
+  action,
+  children,
+}: {
+  label: string
+  value?: React.ReactNode
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
   return (
-    <InfoRow label={label} value={<code>{build?.version ?? '…'}</code>}>
-      <Detail label="构建">
-        <code>{build ? buildLabel(build) : '读取中…'}</code>
-      </Detail>
-      {note && <p>{note}</p>}
-      <p>{label === '前端' ? '前端重建后刷新页面即可生效。' : '服务端重建后需重启进程才会生效。'}</p>
-    </InfoRow>
-  )
-}
-
-function InfoRow({ label, value, children }: { label: string; value?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-14 min-w-0 items-center gap-3 pl-4 pr-1">
-      <span className="shrink-0 text-sm font-medium text-foreground/90">{label}</span>
-      <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{value}</span>
-      <Popover.Root>
-        <Popover.Trigger asChild>
-          <button
-            type="button"
-            aria-label={label + '详情'}
-            className="tap shrink-0 rounded-xl text-muted-foreground/60 transition-colors active:bg-secondary data-[state=open]:text-primary"
-          >
-            <Info aria-hidden="true" className="size-4" strokeWidth={1.7} />
-          </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content
-            aria-label={label + '详情'}
-            side="top"
-            align="end"
-            sideOffset={6}
-            collisionPadding={12}
-            onOpenAutoFocus={(event) => event.preventDefault()}
-            className="z-50 max-h-[var(--radix-popover-content-available-height)] w-72 max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-border bg-popover px-3.5 py-3 text-xs leading-relaxed text-muted-foreground shadow-xl outline-none [overflow-wrap:anywhere]"
-          >
-            <div className="mb-2 font-medium text-foreground">{label}</div>
-            <div className="space-y-2">{children}</div>
-            <Popover.Arrow className="fill-popover" width={10} height={5} />
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
-    </div>
+    <>
+      <div className="flex min-w-0 items-center">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`${label}详情`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          className="flex min-h-14 min-w-0 flex-1 items-center gap-3 px-4 text-left transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        >
+          <span className="shrink-0 text-sm font-medium text-foreground/90">{label}</span>
+          <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{value}</span>
+          <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/60" />
+        </button>
+        {action && <div className="shrink-0 pr-2">{action}</div>}
+      </div>
+      {open && (
+        <Sheet title={label} closeLabel="完成" onClose={() => setOpen(false)}>
+          <div className="space-y-4 px-4 pt-3 pb-6 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+            {children}
+          </div>
+        </Sheet>
+      )}
+    </>
   )
 }
 
