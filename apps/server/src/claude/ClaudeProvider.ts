@@ -91,10 +91,12 @@ import {
   withTimeout,
 } from './runtime.js'
 import { resolveClaudeBin } from '../agents/runtime.js'
+import { claudeProfileOptions, type AgentConnection } from '../agents/profileRuntime.js'
 import { buildTurns, MAX_CURSOR_SKIP, readTranscriptMessages, UUID_RE } from './transcript.js'
 import { TurnInput } from './turnInput.js'
 
 export interface ClaudeProviderOptions {
+  connection?: AgentConnection
   /** Workspace roots the agent may operate in. First entry is the default. */
   workspaceRoots: string[]
   /**
@@ -264,6 +266,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
   #images?: ImageStore
   /** Where runtime packs live, or undefined to always use the SDK's bundled CLI. */
   #agentsDir?: string
+  #connection?: AgentConnection
   /** Learned from the first `system:init`; until then probe reports the SDK's. */
   #cliVersion: string | null = null
   /**
@@ -278,6 +281,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
 
   constructor(opts: ClaudeProviderOptions) {
     super()
+    this.#connection = opts.connection
     this.#roots = opts.workspaceRoots
     this.#onLog = opts.onLog
     // Falls back to the log line so a caller that only wired `onLog` still
@@ -428,7 +432,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
     const init = await this.#readInit()
     const models = (init as any)?.models ?? []
     this.#resolvedModels.clear()
-    return models.map((m: any) => {
+    const result: ModelInfo[] = models.map((m: any) => {
       this.#resolvedModels.set(String(m.value), String(m.resolvedModel ?? m.value))
       return {
         id: m.value,
@@ -439,6 +443,12 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
         defaultEffort: m.supportsEffort ? DEFAULT_EFFORT : undefined,
       }
     })
+    const configured = this.#connection?.()?.model
+    if (configured) {
+      const entry = result.find((model) => model.id === configured) ?? { id: configured, displayName: configured }
+      return [entry, ...result.filter((model) => model.id !== configured)]
+    }
+    return result
   }
 
   /** Spawn a throwaway query purely to ask it about itself, then close it. */
@@ -683,7 +693,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       id,
       cwd: opts.cwd,
       title: null,
-      model: opts.model ?? null,
+      model: opts.model ?? this.#connection?.()?.model ?? null,
       // Creation has no effort picker; the first turn's composer supplies one.
       effort: null,
       permissionMode: permissionModeFor(opts.sandbox, opts.approvalPolicy),
@@ -1166,6 +1176,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       // result has told us the window, size the trigger with 20% headroom;
       // before that, leave the window to the CLI's own policy.
       settings: {
+        ...claudeProfileOptions(this.#connection?.()).settings,
         autoCompactEnabled: true,
         ...(autoCompactWindow ? { autoCompactWindow } : {}),
       },
@@ -1507,6 +1518,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
     const executable = resolveClaudeBin(this.#agentsDir)
     return {
       cwd,
+      ...claudeProfileOptions(this.#connection?.()),
       ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       // The entire streaming design rests on this. Without it the SDK reports
       // whole messages only, and there is nothing for the phone to animate.

@@ -24,6 +24,7 @@ import type {
 } from '@vibemobile/protocol'
 import { AppServerClient, type ServerRequestContext } from './AppServerClient.js'
 import { AppServerSupervisor } from './supervisor.js'
+import type { AgentConnection } from '../agents/profileRuntime.js'
 import {
   answersForQuestions,
   mapNotification,
@@ -52,6 +53,7 @@ import { SessionPrefsStore } from '../providers/sessionPrefs.js'
 import { capImages, MAX_PER_MESSAGE, ImageStore } from '../images/store.js'
 
 export interface CodexProviderOptions {
+  connection?: AgentConnection
   attachUrl?: string
   port?: number
   /** Explicit Codex entry point (CODEX_BIN), overriding runtime packs. */
@@ -183,9 +185,11 @@ export class CodexProvider extends EventEmitter {
   #noticed = new Set<string>()
   #userAgent?: string
   #started = false
+  #connection?: AgentConnection
 
   constructor(opts: CodexProviderOptions) {
     super()
+    this.#connection = opts.attachUrl ? undefined : opts.connection
     this.#roots = opts.workspaceRoots
     this.#retryHistory = new TurnRetryStore(
       opts.stateDir ? path.join(opts.stateDir, 'codex-retries.json') : undefined,
@@ -203,6 +207,7 @@ export class CodexProvider extends EventEmitter {
       bin: opts.bin,
       agentsDir: opts.agentsDir,
       onLog: opts.onLog,
+      connection: opts.connection,
     })
     this.#client = new AppServerClient({ url: this.#supervisor.url })
     this.#wire()
@@ -431,12 +436,18 @@ export class CodexProvider extends EventEmitter {
   async listModels(): Promise<ModelInfo[]> {
     const res = (await this.#client.request('model/list', {})) as any
     const data = res?.data ?? res?.models ?? []
-    return data.map((m: any) => ({
+    const models: ModelInfo[] = data.map((m: any) => ({
       id: m.id ?? m.model ?? m.slug,
       displayName: m.displayName ?? m.name ?? m.id,
       efforts: m.supportedReasoningEfforts?.map((e: any) => e.reasoningEffort ?? e) ?? undefined,
       defaultEffort: m.defaultReasoningEffort ?? undefined,
     }))
+    const configured = this.#connection?.()?.model
+    if (configured) {
+      const entry = models.find((model) => model.id === configured) ?? { id: configured, displayName: configured }
+      return [entry, ...models.filter((model) => model.id !== configured)]
+    }
+    return models
   }
 
   async listProjects(): Promise<Project[]> {

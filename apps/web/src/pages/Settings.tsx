@@ -1,5 +1,6 @@
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
+import AgentProfilesSection from '../components/AgentProfilesSection'
 import { useCallback, useEffect, useState } from 'react'
 import { Popover } from 'radix-ui'
 import {
@@ -293,6 +294,8 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
       <div className="scroll-y min-h-0 flex-1 px-3.5 pb-8">
         <div className="mx-auto max-w-2xl">
           <AgentsSection providers={providers} />
+
+          <AgentProfilesSection />
 
           <SystemUpdateSection />
 
@@ -1052,8 +1055,9 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                     )}
                     {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
                     <p>
-                      只下载到执行机器；Codex 更新会重启 app-server，OpenCode 更新会重启它的 server（两者都会中断当前回合），
-                      Claude 下一回合生效；OpenCode attach 到外部 service 时，更新只对下次启动生效。
+                      只下载到执行机器；Codex 更新会重启 app-server，OpenCode 更新会重启它的
+                      server（两者都会中断当前回合）， Claude 下一回合生效；OpenCode attach 到外部 service
+                      时，更新只对下次启动生效。
                     </p>
                     {provider?.available && provider.authenticated === false && (
                       <p className="text-warning">

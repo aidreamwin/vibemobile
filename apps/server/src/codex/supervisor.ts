@@ -11,6 +11,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { resolveCodexBin } from '../agents/runtime.js'
+import { codexProfileLaunch, type AgentConnection } from '../agents/profileRuntime.js'
 
 export interface SupervisorOptions {
   /** When set, we attach to this URL instead of spawning. */
@@ -26,14 +27,16 @@ export interface SupervisorOptions {
   /** Runtime packs directory; `current` is re-read on every spawn. */
   agentsDir?: string
   onLog?: (line: string) => void
+  connection?: AgentConnection
 }
 
 export class AppServerSupervisor extends EventEmitter {
-  #opts: Required<Omit<SupervisorOptions, 'attachUrl' | 'bin' | 'agentsDir' | 'onLog'>> & {
+  #opts: Required<Omit<SupervisorOptions, 'attachUrl' | 'bin' | 'agentsDir' | 'onLog' | 'connection'>> & {
     bin?: string
     agentsDir?: string
     attachUrl?: string
     onLog?: (line: string) => void
+    connection?: AgentConnection
   }
   #child?: ChildProcess
   #stopping = false
@@ -82,8 +85,10 @@ export class AppServerSupervisor extends EventEmitter {
     // Resolved on every spawn, never cached: switching a runtime pack's
     // `current` must take effect on the respawn that follows the update.
     const { cmd, args } = resolveCodexBin({ bin: this.#opts.bin, agentsDir: this.#opts.agentsDir })
+    const profile = codexProfileLaunch(this.#opts.connection?.())
     const fullArgs = [
       ...args,
+      ...profile.args,
       'app-server',
       '--listen',
       `ws://${this.#opts.host}:${this.#opts.port}`,
@@ -93,7 +98,7 @@ export class AppServerSupervisor extends EventEmitter {
     const child = spawn(cmd, fullArgs, {
       cwd: this.#opts.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: { ...process.env, ...profile.env },
       // Behind PM2 / a service there is no console to inherit, so the Codex
       // launcher (node.exe) otherwise gets a new visible console window.
       windowsHide: true,

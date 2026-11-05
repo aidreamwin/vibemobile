@@ -24,6 +24,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { resolveOpencodeBin } from '../agents/runtime.js'
+import { opencodeProfileEnv, type AgentConnection } from '../agents/profileRuntime.js'
 import type { OpencodeInfo } from './types.js'
 
 /** The major/minor line this build was written against. */
@@ -45,6 +46,7 @@ export interface OpencodeServiceStatus {
 }
 
 export interface OpencodeServiceOptions {
+  connection?: AgentConnection
   /** Explicit attach URL. When set, this mode never spawns. */
   attachUrl?: string
   port: number
@@ -321,6 +323,7 @@ export class OpencodeService extends EventEmitter {
     this.#log(`spawning: ${cmd} ${fullArgs.join(' ')}`)
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...opencodeProfileEnv(this.#opts.connection?.(), process.env.OPENCODE_CONFIG_CONTENT),
       OPENCODE_SERVER_PASSWORD: password,
       OPENCODE_DISABLE_AUTOUPDATE: '1',
       OPENCODE_LOG_LEVEL: 'warn',

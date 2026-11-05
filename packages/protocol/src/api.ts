@@ -57,6 +57,60 @@ export interface AgentsResponse {
   data: AgentRuntimeStatus[]
 }
 
+// ---------------------------------------------------------- agent profiles
+
+/** A provider profile managed on the runner for one agent CLI. */
+export interface AgentProfile {
+  id: string
+  name: string
+  baseUrl: string | null
+  model: string | null
+  hasApiKey: boolean
+  active: boolean
+  updatedAt: number
+}
+
+export interface AgentProfilesResponse {
+  data: Record<AgentRuntimeId, AgentProfile[]>
+  active: Record<AgentRuntimeId, string | null>
+  /** Attached services keep their own configuration and cannot apply profiles. */
+  limitations?: Partial<Record<AgentRuntimeId, string>>
+  native?: Record<AgentRuntimeId, NativeAgentProfile>
+}
+
+export interface NativeAgentProvider {
+  id: string
+  name: string
+  baseUrl: string | null
+  hasApiKey: boolean
+  models: string[]
+}
+
+export interface NativeAgentProfile extends AgentProfile {
+  sourcePath: string
+  exists: boolean
+  revision: string
+  providerId: string | null
+  providers: NativeAgentProvider[]
+  modelAliases: Record<string, string>
+  keyEditable: boolean
+  keySource: string | null
+  error?: string
+}
+
+export interface AgentProfileRequest {
+  name?: string
+  baseUrl?: string
+  apiKey?: string
+  model?: string
+  /** Optimistic concurrency token, required when editing native files. */
+  revision?: string
+  providerId?: string
+  modelAliases?: Record<string, string>
+  /** OpenCode provider model ids. Existing model options are preserved. */
+  models?: string[]
+}
+
 // ------------------------------------------------------------ app updates
 
 export type UpdateScope = 'hub' | 'runner' | 'standalone'

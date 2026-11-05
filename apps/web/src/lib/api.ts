@@ -1,5 +1,7 @@
 import type {
   AgentsResponse,
+  AgentProfileRequest,
+  AgentProfilesResponse,
   AgentRuntimeId,
   AgentRuntimeStatus,
   CreateSessionOptions,
@@ -116,6 +118,22 @@ export const api = {
   checkAgent: (id: AgentRuntimeId) => request<{ latest: string | null }>(`/api/agents/${id}/check`, { method: 'POST' }),
   updateAgent: (id: AgentRuntimeId) =>
     request<{ data: AgentRuntimeStatus[] }>(`/api/agents/${id}/update`, { method: 'POST' }),
+
+  // ---- runner-local agent profiles ----
+  agentProfiles: () => request<AgentProfilesResponse>('/api/agent-profiles'),
+  createAgentProfile: (agent: AgentRuntimeId, body: AgentProfileRequest) =>
+    request<AgentProfilesResponse>(`/api/agent-profiles/${agent}`, { method: 'POST', body: JSON.stringify(body) }),
+  updateAgentProfile: (agent: AgentRuntimeId, id: string, body: Partial<AgentProfileRequest>) =>
+    request<AgentProfilesResponse>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  activateAgentProfile: (agent: AgentRuntimeId, id: string) =>
+    request<AgentProfilesResponse>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}/activate`, {
+      method: 'POST',
+    }),
+  deleteAgentProfile: (agent: AgentRuntimeId, id: string) =>
+    request<AgentProfilesResponse>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // ---- app update ----
   // Scoped by default: on the Hub root this is the Hub, under /r/<id>/ it is the

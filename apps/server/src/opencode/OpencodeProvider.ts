@@ -24,6 +24,8 @@ import type {
   Transcript,
 } from '@vibemobile/protocol'
 import { capImages } from '../images/store.js'
+import { AgentProfileError } from '../agents/profiles.js'
+import type { AgentConnection } from '../agents/profileRuntime.js'
 import { SessionPrefsStore } from '../providers/sessionPrefs.js'
 import {
   SessionNotFoundError,
@@ -54,6 +56,7 @@ import {
 } from './types.js'
 
 export interface OpencodeProviderOptions {
+  connection?: AgentConnection
   workspaceRoots: string[]
   stateDir?: string
   agentsDir?: string
@@ -139,6 +142,7 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
       agentsDir: opts.agentsDir,
       cwd: opts.workspaceRoots[0],
       onLog: (line) => this.#log(line),
+      connection: opts.connection,
     })
     this.#prefs = new SessionPrefsStore(
       opts.stateDir ? path.join(opts.stateDir, 'opencode-sessions.json') : undefined,
@@ -218,7 +222,15 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
   async listModels(): Promise<ModelInfo[]> {
     await this.#ensureService()
     await this.#fetchModels()
-    return this.#models.map(({ info, composite: id }) => ({
+    const configured = this.#opts.connection?.()?.model
+    const ordered =
+      configured && !this.profileLimitation
+        ? [
+            ...this.#models.filter((model) => model.composite === `vibemobile/${configured}`),
+            ...this.#models.filter((model) => model.composite !== `vibemobile/${configured}`),
+          ]
+        : this.#models
+    return ordered.map(({ info, composite: id }) => ({
       id,
       displayName: info.name,
       efforts: [
@@ -369,9 +381,21 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
   }
 
   async restartServer(): Promise<void> {
+    await this.#modelsFetch?.catch(() => undefined)
     await this.#service.restart()
     this.#client = null
+    this.#models = []
+    this.#modelsAt = 0
     await this.#ensureService()
+  }
+
+  get profileLimitation(): string | undefined {
+    return this.#opts.attachUrl || this.#service.mode === 'attach' ? 'agent_profile_external_service' : undefined
+  }
+
+  async assertProfileManaged(): Promise<void> {
+    await this.#service.ensure()
+    if (this.profileLimitation) throw new AgentProfileError('agent_profile_external_service', 409)
   }
 
   // ------------------------------------------------------------------ turns
@@ -757,7 +781,10 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
   }
 
   #modelRef(value: string | undefined): { providerID: string; id: string } | null {
-    if (!value) return null
+    if (!value) {
+      const configured = this.#opts.connection?.()?.model
+      return configured && !this.profileLimitation ? { providerID: 'vibemobile', id: configured } : null
+    }
     const parsed = splitComposite(value)
     if (parsed) return parsed
     const known = this.#models.find((entry) => entry.info.modelID === value)

@@ -14,6 +14,9 @@ import { createHub, parsePublicOrigins, tokenHash } from './hubApp.js'
 import { connectRunner, parseHubUrl } from './bridge.js'
 import { allowedPath, PROTOCOL } from './wire.js'
 import { assertFree, port } from './runtime.js'
+import { AgentProfileStore } from '../agents/profiles.js'
+import { registerAgentProfileRoutes } from '../routes/agentProfiles.js'
+import { NativeAgentConfigStore } from '../agents/nativeConfig.js'
 
 const serviceToken = crypto.randomBytes(32).toString('hex')
 const tokens = [crypto.randomBytes(32).toString('hex'), crypto.randomBytes(32).toString('hex')]
@@ -46,6 +49,7 @@ const backends: ReturnType<typeof Fastify>[] = []
 const stops: (() => void)[] = []
 const clients: WebSocket[] = []
 const turns = [0, 0]
+const profileDirs: string[] = []
 
 async function until(check: () => Promise<boolean>, timeout = 5_000) {
   const deadline = Date.now() + timeout
@@ -81,6 +85,15 @@ beforeAll(async () => {
     app.addHook('onRequest', async (req, reply) => {
       if (req.headers.authorization !== `Bearer ${serviceToken}`) return reply.code(401).send({ error: 'private' })
     })
+    const profileDir = mkdtempSync(path.join(os.tmpdir(), 'vbm-tunnel-profiles-'))
+    profileDirs.push(profileDir)
+    registerAgentProfileRoutes(
+      app,
+      { ...config, authDisabled: true },
+      new AgentProfileStore(profileDir),
+      undefined,
+      new NativeAgentConfigStore(profileDir, { home: profileDir, env: {} }),
+    )
     app.get('/api/sessions', () => ({
       data: [{ id: 'same-id', provider: 'codex', title: `runner-${index}`, cwd: `/workspace/${index}` }],
     }))
@@ -146,9 +159,54 @@ afterAll(async () => {
   })
   await hub?.close()
   await Promise.all(backends.map((app) => app.close()))
+  for (const dir of profileDirs) rmSync(dir, { recursive: true, force: true })
 })
 
 describe('distributed Hub and two reverse runners', () => {
+  it('keeps agent profiles on the selected runner across the authenticated tunnel', async () => {
+    const created = await hub.inject({
+      method: 'POST',
+      url: '/r/r1/api/agent-profiles/codex',
+      headers: { cookie },
+      payload: { name: 'Runner one gateway', apiKey: 'runner-one-private-key' },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.body).not.toContain('runner-one-private-key')
+    const id = created.json().data.codex[0].id
+    const active = await hub.inject({
+      method: 'POST',
+      url: `/r/r1/api/agent-profiles/codex/${id}/activate`,
+      headers: { cookie },
+    })
+    expect(active.statusCode).toBe(200)
+    expect(active.json().active.codex).toBe(id)
+    const other = await hub.inject({ url: '/r/r0/api/agent-profiles', headers: { cookie } })
+    expect(other.statusCode).toBe(200)
+    expect(other.json().data.codex).toEqual([])
+    expect(other.json().active.codex).toBeNull()
+    const denied = await hub.inject({ url: '/r/r1/api/agent-profiles' })
+    expect(denied.statusCode).toBe(401)
+  })
+
+  it('edits native config only on the selected runner through the tunnel', async () => {
+    const read = await hub.inject({ url: '/r/r1/api/agent-profiles', headers: { cookie } })
+    const updated = await hub.inject({
+      method: 'PATCH',
+      url: '/r/r1/api/agent-profiles/claude/native',
+      headers: { cookie },
+      payload: {
+        revision: read.json().native.claude.revision,
+        baseUrl: 'https://runner-one.example.test',
+        apiKey: 'native-private',
+      },
+    })
+    expect(updated.statusCode).toBe(200)
+    expect(updated.json().native.claude).toMatchObject({ baseUrl: 'https://runner-one.example.test', hasApiKey: true })
+    expect(updated.body).not.toContain('native-private')
+    const other = await hub.inject({ url: '/r/r0/api/agent-profiles', headers: { cookie } })
+    expect(other.json().native.claude).toMatchObject({ baseUrl: null, hasApiKey: false, exists: false })
+  })
+
   it('authenticates once at the Hub and keeps private runner tokens out of the list', async () => {
     expect((await hub.inject('/api/runners')).statusCode).toBe(401)
     const login = await hub.inject({ method: 'POST', url: '/api/auth/login', payload: { pin: 'test-login' } })

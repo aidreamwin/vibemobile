@@ -1,0 +1,67 @@
+import type { Settings } from '@anthropic-ai/claude-agent-sdk'
+import { AgentProfileError, type StoredAgentProfile } from './profiles.js'
+
+export type AgentConnection = () => StoredAgentProfile | undefined
+
+/** Overrides are scoped to the runner's children; native login/MCP files stay intact. */
+export function codexProfileLaunch(profile?: StoredAgentProfile): { args: string[]; env: NodeJS.ProcessEnv } {
+  if (!profile) return { args: [], env: {} }
+  const values: Record<string, string | boolean> = {}
+  const env: NodeJS.ProcessEnv = {}
+  if (profile.baseUrl || profile.apiKey) {
+    const prefix = 'model_providers.vibemobile'
+    values.model_provider = 'vibemobile'
+    values[`${prefix}.name`] = profile.name
+    values[`${prefix}.base_url`] = profile.baseUrl || 'https://api.openai.com/v1'
+    values[`${prefix}.wire_api`] = 'responses'
+    values[`${prefix}.requires_openai_auth`] = false
+    if (profile.apiKey) {
+      values[`${prefix}.env_key`] = 'VIBEMOBILE_CODEX_API_KEY'
+      env.VIBEMOBILE_CODEX_API_KEY = profile.apiKey
+    }
+  }
+  if (profile.model) values.model = profile.model
+  return { args: Object.entries(values).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]), env }
+}
+
+/** --settings has priority over user settings without replacing the SDK environment. */
+export function claudeProfileOptions(profile?: StoredAgentProfile): { settings?: Settings; model?: string } {
+  if (!profile) return {}
+  const env: Record<string, string> = {}
+  if (profile.baseUrl) env.ANTHROPIC_BASE_URL = profile.baseUrl
+  if (profile.apiKey) {
+    env.ANTHROPIC_AUTH_TOKEN = profile.apiKey
+    // Prevent a key in user settings from competing with the selected bearer token.
+    env.ANTHROPIC_API_KEY = ''
+  }
+  if (profile.model) env.ANTHROPIC_MODEL = profile.model
+  return { settings: { env }, ...(profile.model ? { model: profile.model } : {}) }
+}
+
+/** OpenCode 2.2 accepts the v1 provider shape and migrates it to its native schema. */
+export function opencodeProfileEnv(profile?: StoredAgentProfile, nativeContent?: string): NodeJS.ProcessEnv {
+  if (!profile) return {}
+  let native: { provider?: Record<string, unknown>; [key: string]: unknown } = {}
+  if (nativeContent) {
+    try {
+      native = JSON.parse(nativeContent) as typeof native
+      if (!native || typeof native !== 'object' || Array.isArray(native)) throw new Error('object required')
+    } catch {
+      throw new AgentProfileError('agent_profile_opencode_config_invalid')
+    }
+  }
+  const content = {
+    ...native,
+    provider: {
+      ...native.provider,
+      vibemobile: {
+        name: profile.name,
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL: profile.baseUrl, apiKey: profile.apiKey },
+        models: { [profile.model]: { name: profile.model } },
+      },
+    },
+    model: `vibemobile/${profile.model}`,
+  }
+  return { OPENCODE_CONFIG_CONTENT: JSON.stringify(content) }
+}

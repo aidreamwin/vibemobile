@@ -17,11 +17,32 @@ import { registerFileRoutes } from './routes/files.js'
 import { registerImageRoutes } from './routes/images.js'
 import { registerHealthRoutes } from './routes/health.js'
 import { registerAgentRoutes } from './routes/agents.js'
+import { AgentProfileStore, AgentProfileError } from './agents/profiles.js'
+import { opencodeProfileEnv } from './agents/profileRuntime.js'
+import { NativeAgentConfigStore } from './agents/nativeConfig.js'
+import { registerAgentProfileRoutes } from './routes/agentProfiles.js'
 import { registerSystemRoutes } from './routes/system.js'
 import { registerHub } from './ws/hub.js'
 import { registerTerminal } from './ws/terminal.js'
 
 const config = loadConfig()
+// Runner-local provider profiles are loaded before any agent child process is
+// created, so a selected profile is used by Codex, Claude and OpenCode from
+// their first probe/connection.
+const agentProfiles = new AgentProfileStore(config.stateDir, {
+  beforeApply: async (agent, profile) => {
+    if (agent === 'codex' && config.codex.attachUrl) throw new AgentProfileError('agent_profile_external_service', 409)
+    if (agent === 'opencode') {
+      opencodeProfileEnv(profile, process.env.OPENCODE_CONFIG_CONTENT)
+      await opencode.assertProfileManaged()
+    }
+  },
+  apply: async (agent) => {
+    probeCache.clear()
+    if (agent === 'codex') await codex.restartAppServer()
+    if (agent === 'opencode') await opencode.restartServer()
+  },
+})
 
 const app = Fastify({
   logger: {
@@ -55,6 +76,7 @@ if (serviceToken) {
 registry.log = (message, detail) => app.log.warn({ detail }, message)
 
 const codex = new CodexProvider({
+  connection: () => agentProfiles.current('codex'),
   port: config.codex.port,
   attachUrl: config.codex.attachUrl,
   bin: config.codex.bin,
@@ -75,6 +97,7 @@ registry.register(codex)
 // `probe()` reports it unavailable and the UI says so rather than the server
 // refusing to start.
 const claude = new ClaudeProvider({
+  connection: () => agentProfiles.current('claude'),
   workspaceRoots: config.workspaceRoots,
   stateDir: config.stateDir,
   agentsDir: config.agentsDir,
@@ -89,6 +112,7 @@ registry.register(claude)
 // eager requirement either — attach discovery is cheap, and a missing binary
 // shows up in `probe()` like Claude's.
 const opencode = new OpencodeProvider({
+  connection: () => agentProfiles.current('opencode'),
   workspaceRoots: config.workspaceRoots,
   stateDir: config.stateDir,
   agentsDir: config.agentsDir,
@@ -123,6 +147,16 @@ registerAgentRoutes(app, config, {
   codex: () => codex.restartAppServer(),
   opencode: () => opencode.restartServer(),
 })
+registerAgentProfileRoutes(
+  app,
+  config,
+  agentProfiles,
+  () => ({
+    ...(config.codex.attachUrl ? { codex: 'agent_profile_external_service' } : {}),
+    ...(opencode.profileLimitation ? { opencode: opencode.profileLimitation } : {}),
+  }),
+  new NativeAgentConfigStore(config.stateDir),
+)
 registerSystemRoutes(app, config)
 registerSessionRoutes(app, config)
 registerFileRoutes(app, config)

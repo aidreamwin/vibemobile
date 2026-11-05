@@ -38,6 +38,20 @@ npm run agents:update -- claude   # 只更新一个
 - OpenCode managed 模式更新后会重启私有 server（**当前回合中断**）；attach 模式的外部 service 不受影响，更新只对下一次 spawn 生效。
 - 接口：`GET /api/agents` 查状态，`POST /api/agents/:id/update` 启动后台任务（202）；安装期间轮询前者。
 
+## 供应商配置
+
+- 设置页 →「Agent 配置」：按 Codex / Claude Code / OpenCode 添加、编辑、删除和启用供应商；保存与启用分开，恢复按钮切回执行机原有配置。
+- 「执行机现有配置」直接读取 Agent 原始文件，显示来源路径并提供编辑：Codex `config.toml` / `auth.json` 的 API Key、Claude `settings.json` 的连接与模型别名、OpenCode 配置内的供应商 / 模型。遵循 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`XDG_CONFIG_HOME`、`OPENCODE_CONFIG`。
+- 编辑现有配置会写回原文件；修改前备份到 `<stateDir>/agent-config-backups/`，保留注释与无关设置。文件在读取后被其他程序修改时返回 409，须刷新重读。密钥不回传，留空保留；Codex `env_key` 指定的环境凭据须在执行机修改。
+- 每份配置包含名称、接口地址、API Key、默认模型；OpenCode 启用时必须有接口地址和模型。Codex 使用 Responses 兼容接口，OpenCode 使用 Chat Completions 兼容接口。
+- 配置存于当前 runner 的 `<stateDir>/agent-profiles.json`；Hub 仅转发，切换 runner 后管理另一台机器。
+- API Key 以明文保存在执行机状态文件中，仅通过子进程配置注入，不放在 Codex 命令行参数中；接口只返回是否已保存密钥。编辑时密钥留空保留，勾选清除才删除。状态目录应仅允许运行账户访问。
+- 新增供应商仅保存到 runner 状态目录；启用时覆盖子进程连接设置，恢复现有配置即移除覆盖。OAuth、MCP、会话文件均不改写。
+- 启用或编辑当前配置：Codex / OpenCode 重启并中断正在进行的回合；Claude 下一回合生效。重启失败会恢复原选择并尝试恢复服务。
+- Codex / OpenCode attach 到外部服务时可保存配置，不能启用；连接设置由外部服务维护。OpenCode 的 `OPENCODE_CONFIG_CONTENT` 与配置合并时须为 JSON 对象。
+- 默认模型用于新建会话；已有会话继续使用其选择的模型，可在会话中手动切换。
+- 接口：`GET /api/agent-profiles`、`POST /api/agent-profiles/:agent`、`PATCH /api/agent-profiles/:agent/:id`、`DELETE /api/agent-profiles/:agent/:id`、`POST /api/agent-profiles/:agent/:id/activate`；PATCH 的 `id=native` 编辑原文件（须传 `revision`），activate 的 `id=native` 恢复现有配置。
+
 ## 解析优先级
 
 | 场景 | 使用 |
