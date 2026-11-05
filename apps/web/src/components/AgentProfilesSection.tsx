@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Check, ChevronRight, LoaderCircle, MoreVertical, Pencil, Plus, Server, Trash2, X } from 'lucide-react'
 import type { AgentProfile, AgentProfilesResponse, AgentRuntimeId, NativeAgentProfile } from '@vibemobile/protocol'
 import { api } from '../lib/api'
+import SelectField from './SelectField'
 import Sheet from './Sheet'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -364,13 +365,11 @@ export default function AgentProfilesSection() {
               </label>
             )}
             {nativeEditor && nativeEditor.providers.length > 0 && (
-              <label htmlFor="agent-native-provider" className="block space-y-1.5 text-xs text-muted-foreground">
+              <div className="block space-y-1.5 text-xs text-muted-foreground">
                 <span>供应商</span>
-                <select
-                  id="agent-native-provider"
+                <SelectField
                   value={providerId}
-                  onChange={(event) => {
-                    const id = event.target.value
+                  onChange={(id) => {
                     const provider = nativeEditor.providers.find((item) => item.id === id)
                     setProviderId(id)
                     setBaseUrl(provider?.baseUrl ?? '')
@@ -379,15 +378,10 @@ export default function AgentProfilesSection() {
                     setApiKey('')
                     setClearKey(false)
                   }}
-                  className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground"
-                >
-                  {nativeEditor.providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={nativeEditor.providers.map((provider) => ({ value: provider.id, label: provider.name }))}
+                  ariaLabel="供应商"
+                />
+              </div>
             )}
             <label htmlFor="agent-profile-base-url" className="block space-y-1.5 text-xs text-muted-foreground">
               <span>接口地址</span>
