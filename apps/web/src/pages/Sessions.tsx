@@ -1,4 +1,4 @@
-import { Bot, MessagesSquare } from 'lucide-react'
+import { Bot, Code2, MessagesSquare, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -22,6 +22,14 @@ import SessionListEmpty from '../components/SessionListEmpty'
 
 /** `'all'` is a first-class value, not "no provider selected". */
 type ProviderFilter = 'all' | ProviderId
+
+/** The header button mirrors the provider currently shown in the list. */
+const FILTER_ICON: Record<ProviderFilter, { icon: LucideIcon; tone: string }> = {
+  all: { icon: Bot, tone: 'text-muted-foreground' },
+  codex: { icon: Code2, tone: 'text-sky-400' },
+  claude: { icon: Sparkles, tone: 'text-amber-400' },
+  opencode: { icon: Terminal, tone: 'text-violet-400' },
+}
 
 const FILTER_STORAGE_KEY = 'vibemobile.sessionProviderFilter'
 
@@ -382,6 +390,12 @@ export default function Sessions() {
     [sessions],
   )
 
+  // Storage can contain a value from an older build. Keep the header usable
+  // until the provider list effect normalizes that value back to `all`.
+  const filterVisual = FILTER_ICON[filter] ?? FILTER_ICON.all
+  const FilterIcon = filterVisual.icon
+  const filterTone = filterVisual.tone
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
@@ -401,10 +415,10 @@ export default function Sessions() {
                 aria-label="筛选代理"
                 title={`筛选代理：${filter === 'all' ? '全部' : (providers.find((p) => p.id === filter)?.displayName ?? filter)}`}
                 className={`relative h-11 w-11 shrink-0 justify-center gap-1.5 rounded-xl border-0 bg-transparent px-2 text-xs font-medium shadow-none focus-visible:ring-2 data-[size=default]:h-11 dark:bg-transparent dark:hover:bg-transparent [&>svg:last-child]:hidden ${
-                  filter === 'all' ? 'text-muted-foreground' : 'text-foreground'
+                  filterTone
                 }`}
               >
-                <Bot aria-hidden="true" className="size-[18px]" strokeWidth={1.8} />
+                <FilterIcon aria-hidden="true" className="size-[18px]" strokeWidth={1.8} />
                 {filter !== 'all' && (
                   <span aria-hidden="true" className="absolute right-2 top-2 size-1.5 rounded-full bg-primary" />
                 )}
