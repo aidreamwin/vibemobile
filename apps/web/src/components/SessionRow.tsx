@@ -1,5 +1,5 @@
 import type { SessionSummary } from '@vibemobile/protocol'
-import { formatDateTime, relativeTime, shortPath } from '../lib/format'
+import { relativeTime, shortPath } from '../lib/format'
 
 /**
  * The colour of a row's provider chip, by provider id.
@@ -55,7 +55,7 @@ export default function SessionRow({
           onClick={onOpen}
           className="min-w-0 flex-1 px-4 py-3.5 text-left active:bg-card transition-colors"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             {/* Pinned rows are grouped at the top, but "at the top" is not
                 visible on a phone: the badge is what says why the order is not
                 by time. */}
@@ -75,17 +75,19 @@ export default function SessionRow({
                 等待你
               </span>
             )}
-            <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
+            <span className="min-w-0 flex-1 line-clamp-2 text-[15px] font-semibold leading-5 text-foreground">
               {session.title || '未命名会话'}
             </span>
-            <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(session.updatedAt)}</span>
+            <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
+              {relativeTime(session.updatedAt)}
+            </span>
           </div>
 
           {session.preview && (
             <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{session.preview}</div>
           )}
 
-          <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <span
               className={`shrink-0 rounded border px-1.5 py-px text-[10px] ${
                 PROVIDER_TAG[session.provider] ?? 'border-border'
@@ -93,20 +95,8 @@ export default function SessionRow({
             >
               {providerName(session.provider)}
             </span>
-            <span className="min-w-0 truncate font-mono">{shortPath(session.cwd)}</span>
-            {session.model && <span className="shrink-0">· {session.model}</span>}
             {session.status !== 'idle' && <StatusPill status={session.status} />}
-            {/* The top-right time says when the session last moved; this one
-                says when it started. Without the label the two dates would
-                look like the same fact. */}
-            {session.createdAt ? (
-              <span
-                className="ml-auto shrink-0 whitespace-nowrap tabular-nums"
-                title={`创建于 ${new Date(session.createdAt).toLocaleString('zh-CN')}`}
-              >
-                创建 {formatDateTime(session.createdAt)}
-              </span>
-            ) : null}
+            <span className="min-w-0 truncate font-mono text-[11px]">{shortPath(session.cwd, 1)}</span>
           </div>
         </button>
 

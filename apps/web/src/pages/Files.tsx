@@ -1,4 +1,16 @@
-import { FolderOpen, X, Check, Eye, Code, Ellipsis, Pencil, GitBranch, RefreshCw } from 'lucide-react'
+import {
+  FolderOpen,
+  X,
+  Check,
+  Eye,
+  Code,
+  Ellipsis,
+  Pencil,
+  GitBranch,
+  RefreshCw,
+  Search,
+  ArrowUpDown,
+} from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -88,6 +100,9 @@ export default function Files() {
   const [content, setContent] = useState<FileContent | null>(null)
   const [diff, setDiff] = useState('')
   const [preview, setPreview] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [sortByName, setSortByName] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -111,6 +126,16 @@ export default function Files() {
    * that just failed to save, which is the one thing that must not happen.
    */
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  const visibleEntries = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase()
+    const result = needle ? entries.filter((entry) => entry.name.toLocaleLowerCase().includes(needle)) : entries
+    if (!sortByName) return result
+    return [...result].sort(
+      (a, b) =>
+        Number(b.type === 'directory') - Number(a.type === 'directory') || a.name.localeCompare(b.name, 'zh-CN'),
+    )
+  }, [entries, query, sortByName])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   /** True until this mount's first fetch has answered — see the fallback below. */
@@ -166,6 +191,10 @@ export default function Files() {
     // that render would carry the *previous* screen's rows or file body.
     setLoading(true)
     setError(null)
+    if (next.kind === 'list') {
+      setQuery('')
+      setSearchOpen(false)
+    }
     setView(next)
   }
 
@@ -436,6 +465,28 @@ export default function Files() {
                 </>
               ) : (
                 <>
+                  {view.kind === 'list' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setSearchOpen((open) => !open)}
+                        className={`tap shrink-0 rounded-xl ${searchOpen ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
+                        aria-label={searchOpen ? '关闭文件搜索' : '搜索文件'}
+                        aria-expanded={searchOpen}
+                      >
+                        <Search aria-hidden="true" className="size-5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSortByName((value) => !value)}
+                        className={`tap shrink-0 rounded-xl ${sortByName ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
+                        aria-label={sortByName ? '恢复文件排序' : '按名称排序'}
+                        aria-pressed={sortByName}
+                      >
+                        <ArrowUpDown aria-hidden="true" className="size-5" />
+                      </button>
+                    </>
+                  )}
                   {view.kind !== 'diff' && (
                     <button
                       type="button"
@@ -482,6 +533,29 @@ export default function Files() {
             </>
           )}
         </ToolbarRow>
+        {view.kind === 'list' && searchOpen && (
+          <div className="flex items-center gap-2 px-4 pb-2">
+            <input
+              // biome-ignore lint/a11y/noAutofocus: the field is opened by an explicit search tap
+              autoFocus
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索当前目录…"
+              aria-label="搜索当前目录"
+              className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-secondary px-3 text-[16px] text-foreground placeholder:text-muted-foreground/60 focus:border-primary/60 focus:outline-none"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="tap rounded-xl px-2 text-xs text-muted-foreground"
+              >
+                清除
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       <div ref={scrollRef} onScroll={onScroll} className="scroll-y min-h-0 flex-1">
@@ -512,7 +586,7 @@ export default function Files() {
           <div className="py-16 text-center text-sm text-muted-foreground/70">加载中…</div>
         ) : view.kind === 'list' ? (
           <ul className="divide-y divide-border">
-            {entries.map((entry) => (
+            {visibleEntries.map((entry) => (
               <li key={entry.path}>
                 <button
                   type="button"
@@ -549,7 +623,11 @@ export default function Files() {
                 </button>
               </li>
             ))}
-            {entries.length === 0 && <li className="py-16 text-center text-sm text-muted-foreground/70">空目录</li>}
+            {visibleEntries.length === 0 && (
+              <li className="py-16 text-center text-sm text-muted-foreground/70">
+                {query ? '没有匹配的文件' : '空目录'}
+              </li>
+            )}
           </ul>
         ) : view.kind === 'file' ? (
           content &&

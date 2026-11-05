@@ -41,9 +41,9 @@ const KEYS: { label: string; seq: string }[] = [
   { label: '↓', seq: '\x1b[B' },
   { label: '←', seq: '\x1b[D' },
   { label: '→', seq: '\x1b[C' },
-  { label: '^C', seq: '\x03' },
-  { label: '^D', seq: '\x04' },
-  { label: '^Z', seq: '\x1a' },
+  { label: 'Ctrl+C', seq: '\x03' },
+  { label: 'Ctrl+D', seq: '\x04' },
+  { label: 'Ctrl+Z', seq: '\x1a' },
   { label: '|', seq: '|' },
   { label: '~', seq: '~' },
   { label: '/', seq: '/' },
@@ -99,8 +99,9 @@ export default function TerminalPage() {
     idRef.current = sessionStorage.getItem(ID_KEY)
 
     const term = new XTerm({
-      // Small enough that 80 columns fit in portrait on a 390pt-wide phone.
-      fontSize: 12,
+      // 13px remains compact while keeping shell output readable on a phone.
+      fontSize: 13,
+      lineHeight: 1.15,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       cursorBlink: true,
       scrollback: 5000,
@@ -349,18 +350,20 @@ export default function TerminalPage() {
           <button
             type="button"
             onClick={() => setCtrl(!ctrlArmed)}
-            className={`shrink-0 rounded-lg px-3 py-2 text-[12px] ${
+            aria-pressed={ctrlArmed}
+            aria-label={ctrlArmed ? '取消 Ctrl 组合键' : '按下 Ctrl 组合键'}
+            className={`min-h-11 shrink-0 rounded-lg px-3 py-2 text-[12px] ${
               ctrlArmed ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
             }`}
           >
-            Ctrl
+            {ctrlArmed ? 'Ctrl · 已按下' : 'Ctrl'}
           </button>
           {KEYS.map((key) => (
             <button
               type="button"
               key={key.label}
               onClick={() => send({ type: 'input', data: key.seq })}
-              className="shrink-0 rounded-lg bg-secondary px-3 py-2 font-mono text-[12px] text-foreground/90 active:bg-raised"
+              className="min-h-11 shrink-0 rounded-lg bg-secondary px-3 py-2 font-mono text-[12px] text-foreground/90 active:bg-raised"
             >
               {key.label}
             </button>
