@@ -78,4 +78,98 @@ describe('CodexProvider session listing', () => {
     )
     await provider.stop()
   })
+
+  it('opens a saved thread when the active profile cannot resume its old model', async () => {
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockRejectedValueOnce(new Error('model provider mismatch: model is not configured'))
+      .mockResolvedValueOnce({
+        thread: { id: 'thread-1', name: 'Existing', status: 'idle', model: 'old-model' },
+        cwd: 'C:/workspace',
+      })
+    const provider = new CodexProvider({
+      workspaceRoots: [],
+      connection: () => ({
+        id: 'profile-0123456789abcdef',
+        name: 'New gateway',
+        baseUrl: 'https://new.example.test/v1',
+        apiKey: 'secret',
+        model: 'new-model',
+        models: ['new-model'],
+        updatedAt: 1,
+      }),
+    })
+
+    await expect(provider.resumeSession('thread-1')).resolves.toMatchObject({
+      id: 'thread-1',
+      model: 'old-model',
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'thread/read', { threadId: 'thread-1', includeTurns: false })
+    await provider.stop()
+  })
+
+  it('recovers metadata from the unfiltered durable list when the thread is unloaded', async () => {
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockRejectedValueOnce(new Error('thread not loaded: thread-1'))
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({
+        data: [{ id: 'thread-1', name: 'Saved', status: 'idle', model: 'old-model', cwd: 'C:/workspace' }],
+      })
+
+    const provider = new CodexProvider({ workspaceRoots: [] })
+
+    await expect(provider.getSession('thread-1')).resolves.toMatchObject({
+      id: 'thread-1',
+      title: 'Saved',
+      model: 'old-model',
+      archived: true,
+    })
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      'thread/list',
+      expect.objectContaining({ modelProviders: [], archived: false }),
+    )
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      'thread/list',
+      expect.objectContaining({ modelProviders: [], archived: true }),
+    )
+    await provider.stop()
+  })
+
+  it('loads a compatible model before starting a turn after a profile switch', async () => {
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockResolvedValueOnce({
+        thread: { id: 'thread-1', name: 'Saved', status: 'idle', model: 'new-model' },
+        cwd: 'C:/workspace',
+      })
+      .mockResolvedValueOnce({ turn: { id: 'turn-1' } })
+    const provider = new CodexProvider({
+      workspaceRoots: [],
+      connection: () => ({
+        id: 'profile-0123456789abcdef',
+        name: 'New gateway',
+        baseUrl: 'https://new.example.test/v1',
+        apiKey: 'secret',
+        model: 'new-model',
+        models: ['new-model'],
+        updatedAt: 1,
+      }),
+    })
+
+    await expect(
+      provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }], { model: 'new-model' }),
+    ).resolves.toEqual({
+      turnId: 'turn-1',
+    })
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      'thread/resume',
+      expect.objectContaining({ threadId: 'thread-1', modelProvider: 'custom', model: 'new-model' }),
+    )
+    expect(request).toHaveBeenNthCalledWith(2, 'turn/start', expect.objectContaining({ threadId: 'thread-1' }))
+    await provider.stop()
+  })
 })

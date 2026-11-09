@@ -478,7 +478,6 @@ export class CodexProvider extends EventEmitter {
     return visible
   }
 
-
   async listProjects(): Promise<Project[]> {
     const projects = await Promise.all(
       this.#roots.map(async (root): Promise<Project> => {
@@ -556,16 +555,17 @@ export class CodexProvider extends EventEmitter {
       res = await this.#client.request('thread/read', { threadId, includeTurns: false })
     } catch (err) {
       // `thread not loaded` here means the app-server has neither a rollout for
-      // this id nor the thread in memory. `null` is what this method promises
-      // for "no such session", and returning it (rather than rethrowing) is
-      // what lets `GET /api/sessions/:id` answer 404 and `resumeSession`'s
-      // fallback below end as a 404 too, instead of both becoming a 500.
-      if (isUnknownThreadError(err)) return null
+      // this id nor the thread in memory. A provider/model mismatch can leave
+      // a perfectly valid saved thread unloaded, though, so ask the durable
+      // list before declaring it gone. The list is explicitly unfiltered by
+      // model provider for the same reason as `listSessions`.
+      if (isUnknownThreadError(err)) return this.#sessionFromListing(threadId)
       throw err
     }
     const t = res?.thread
     if (!t) return null
     const status = this.#status.get(t.id) ?? mapThreadStatus(t.status)
+    this.#status.set(t.id, status)
     return {
       id: t.id,
       provider: this.id,
@@ -582,6 +582,52 @@ export class CodexProvider extends EventEmitter {
       ...this.#lastPair(t.id),
       ...this.#filedAs(t.id),
     }
+  }
+
+  /**
+   * Read metadata for a saved thread without loading it into the active
+   * provider. `thread/read` only sees loaded threads; this is the bridge that
+   * keeps a conversation open when `thread/resume` rejected the selected
+   * provider or model. `thread/turns/list` can still read the persisted
+   * rollout after this summary has been recovered.
+   */
+  async #sessionFromListing(threadId: string): Promise<SessionSummary | null> {
+    for (const archived of [false, true]) {
+      try {
+        const res: any = await this.#client.request('thread/list', {
+          limit: 200,
+          modelProviders: [],
+          sortKey: 'recency_at',
+          sortDirection: 'desc',
+          archived,
+        })
+        const t = (res?.data ?? []).find((item: any) => item?.id === threadId)
+        if (!t) continue
+        const status = this.#status.get(t.id) ?? mapThreadStatus(t.status)
+        this.#status.set(t.id, status)
+        return {
+          id: t.id,
+          provider: this.id,
+          title: t.name ?? t.preview?.slice(0, 60) ?? 'Untitled',
+          preview: t.preview ?? '',
+          cwd: t.cwd ?? '',
+          projectId: t.cwd ?? null,
+          status,
+          model: t.model ?? null,
+          reasoningEffort: t.reasoningEffort ?? null,
+          createdAt: toMillis(t.createdAt),
+          updatedAt: toMillis(t.recencyAt ?? t.updatedAt),
+          needsAttention: ATTENTION.includes(status),
+          ...this.#lastPair(t.id),
+          ...this.#filedAs(t.id),
+          ...(archived ? { archived: true } : {}),
+        }
+      } catch {
+        // The resume error is more useful to the caller if the app-server is
+        // unavailable. A later retry can perform the same durable lookup.
+      }
+    }
+    return null
   }
 
   async createSession(opts: {
@@ -639,23 +685,45 @@ export class CodexProvider extends EventEmitter {
    * subscription after an app-server restart, so this is called both when the
    * user opens a session and after every reconnect.
    */
-  async resumeSession(threadId: string): Promise<SessionSummary | null> {
+  async resumeSession(threadId: string, opts: { model?: string } = {}): Promise<SessionSummary | null> {
     let res: any
     try {
       const modelProvider = this.#currentModelProvider()
       res = await this.#client.request('thread/resume', {
         threadId,
         ...(modelProvider ? { modelProvider } : {}),
+        ...(opts.model ? { model: opts.model } : {}),
         excludeTurns: true,
       })
     } catch (err) {
       // A thread with no messages yet has no rollout to resume. It is still
-      // live in the app-server (we just created it), so this is not a failure
-      // — fall back to `thread/read`, which works regardless. For an id the
-      // app-server has never heard of, that read finds nothing either and this
-      // returns null, which the route answers with a 404.
-      if (isUnmaterializedThreadError(err)) return this.getSession(threadId)
+      // live in the app-server (we just created it), so this is not a failure.
+      // The read/list fallback below recovers both that metadata and saved
+      // threads that could not be loaded with the selected provider. For an id
+      // the app-server has never heard of, both lookups return null and the
+      // route answers with a 404.
       if (isActiveWriterError(err)) throw new SessionInUseError(threadId)
+      // Loading a saved thread and selecting the provider for its NEXT turn
+      // are separate operations in app-server. A thread created with another
+      // profile can therefore fail the resume validation when the selected
+      // profile has a different model catalogue (or the old model is not
+      // understood by the new gateway). The transcript is still valid and
+      // must remain open: the user can pick a compatible model, or send with
+      // the current one and let the backend report its own error.
+      //
+      // `thread/read` is deliberately attempted for every non-lock failure,
+      // including the "no rollout" response for a fresh thread. This keeps
+      // the fallback in one place and makes a provider/model mismatch an
+      // openable session instead of a blank error screen.
+      try {
+        const readable = await this.getSession(threadId)
+        if (readable) return readable
+      } catch {
+        // Preserve the original resume error below. A read failure can be a
+        // transient app-server problem rather than evidence that the thread
+        // is gone.
+      }
+      if (isUnmaterializedThreadError(err)) return null
       // Anything else the app-server calls an unknown thread. Unreachable with
       // today's wording — `thread/resume` says `no rollout found`, which the
       // branch above takes — but this is the same class of answer as the RPCs
@@ -667,6 +735,7 @@ export class CodexProvider extends EventEmitter {
     const t = res?.thread
     const status = this.#status.get(threadId) ?? mapThreadStatus(t?.status)
     if (!t) return null
+    this.#status.set(threadId, status)
     const retry = this.#retryNotices.get(threadId)
     if (retry) this.emit('event', retry)
     // One line per thread per process when the level we are about to put back on
@@ -936,6 +1005,11 @@ export class CodexProvider extends EventEmitter {
     rawInput: AgentInput[],
     opts?: { model?: string; effort?: string; approvalPolicy?: ApprovalPolicy; sandbox?: SandboxMode },
   ): Promise<{ turnId: string }> {
+    // A profile/model switch can leave an old saved thread readable but not
+    // loaded after its first resume was rejected. Re-resume only when the
+    // caller selected a model (to apply that choice) or when this process has
+    // never attached the thread; ordinary turns keep the existing attachment.
+    if (opts?.model || !this.#status.has(threadId)) await this.resumeSession(threadId, { model: opts?.model })
     // The app-server will accept any number of images; the cap is ours, and it
     // has to be applied here rather than only when the transcript is read back,
     // or the phone shows a picture the agent never got.
