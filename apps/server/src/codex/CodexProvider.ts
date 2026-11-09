@@ -481,6 +481,13 @@ export class CodexProvider extends EventEmitter {
     const res = (await this.#client.request('thread/list', {
       cwd: opts.cwd ?? undefined,
       limit: opts.limit ?? 50,
+      // A Codex profile changes the credentials and endpoint used for the
+      // next turn, but it does not define a separate conversation store. The
+      // app-server defaults an omitted modelProviders filter to the currently
+      // configured provider, which makes sessions disappear after switching
+      // profiles (and also hides sessions created before the profile was
+      // enabled). An explicitly empty list means "all providers".
+      modelProviders: [],
       // NOTE: ThreadSortKey is snake_case on the wire — 'recency_at', not
       // 'recencyAt'. The server rejects the camelCase form with -32600.
       sortKey: 'recency_at',
