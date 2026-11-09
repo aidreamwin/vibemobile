@@ -48,4 +48,34 @@ describe('CodexProvider session listing', () => {
     ])
     await provider.stop()
   })
+
+  it('resumes an existing thread with the active profile provider', async () => {
+    const request = vi.spyOn(AppServerClient.prototype, 'request').mockResolvedValue({
+      thread: { id: 'thread-1', name: 'Existing', status: 'idle', model: 'gpt-4o' },
+      cwd: 'C:/workspace',
+    })
+    const provider = new CodexProvider({
+      workspaceRoots: [],
+      connection: () => ({
+        id: 'profile-0123456789abcdef',
+        name: 'Custom gateway',
+        baseUrl: 'https://gateway.example.test/v1',
+        apiKey: 'secret',
+        model: 'compatible-model',
+        models: ['compatible-model'],
+        updatedAt: 1,
+      }),
+    })
+
+    await provider.resumeSession('thread-1')
+
+    expect(request).toHaveBeenCalledWith(
+      'thread/resume',
+      expect.objectContaining({
+        threadId: 'thread-1',
+        modelProvider: 'custom',
+      }),
+    )
+    await provider.stop()
+  })
 })

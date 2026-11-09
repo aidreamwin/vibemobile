@@ -235,6 +235,20 @@ export class CodexProvider extends EventEmitter {
   }
 
   /**
+   * A rollout keeps the provider it was created with. Resuming it under a
+   * different profile must explicitly override that provider, otherwise the
+   * app-server rejects the resume before the user gets a chance to choose a
+   * compatible model. The profile launcher uses `custom`; without a managed
+   * profile Codex's native provider is OpenAI. An attached external server
+   * owns its provider selection, so leave its value untouched.
+   */
+  #currentModelProvider(): string | undefined {
+    if (!this.#connection) return undefined
+    const profile = this.#connection()
+    return profile?.baseUrl || profile?.apiKey ? 'custom' : 'openai'
+  }
+
+  /**
    * The remembered pair shaped for a `SessionSummary`: both fields or neither.
    *
    * Never half of one. The picker matches a card on the exact pair, so half a
@@ -628,8 +642,10 @@ export class CodexProvider extends EventEmitter {
   async resumeSession(threadId: string): Promise<SessionSummary | null> {
     let res: any
     try {
+      const modelProvider = this.#currentModelProvider()
       res = await this.#client.request('thread/resume', {
         threadId,
+        ...(modelProvider ? { modelProvider } : {}),
         excludeTurns: true,
       })
     } catch (err) {
