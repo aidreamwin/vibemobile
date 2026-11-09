@@ -8,6 +8,7 @@ import { requireAuth } from './guards.js'
 import { resolveDirectory, WorkspaceError } from '../files/workspace.js'
 import type { AgentProfileStore } from '../agents/profiles.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
+import { OPENCODE_PROFILE_PROVIDER, opencodeProfileModelId } from '../agents/profileRuntime.js'
 
 /**
  * The sentinel `?provider=` value meaning "every provider, merged".
@@ -69,16 +70,29 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
     const saved = profile?.models ?? []
     const configured = profile?.model ?? ''
     const savedContextWindows = profile?.modelContextWindows ?? {}
-    const known = new Set(detected.map((model) => model.id))
-    const manual = saved
+    const canonical = (id: string) =>
+      provider.id === 'opencode' ? `${OPENCODE_PROFILE_PROVIDER}/${opencodeProfileModelId(id) ?? id}` : id
+    const profileKey = (id: string) =>
+      provider.id === 'opencode' && id.startsWith(`${OPENCODE_PROFILE_PROVIDER}/`)
+        ? opencodeProfileModelId(id) ?? id
+        : id
+    const savedIds = saved.map(canonical)
+    const configuredId = configured ? canonical(configured) : ''
+    // OpenCode's native catalogue can include other providers. Keep the
+    // route defensive as well as the provider: an explicit profile list is
+    // the complete model picker for that profile.
+    const allowed = provider.id === 'opencode' && savedIds.length ? new Set([...savedIds, configuredId]) : null
+    const visible = allowed ? detected.filter((model) => allowed.has(model.id)) : detected
+    const known = new Set(visible.map((model) => model.id))
+    const manual = savedIds
       .filter((id) => !known.has(id))
-      .map((id) => ({ id, displayName: id, ...(savedContextWindows[id] ? { contextWindow: savedContextWindows[id] } : {}) }))
-    if (configured && !known.has(configured) && !saved.includes(configured))
-      manual.unshift({ id: configured, displayName: configured, ...(savedContextWindows[configured] ? { contextWindow: savedContextWindows[configured] } : {}) })
-    const enriched = detected.map((model) =>
-      model.contextWindow || !savedContextWindows[model.id]
+      .map((id) => ({ id, displayName: id, ...(savedContextWindows[profileKey(id)] ? { contextWindow: savedContextWindows[profileKey(id)] } : {}) }))
+    if (configuredId && !known.has(configuredId) && !savedIds.includes(configuredId))
+      manual.unshift({ id: configuredId, displayName: configuredId, ...(savedContextWindows[profileKey(configuredId)] ? { contextWindow: savedContextWindows[profileKey(configuredId)] } : {}) })
+    const enriched = visible.map((model) =>
+      model.contextWindow || !savedContextWindows[profileKey(model.id)]
         ? model
-        : { ...model, contextWindow: savedContextWindows[model.id] },
+        : { ...model, contextWindow: savedContextWindows[profileKey(model.id)] },
     )
     return { data: [...manual, ...enriched] }
   })

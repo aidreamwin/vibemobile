@@ -17,7 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 import Fastify from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { SessionSummary } from '@vibemobile/protocol'
+import type { ModelInfo, SessionSummary } from '@vibemobile/protocol'
 import { loadConfig } from '../config.js'
 import { registry } from '../providers/registry.js'
 import type { AgentProvider, ListSessionsOptions } from '../providers/types.js'
@@ -52,7 +52,7 @@ const row = (id: string): SessionSummary => ({
  * `canPin` off is the shape a future provider could have — the 501 exists for
  * it alone, since both of today's implement it.
  */
-function stub(id: string, prefix: string, canPin: boolean): AgentProvider {
+function stub(id: string, prefix: string, canPin: boolean, models: ModelInfo[] = []): AgentProvider {
   const provider = {
     id,
     displayName: id,
@@ -60,7 +60,7 @@ function stub(id: string, prefix: string, canPin: boolean): AgentProvider {
     start: async () => {},
     stop: async () => {},
     subscribe: () => () => {},
-    listModels: async () => [],
+    listModels: async () => models,
     listProjects: async () => [],
     listSessions: async (opts: ListSessionsOptions = {}) => {
       listings.push(opts)
@@ -118,6 +118,13 @@ if (!registry.get('alpha')) {
   registry.register(stub('beta', 'b', true))
   registry.register(stub('gamma', 'g', false))
   registry.register(stub('codex', 'c', true))
+  registry.register(
+    stub('opencode', 'o', true, [
+      { id: 'vibemobile/first', displayName: 'First' },
+      { id: 'vibemobile/second', displayName: 'Second' },
+      { id: 'other/third', displayName: 'Third' },
+    ]),
+  )
 }
 
 describe('GET /api/providers/:provider/models', () => {
@@ -130,6 +137,22 @@ describe('GET /api/providers/:provider/models', () => {
     const res = await app.inject('/api/providers/codex/models')
     expect(res.statusCode).toBe(200)
     expect(res.json().data).toEqual([{ id: 'proxy-model', displayName: 'proxy-model' }])
+  })
+
+  it('canonicalizes OpenCode profile models without adding bare duplicates', async () => {
+    await profiles.create('opencode', {
+      name: 'Gateway',
+      baseUrl: 'https://gateway.example.test/v1',
+      model: 'first',
+      models: ['first', 'second'],
+    })
+    const profile = profiles.response().data.opencode[0]
+    expect(profile).toBeDefined()
+    if (!profile) return
+    await profiles.activate('opencode', profile.id)
+    const res = await app.inject('/api/providers/opencode/models')
+    expect(res.statusCode).toBe(200)
+    expect(res.json().data.map((model: ModelInfo) => model.id)).toEqual(['vibemobile/first', 'vibemobile/second'])
   })
 })
 

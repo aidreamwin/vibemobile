@@ -25,7 +25,12 @@ import type {
 } from '@vibemobile/protocol'
 import { capImages } from '../images/store.js'
 import { AgentProfileError } from '../agents/profiles.js'
-import type { AgentConnection } from '../agents/profileRuntime.js'
+import {
+  OPENCODE_PROFILE_PROVIDER,
+  opencodeProfileModelId,
+  opencodeProfileModelRef,
+  type AgentConnection,
+} from '../agents/profileRuntime.js'
 import { SessionPrefsStore } from '../providers/sessionPrefs.js'
 import {
   SessionNotFoundError,
@@ -222,14 +227,21 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
   async listModels(): Promise<ModelInfo[]> {
     await this.#ensureService()
     await this.#fetchModels()
-    const configured = this.#opts.connection?.()?.model
+    const profile = this.#opts.connection?.()
+    const allowed = profile?.models.length
+      ? new Set(profile.models.map((model) => opencodeProfileModelId(model)).filter((model): model is string => Boolean(model)))
+      : null
+    const visible = allowed
+      ? this.#models.filter((model) => model.info.providerID === OPENCODE_PROFILE_PROVIDER && allowed.has(model.info.modelID))
+      : this.#models
+    const configured = opencodeProfileModelId(profile?.model)
     const ordered =
       configured && !this.profileLimitation
         ? [
-            ...this.#models.filter((model) => model.composite === `vibemobile/${configured}`),
-            ...this.#models.filter((model) => model.composite !== `vibemobile/${configured}`),
+            ...visible.filter((model) => model.composite === opencodeProfileModelRef(configured)),
+            ...visible.filter((model) => model.composite !== opencodeProfileModelRef(configured)),
           ]
-        : this.#models
+        : visible
     return ordered.map(({ info, composite: id }) => ({
       id,
       displayName: info.name,
@@ -782,8 +794,8 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
 
   #modelRef(value: string | undefined): { providerID: string; id: string } | null {
     if (!value) {
-      const configured = this.#opts.connection?.()?.model
-      return configured && !this.profileLimitation ? { providerID: 'vibemobile', id: configured } : null
+      const configured = opencodeProfileModelId(this.#opts.connection?.()?.model)
+      return configured && !this.profileLimitation ? { providerID: OPENCODE_PROFILE_PROVIDER, id: configured } : null
     }
     const parsed = splitComposite(value)
     if (parsed) return parsed

@@ -450,12 +450,18 @@ export class CodexProvider extends EventEmitter {
       defaultEffort: m.defaultReasoningEffort ?? undefined,
       ...contextWindowField(m),
     }))
-    const configured = this.#connection?.()?.model
+    const profile = this.#connection?.()
+    // `model/list` is backed by Codex's local catalogue, which can contain
+    // models from the native config and other profiles as well. When the
+    // active profile has an explicit model list, that list is the authority
+    // for the session picker; otherwise keep the catalogue fallback.
+    const visible = profile?.models.length ? models.filter((model) => profile.models.includes(model.id)) : models
+    const configured = profile?.model
     if (configured) {
-      const entry = models.find((model) => model.id === configured) ?? { id: configured, displayName: configured }
-      return [entry, ...models.filter((model) => model.id !== configured)]
+      const entry = visible.find((model) => model.id === configured) ?? { id: configured, displayName: configured }
+      return [entry, ...visible.filter((model) => model.id !== configured)]
     }
-    return models
+    return visible
   }
 
 

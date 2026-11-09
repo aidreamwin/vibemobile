@@ -3,6 +3,21 @@ import { AgentProfileError, type StoredAgentProfile } from './profiles.js'
 
 export type AgentConnection = () => StoredAgentProfile | undefined
 
+/** Stable provider id used for models supplied by a managed OpenCode profile. */
+export const OPENCODE_PROFILE_PROVIDER = 'vibemobile'
+
+/** Profile fields historically stored a bare model id; accept API composite ids too. */
+export function opencodeProfileModelId(value?: string): string | undefined {
+  if (!value) return undefined
+  const prefix = `${OPENCODE_PROFILE_PROVIDER}/`
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value
+}
+
+export function opencodeProfileModelRef(value?: string): string | undefined {
+  const model = opencodeProfileModelId(value)
+  return model ? `${OPENCODE_PROFILE_PROVIDER}/${model}` : undefined
+}
+
 /** Overrides are scoped to the runner's children; native login/MCP files stay intact. */
 export function codexProfileLaunch(profile?: StoredAgentProfile): { args: string[]; env: NodeJS.ProcessEnv } {
   if (!profile) return { args: [], env: {} }
@@ -53,6 +68,7 @@ export function opencodeProfileEnv(profile?: StoredAgentProfile, nativeContent?:
       throw new AgentProfileError('agent_profile_opencode_config_invalid')
     }
   }
+  const model = opencodeProfileModelId(profile.model)
   const content = {
     ...native,
     provider: {
@@ -61,10 +77,10 @@ export function opencodeProfileEnv(profile?: StoredAgentProfile, nativeContent?:
         name: profile.name,
         npm: '@ai-sdk/openai-compatible',
         options: { baseURL: profile.baseUrl, apiKey: profile.apiKey },
-        models: { [profile.model]: { name: profile.model } },
+        ...(model ? { models: { [model]: { name: model } } } : {}),
       },
     },
-    model: `vibemobile/${profile.model}`,
+    ...(model ? { model: `${OPENCODE_PROFILE_PROVIDER}/${model}` } : {}),
   }
   return { OPENCODE_CONFIG_CONTENT: JSON.stringify(content) }
 }

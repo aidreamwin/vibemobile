@@ -461,16 +461,21 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
         ...contextWindowField(m),
       }
     })
-    const configured = this.#connection?.()?.model
+    const profile = this.#connection?.()
+    // The CLI catalogue is global to the local installation. An explicit
+    // profile model list is the authority for the session picker, otherwise
+    // retain the catalogue fallback for profiles that have no saved list.
+    const visible = profile?.models.length ? result.filter((model) => profile.models.includes(model.id)) : result
+    const configured = profile?.model
     if (configured) {
-      const entry = result.find((model) => model.id === configured) ?? {
+      const entry = visible.find((model) => model.id === configured) ?? {
         id: configured,
         displayName: configured,
         ...contextWindowField({ contextWindow: this.#profileContextWindow(configured) }),
       }
-      return [entry, ...result.filter((model) => model.id !== configured)]
+      return [entry, ...visible.filter((model) => model.id !== configured)]
     }
-    return result
+    return visible
   }
 
   /** Spawn a throwaway query purely to ask it about itself, then close it. */

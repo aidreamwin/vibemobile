@@ -20,4 +20,32 @@ describe('CodexProvider session listing', () => {
     )
     await provider.stop()
   })
+
+  it('limits the model picker to the active profile models', async () => {
+    vi.spyOn(AppServerClient.prototype, 'request').mockResolvedValue({
+      data: [
+        { id: 'first-a', name: 'First A' },
+        { id: 'first-b', name: 'First B' },
+        { id: 'second-a', name: 'Second A' },
+      ],
+    })
+    const provider = new CodexProvider({
+      workspaceRoots: [],
+      connection: () => ({
+        id: 'profile-0123456789abcdef',
+        name: 'First',
+        baseUrl: 'https://first.example.test/v1',
+        apiKey: 'secret',
+        model: 'first-a',
+        models: ['first-a', 'first-b'],
+        updatedAt: 1,
+      }),
+    })
+
+    await expect(provider.listModels()).resolves.toEqual([
+      { id: 'first-a', displayName: 'First A', efforts: undefined, defaultEffort: undefined },
+      { id: 'first-b', displayName: 'First B', efforts: undefined, defaultEffort: undefined },
+    ])
+    await provider.stop()
+  })
 })
