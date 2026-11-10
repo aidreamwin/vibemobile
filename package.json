@@ -40,11 +40,17 @@
     "test:approval": "tsx apps/server/scripts/test-approval.ts",
     "test:hub": "tsx apps/server/scripts/test-hub.ts",
     "test:terminal": "tsx apps/server/scripts/test-terminal.ts",
-    "smoke:browser": "node apps/web/scripts/smoke-browser.mjs"
+    "smoke:browser": "node apps/web/scripts/smoke-browser.mjs",
+    "docs:media": "node scripts/docs-media/generate.mjs",
+    "docs:media:webp": "node scripts/docs-media/convert-webp.mjs",
+    "docs:demo": "node scripts/docs-media/generate.mjs --serve"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@openai/codex": "0.166.0",
+    "gifenc": "1.0.3",
+    "playwright": "1.65.0",
+    "pngjs": "7.0.0",
     "vite": "^6.4.3"
   },
   "allowScripts": {

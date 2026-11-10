@@ -4,42 +4,66 @@
 
 # VibeMobile
 
-在手机浏览器里远程驱动本机的编码代理。目前支持 **Codex**、**Claude Code** 和
-**OpenCode** 三个后端，提供流式对话、审批弹窗、文件 Diff / 查看 / 编辑、直连终端和图片输入。
+<p align="center">
+  <strong>Code Anywhere. Build Anytime.</strong><br />
+  让 AI 在电脑上编程，让你随时随地掌控开发。
+</p>
+
+<p align="center">
+  <img src="docs/media/webp/overview.webp" width="1200" alt="VibeMobile：AI 原生、移动优先的开发协作入口，让手机成为随身的 AI 开发控制台。" />
+</p>
+
+## 重新定义 AI 时代的开发方式
+
+过去，开发者需要持续坐在电脑前完成编码。现在，AI Coding Agent 可以分析项目、修改代码、运行测试并修复问题；开发者则负责提出意图、指导执行、审查结果和做出关键决策。
+
+VibeMobile 让这种协作不再绑定同一台设备或连续在线的时间：手机负责发起任务、查看进度、审批操作和验收结果，电脑或服务器负责代码、工具与执行环境。
+
+| AI 时代的开发职责 | VibeMobile 的移动入口 |
+|---|---|
+| 提出需求与做出决策 | 在手机上发起任务、补充上下文、处理关键选择 |
+| 跟进 AI 执行 | 查看流式输出、计划、工具调用与阻塞状态 |
+| 审查与交付结果 | 处理授权、查看 Diff、打开源码、接续终端 |
+| 管理多个工作空间 | 通过 Hub 汇总多台机器，随时切换 runner 与项目 |
+
+![手机上修复购物车总价：查看会话、发送任务、逐步输出、审批测试、检查 Diff 和源码、终端回放、切换 Provider。](docs/media/workflow.gif)
+
+<details>
+<summary>展开查看逐屏截图（7 张）</summary>
+
+<table>
+<tr>
+<td><img src="docs/media/webp/sessions.webp" width="320" alt="会话总览" /><br />会话总览</td>
+<td><img src="docs/media/webp/streaming.webp" width="320" alt="实时跟进" /><br />实时跟进</td>
+</tr>
+<tr>
+<td><img src="docs/media/webp/approval.webp" width="320" alt="授权确认" /><br />授权确认</td>
+<td><img src="docs/media/webp/diff.webp" width="320" alt="代码 Diff" /><br />代码 Diff</td>
+</tr>
+<tr>
+<td><img src="docs/media/webp/source.webp" width="320" alt="源码查看" /><br />源码查看</td>
+<td><img src="docs/media/webp/terminal.webp" width="320" alt="终端接续" /><br />终端接续</td>
+</tr>
+<tr>
+<td><img src="docs/media/webp/settings.webp" width="320" alt="Provider 设置" /><br />Provider 设置</td>
+<td></td>
+</tr>
+</table>
+
+</details>
+
+- **演示说明：**真实前端流程，覆盖会话、流式输出、授权、Diff、源码、终端和多 Provider 设置。
+- [逐屏截图与复现 / 调整方法](docs/demo.md) · [素材预览](docs/media/index.html)（本地浏览器打开；GitHub 显示 HTML 源码）。
+
+VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台。它不把传统 IDE 塞进手机，而是让手机浏览器成为随身的 AI 开发控制台：你可以发起开发任务、与 AI 对话、查看执行过程、审批操作、审查代码变更，必要时直接操作终端。真正的代码和执行环境仍运行在你的电脑或服务器上；Hub + multi-runner 还能把多台机器汇总到一个入口，随时切换工作空间。
+
+**Your machine does the work. Your AI writes the code. You stay in control.**
+
+完整产品理念见 [docs/vision.md](docs/vision.md)。
 
 > **安全提示：VibeMobile 是单用户工具。** 登录后即可在宿主机上执行任意命令；
 > 「完全访问」档等同于无人值守。**不要直接暴露到公网** —— 需要公网访问时，请
 > 在前面使用 HTTPS 反向代理或安全隧道，并先阅读 [SECURITY.md](SECURITY.md)。
-
-## English
-
-VibeMobile is a mobile web remote control for coding agents running on your own
-machine. It supports **Codex**, **Claude Code**, and **OpenCode** with streaming
-output, approval sheets, file diffs, a persistent terminal, and image input.
-
-The Node backend is not optional: `codex app-server` rejects WebSocket upgrades
-that carry an `Origin` header, and browsers always send one, so the backend acts
-as the WS client.
-
-Quick start:
-
-```bash
-npm ci
-npm run dev            # backend 5800 · web 5802 · app-server 6800
-```
-
-Production:
-
-```bash
-npm ci
-npm run build:all      # builds web AND server
-npm start              # 0.0.0.0:3000
-```
-
-**Security:** this is a single-user tool that can run arbitrary commands. Never
-expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
-[deployment guide](docs/deployment.md). Contributions are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md). Licensed under MIT.
 
 ## 功能
 
@@ -53,51 +77,18 @@ expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
   （带乐观并发保护）。
 - **终端**：直连 PTY，断开重连后仍是同一个 shell 和同一块屏幕。
 - **图片**：手机相册 / 拍照输入，内容寻址落盘，转写里只传 token。
-- **多机器**：Hub + 多个 runner，runner 主动连接、无需开放入站端口。
+- **多机器**：推荐使用 Hub + 多个 runner，统一管理不同机器上的工作空间并随时切换；runner 主动连接、无需开放入站端口。
 - **PWA**：可添加到主屏幕，独立窗口运行。
 
-## 架构
+## 部署
 
-```text
-手机浏览器 ──HTTP/WS(局域网)──► Node 后端 ──WS(127.0.0.1)──► codex app-server
-   React PWA      PIN → JWT       Fastify      JSON-RPC 客户端    （由后端 spawn 托管）
-                                    ├── Claude Agent SDK（每回合一个子进程）
-                                    ├── opencode HTTP + SSE（attach 或私有 serve）
-                                    └── node-pty（终端直连）
-```
+> **推荐部署：Hub + multi-runner。** 用一个 Hub 汇总管理多台开发机器和多个工作空间，手机可以随时切换；runner 主动连接 Hub，无需为每台机器开放入站端口。单机部署适合快速体验，多机器场景请参考 [multi-runner 部署说明](docs/multi-runner.md)。
 
-**为什么必须由后端代理**：`codex app-server` 会拒绝任何带 `Origin` 头的 WS
-升级请求，而浏览器发起的 WS 一定带 `Origin`。所以浏览器无法直连 app-server，
-必须由 Node 后端充当 WS 客户端。这是约束，不是取舍。
-
-**Provider 接缝**：`apps/server/src/providers/types.ts` 的 `AgentProvider` 是唯一
-抽象；`routes/` 与 `ws/hub.ts` 完全 provider-agnostic。增加一个 provider =
-实现接口 + 在 `apps/server/src/index.ts` 里 `registry.register()`。
-
-三个后端的会话模型不同（常驻进程 / 每回合一个子进程 / HTTP 服务；续接方式；
-插话方式；元数据存储），详见 [docs/architecture.md](docs/architecture.md)。影响正确性的
-接缝和“改错不会报错、只会静默出错”的约束集中在 [CLAUDE.md](CLAUDE.md)。
-
-## 快速开始
+<p align="center">
+  <img src="docs/media/webp/VibeMobileHubRunner.webp" width="1200" alt="VibeMobile Hub 与多 Runner 架构：手机通过 Hub 统一管理并切换多台运行 AI Coding Agent 的机器。" />
+</p>
 
 要求 **Node.js 20+**（推荐 22），npm，以及至少一个已登录的代理 CLI。
-
-### 开发
-
-```bash
-npm ci
-npm run dev            # 后端 5800 · 前端 5802 · app-server 6800
-npm run dev:server     # 只起后端
-npm run dev:web        # 只起前端
-```
-
-端口被占用时整段换掉：
-
-```bash
-node scripts/dev.mjs --server-port=5900 --codex-port=6901 --web-port=5902
-```
-
-开发模式后端直接跑源码（tsx），前端由 Vite 热更新，不需要先构建。
 
 ### 生产
 
@@ -125,6 +116,25 @@ docker compose logs -f
 - Windows：`scripts\windows\install-service.bat`
 - Linux/macOS：`npm run release` + `deploy/install.mjs`
 - 多机器：[docs/multi-runner.md](docs/multi-runner.md)
+
+## 开发
+
+### 本地开发
+
+```bash
+npm ci
+npm run dev            # 后端 5800 · 前端 5802 · app-server 6800
+npm run dev:server     # 只起后端
+npm run dev:web        # 只起前端
+```
+
+端口被占用时整段换掉：
+
+```bash
+node scripts/dev.mjs --server-port=5900 --codex-port=6901 --web-port=5902
+```
+
+开发模式后端直接跑源码（tsx），前端由 Vite 热更新，不需要先构建。
 
 ## 验证
 
@@ -155,6 +165,60 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 ```
 
 脚本各自钉住的东西和前置条件见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## English
+
+VibeMobile is an AI-native, mobile-first control plane for coding agents. It
+separates the developer's mobile control surface from the code and execution
+environment running on a computer or server. It supports **Codex**, **Claude
+Code**, and **OpenCode** with streaming output, approval sheets, file diffs, a
+persistent terminal, and image input.
+
+The Node backend is not optional: `codex app-server` rejects WebSocket upgrades
+that carry an `Origin` header, and browsers always send one, so the backend acts
+as the WS client.
+
+Quick start:
+
+```bash
+npm ci
+npm run dev            # backend 5800 · web 5802 · app-server 6800
+```
+
+Production:
+
+```bash
+npm ci
+npm run build:all      # builds web AND server
+npm start              # 0.0.0.0:3000
+```
+
+**Security:** this is a single-user tool that can run arbitrary commands. Never
+expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
+[deployment guide](docs/deployment.md). Contributions are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Licensed under MIT.
+
+## 架构
+
+```text
+手机浏览器 ──HTTP/WS(局域网)──► Node 后端 ──WS(127.0.0.1)──► codex app-server
+   React PWA      PIN → JWT       Fastify      JSON-RPC 客户端    （由后端 spawn 托管）
+                                    ├── Claude Agent SDK（每回合一个子进程）
+                                    ├── opencode HTTP + SSE（attach 或私有 serve）
+                                    └── node-pty（终端直连）
+```
+
+**为什么必须由后端代理**：`codex app-server` 会拒绝任何带 `Origin` 头的 WS
+升级请求，而浏览器发起的 WS 一定带 `Origin`。所以浏览器无法直连 app-server，
+必须由 Node 后端充当 WS 客户端。这是约束，不是取舍。
+
+**Provider 接缝**：`apps/server/src/providers/types.ts` 的 `AgentProvider` 是唯一
+抽象；`routes/` 与 `ws/hub.ts` 完全 provider-agnostic。增加一个 provider =
+实现接口 + 在 `apps/server/src/index.ts` 里 `registry.register()`。
+
+三个后端的会话模型不同（常驻进程 / 每回合一个子进程 / HTTP 服务；续接方式；
+插话方式；元数据存储），详见 [docs/architecture.md](docs/architecture.md)。影响正确性的
+接缝和“改错不会报错、只会静默出错”的约束集中在 [CLAUDE.md](CLAUDE.md)。
 
 ## 权限档位
 
@@ -202,6 +266,7 @@ packages/protocol/src/
 
 | 文档 | 内容 |
 |---|---|
+| [docs/vision.md](docs/vision.md) | AI 原生、移动优先的开发协作理念与产品定位 |
 | [docs/architecture.md](docs/architecture.md) | 架构、数据流、provider 接缝、分页、图片、终端 |
 | [docs/deployment.md](docs/deployment.md) | 四种部署方式、环境变量、健康检查 |
 | [docs/limitations.md](docs/limitations.md) | 已知限制和行为边界 |

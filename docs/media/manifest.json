@@ -1,0 +1,141 @@
+{
+  "reproducible": true,
+  "fixtureSha256": "1dafabf83b9a17354d065eaca57f9fa86b1cb4469f569638b7f12bde88301501",
+  "fixedTime": "2026-01-15T02:00:00.000Z",
+  "viewport": {
+    "width": 390,
+    "height": 760
+  },
+  "durationMs": 24100,
+  "timeline": [
+    {
+      "chapter": "01 / AI 移动入口",
+      "delayMs": 2400
+    },
+    {
+      "chapter": "02 / 实时跟进",
+      "delayMs": 900
+    },
+    {
+      "chapter": "02 / 实时跟进",
+      "delayMs": 650
+    },
+    {
+      "chapter": "02 / 实时跟进",
+      "delayMs": 650
+    },
+    {
+      "chapter": "02 / 实时跟进",
+      "delayMs": 650
+    },
+    {
+      "chapter": "02 / 实时跟进",
+      "delayMs": 650
+    },
+    {
+      "chapter": "02 / 实时跟进",
+      "delayMs": 1600
+    },
+    {
+      "chapter": "03 / 手机授权",
+      "delayMs": 3200
+    },
+    {
+      "chapter": "04 / 检查结果",
+      "delayMs": 2000
+    },
+    {
+      "chapter": "04 / 检查结果",
+      "delayMs": 3200
+    },
+    {
+      "chapter": "05 / 查看源码",
+      "delayMs": 2600
+    },
+    {
+      "chapter": "06 / 持续执行",
+      "delayMs": 2600
+    },
+    {
+      "chapter": "07 / 多 Provider",
+      "delayMs": 3000
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "webp/sessions.webp",
+      "bytes": 18788,
+      "sha256": "84047a263b8fa4afd14487b2335cc5dcfc433ee669bda39acc117e218b243d24",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "webp/workflow-poster.webp",
+      "bytes": 44416,
+      "sha256": "d1372e3deb2349c9b9f914b0964bb085fb07cd26562c8e9d2dbbe1208e390a2b",
+      "width": 1000,
+      "height": 820
+    },
+    {
+      "file": "webp/streaming.webp",
+      "bytes": 20936,
+      "sha256": "8354cda96ece2b0f3d1e9681f21ab247d571adb237b651483ce6009c5bfde3e0",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "webp/approval.webp",
+      "bytes": 28040,
+      "sha256": "a0b8afd8610a796b56013109ad7f666d27b5a096cbbd661b3ece55412c845bf6",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "webp/diff.webp",
+      "bytes": 23296,
+      "sha256": "730d8090d49787158f59a89da10c695c2d69122e7caf51614f4c264472f46e36",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "webp/source.webp",
+      "bytes": 13476,
+      "sha256": "239953c4541eb24d71c12ff2430e3bbef8ffc10f0bdde6388d4ad6b43631ccc2",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "webp/terminal.webp",
+      "bytes": 17082,
+      "sha256": "c0514dda4f53f8a333c2498fe8d1ef4cb8067a8908c1772a7a7685fc90604462",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "webp/settings.webp",
+      "bytes": 14350,
+      "sha256": "94b9d8d59dfcad7299ef0182343d4a5122ee14b7c505c8b0e73144c2aa6bfcd6",
+      "width": 390,
+      "height": 760
+    },
+    {
+      "file": "workflow.gif",
+      "bytes": 660284,
+      "sha256": "458cee9799cf7cda9d51eca13fab40ef58d40f1c114ae3ebc9223fc010977b41",
+      "width": 1000,
+      "height": 820
+    },
+    {
+      "file": "webp/overview.webp",
+      "bytes": 81764,
+      "sha256": "7d62fab0717c590efffa864a1011acf89d4ac727bef7ae4de17d006fa655cf28",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "file": "index.html",
+      "bytes": 4009,
+      "sha256": "077372b567d165e893dfb329b56303eb98f8c668c3557359e6b37c90677ae787"
+    }
+  ]
+}
