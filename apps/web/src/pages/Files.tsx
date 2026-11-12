@@ -99,7 +99,8 @@ export default function Files() {
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [content, setContent] = useState<FileContent | null>(null)
   const [diff, setDiff] = useState('')
-  const [preview, setPreview] = useState(false)
+  // Markdown opens rendered; the header's code/eye button flips it back.
+  const [preview, setPreview] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [sortByName, setSortByName] = useState(false)

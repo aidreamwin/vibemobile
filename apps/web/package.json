@@ -1,6 +1,6 @@
 {
   "name": "@vibemobile/web",
-  "version": "0.1.64",
+  "version": "0.1.65",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "test:markdown-browser": "node scripts/check-markdown.mjs",
     "test:coverage": "vitest run --coverage",
     "smoke": "node scripts/smoke-browser.mjs"
   },
@@ -20,12 +21,14 @@
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
     "lucide-react": "^1.46.0",
+    "mermaid": "^12.3.0",
     "radix-ui": "^1.6.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",
     "react-router-dom": "^7.1.1",
     "remark-gfm": "^4.0.0",
+    "yaml": "^2.9.1",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

@@ -1,10 +1,15 @@
-import { memo, useState } from 'react'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import { isValidElement, memo, useState, type ComponentProps, type ReactNode } from 'react'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { parseFileRef, type FileRef } from '../lib/fileLink'
+import { splitFrontmatter, type FrontmatterEntry } from '../lib/frontmatter'
+import Mermaid from './Mermaid'
 
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false)
+  /** Mermaid renders by default; the source stays one tap away for debugging. */
+  const [source, setSource] = useState(false)
+  const diagram = language.toLowerCase() === 'mermaid'
 
   function copy() {
     void navigator.clipboard.writeText(code)
@@ -16,53 +21,121 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
     <div className="group relative my-3 overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border bg-secondary px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
         <span>{language || 'text'}</span>
-        <button
-          type="button"
-          onClick={copy}
-          className="flex items-center gap-1 rounded-md bg-raised px-2 py-1 text-[11px] text-foreground/90 transition-colors active:bg-raised-hover"
-        >
-          {copied ? (
-            <>
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="h-3.5 w-3.5 text-success"
-              >
-                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="text-success">已复制</span>
-            </>
-          ) : (
-            <>
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                className="h-3.5 w-3.5 text-muted-foreground"
-              >
-                <rect x="9" y="9" width="13" height="13" rx="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path
-                  d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span>复制</span>
-            </>
+        <div className="flex items-center gap-1.5">
+          {diagram && (
+            <button
+              type="button"
+              onClick={() => setSource(!source)}
+              className="rounded-md bg-raised px-2 py-1 text-[11px] text-foreground/90 transition-colors active:bg-raised-hover"
+            >
+              {source ? '图表' : '源码'}
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={copy}
+            className="flex items-center gap-1 rounded-md bg-raised px-2 py-1 text-[11px] text-foreground/90 transition-colors active:bg-raised-hover"
+          >
+            {copied ? (
+              <>
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="h-3.5 w-3.5 text-success"
+                >
+                  <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-success">已复制</span>
+              </>
+            ) : (
+              <>
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  className="h-3.5 w-3.5 text-muted-foreground"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>复制</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      {/* No padding utilities here: `.md pre` is unlayered and would beat
-          them, so the padding lives in the `.md-code-block` rule instead. */}
-      <pre className="md-code-block max-h-96 font-mono text-[12.5px] leading-relaxed text-foreground">
-        <code>{code}</code>
-      </pre>
+      {diagram && !source ? (
+        <Mermaid code={code} />
+      ) : (
+        /* No padding utilities here: `.md pre` is unlayered and would beat
+           them, so the padding lives in the `.md-code-block` rule instead. */
+        <pre className="md-code-block max-h-96 font-mono text-[12.5px] leading-relaxed text-foreground">
+          <code>{code}</code>
+        </pre>
+      )}
     </div>
+  )
+}
+
+/**
+ * Keep this renderer's component identity stable across streaming updates.
+ * An inline renderer remounts every code block when any text changes, resetting
+ * the source toggle and laying out unchanged diagrams again.
+ */
+function MarkdownPre({ children }: ComponentProps<'pre'>) {
+  const child = Array.isArray(children) ? children[0] : children
+  const props = isValidElement<{ className?: string; children?: ReactNode }>(child) ? child.props : undefined
+  const match = /language-(\w+)/.exec(props?.className ?? '')
+  const raw = props?.children
+  return (
+    <CodeBlock
+      language={match ? match[1] : ''}
+      code={(Array.isArray(raw) ? raw.join('') : String(raw ?? '')).replace(/\n$/, '')}
+    />
+  )
+}
+
+// The pre wrapper distinguishes fenced code from inline code in react-markdown
+// 9, and avoids nesting its default pre around CodeBlock.
+const codeComponents: Components = { pre: MarkdownPre }
+
+/**
+ * The document's YAML header, drawn as a table above the body. A bare
+ * `<pre>` would be more faithful, but on a phone the header is what tells you
+ * whether a SKILL.md is worth reading — the keys want to line up, not scroll.
+ */
+function Frontmatter({ entries }: { entries: FrontmatterEntry[] }) {
+  return (
+    <dl className="my-1 overflow-hidden rounded-xl border border-border bg-card font-mono text-[12px]">
+      {entries.map((entry) => (
+        <div key={entry.key} className="flex gap-3 border-b border-border px-3 py-1.5 last:border-b-0">
+          <dt className="w-24 shrink-0 truncate text-muted-foreground">{entry.key}</dt>
+          <dd className="min-w-0 flex-1 break-words text-foreground/90">
+            {Array.isArray(entry.value) ? (
+              entry.value.map((item) => (
+                <span
+                  key={`${entry.key}:${item}`}
+                  className="mr-1 inline-block rounded-md bg-raised px-1.5 py-0.5 last:mr-0"
+                >
+                  {item}
+                </span>
+              ))
+            ) : (
+              <span className="whitespace-pre-wrap">{entry.value || '—'}</span>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
@@ -83,8 +156,12 @@ export interface MarkdownProps {
  */
 const Markdown = memo(
   function Markdown({ text, cwd, onOpenFile }: MarkdownProps) {
+    /* Only a real header is split off; `splitFrontmatter` returns null for an
+       opening `---` that turns out to be a horizontal rule. */
+    const doc = splitFrontmatter(text)
     return (
       <div className="md">
+        {doc && (doc.meta ? <Frontmatter entries={doc.meta} /> : <CodeBlock language="yaml" code={doc.raw} />)}
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           /* react-markdown blanks any destination whose first colon comes
@@ -98,6 +175,7 @@ const Markdown = memo(
              `javascript:` is still stripped. */
           urlTransform={(url) => (parseFileRef(url, cwd) ? url : defaultUrlTransform(url))}
           components={{
+            ...codeComponents,
             /* The agents link their file references the way a webpage links a
                page — `[testing.md](rules/testing.md)`,
                `[测试规范](/D:/code/…/testing.md:10)` — and a browser resolves
@@ -133,41 +211,9 @@ const Markdown = memo(
                 </a>
               )
             },
-            /* Block-vs-inline is decided HERE, by the wrapper, not by a flag on
-               `code`. react-markdown 9 removed the `inline` boolean the old
-               `code` override tested — it was always `undefined`, so `!inline`
-               was always true and the test collapsed to "has a language class
-               or contains a newline". A fenced block with no language and one
-               line of content therefore rendered as inline code. Position is
-               the thing that actually distinguishes them: react-markdown only
-               ever wraps block code in a `<pre>`.
-
-               Handling it here also removes the wrapper, which matters inside
-               `.md` — those element-level `pre` rules are unlayered, so they
-               beat CodeBlock's Tailwind utilities and drew a second bordered
-               box around the first. */
-            pre({ children }) {
-              const child = (Array.isArray(children) ? children[0] : children) as any
-              const className: string = child?.props?.className ?? ''
-              const raw = child?.props?.children
-              const match = /language-(\w+)/.exec(className)
-              return (
-                <CodeBlock
-                  language={match ? match[1] : ''}
-                  code={(Array.isArray(raw) ? raw.join('') : String(raw ?? '')).replace(/\n$/, '')}
-                />
-              )
-            },
-            code({ node, className, children, ...props }: any) {
-              return (
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              )
-            },
           }}
         >
-          {text}
+          {doc ? doc.body : text}
         </ReactMarkdown>
       </div>
     )

@@ -30,7 +30,9 @@ export default function FileViewer({
   const [content, setContent] = useState<FileContent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [preview, setPreview] = useState(false)
+  // Markdown opens rendered: a `.md` link is usually opened to be read, and
+  // the switch is one tap away for the source. Non-documents ignore it.
+  const [preview, setPreview] = useState(true)
   // The mode is kept across files — reading a document in the rendered form
   // and then following a link to another one should not drop back to source —
   // so what is actually rendered is the mode *and* whether this file has a
