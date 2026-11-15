@@ -249,7 +249,9 @@ export class CodexProvider extends EventEmitter {
   #currentModelProvider(): string | undefined {
     if (!this.#connection) return undefined
     const profile = this.#connection()
-    return profile?.baseUrl || profile?.apiKey ? 'custom' : 'openai'
+    // Codex's native provider identifier is case-sensitive. The app-server
+    // reports and expects `OpenAI`; `custom` is the profile-backed identifier.
+    return profile?.baseUrl || profile?.apiKey ? 'custom' : 'OpenAI'
   }
 
   /**

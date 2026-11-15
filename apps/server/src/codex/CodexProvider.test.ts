@@ -80,6 +80,22 @@ describe('CodexProvider session listing', () => {
     await provider.stop()
   })
 
+  it('uses Codex native provider casing when no profile is active', async () => {
+    const request = vi.spyOn(AppServerClient.prototype, 'request').mockResolvedValue({
+      thread: { id: 'thread-1', name: 'Existing', status: 'idle', model: 'gpt-6.1-sol' },
+      cwd: 'C:/workspace',
+    })
+    const provider = new CodexProvider({ workspaceRoots: [], connection: () => undefined })
+
+    await provider.resumeSession('thread-1')
+
+    expect(request).toHaveBeenCalledWith(
+      'thread/resume',
+      expect.objectContaining({ threadId: 'thread-1', modelProvider: 'OpenAI' }),
+    )
+    await provider.stop()
+  })
+
   it('opens a saved thread when the active profile cannot resume its old model', async () => {
     const request = vi
       .spyOn(AppServerClient.prototype, 'request')
