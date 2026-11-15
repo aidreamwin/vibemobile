@@ -134,8 +134,9 @@ function isActiveWriterError(err: unknown): boolean {
 /**
  * The app-server has no such thread: `no rollout found for thread id X` from
  * the calls that go through the rollout store (`thread/delete`, `thread/fork`),
- * `thread not loaded: X` from the ones that need it in memory (`thread/read`).
- * Measured, both `-32600`.
+ * `thread not loaded: X` from the ones that need it in memory (`thread/read`),
+ * or `thread not found: X` from `turn/start` in newer app-server builds.
+ * Measured, all are generic `-32600` errors.
  *
  * Spelled out rather than composed from `isUnmaterializedThreadError` above,
  * even though they overlap, because the two answer different questions and one
@@ -152,6 +153,7 @@ function isUnknownThreadError(err: unknown): boolean {
   const message = (err as Error)?.message ?? ''
   return (
     message.includes('no rollout found') ||
+    message.includes('thread not found') ||
     message.includes('thread not loaded') ||
     message.includes('is not materialized yet')
   )
@@ -167,6 +169,8 @@ export class CodexProvider extends EventEmitter {
   #pendingApprovals = new Map<string, PendingApproval>()
   /** threadId -> live status, maintained from status-changed notifications. */
   #status = new Map<string, SessionStatus>()
+  /** Threads loaded in the current app-server process. */
+  #attached = new Set<string>()
   #retryNotices = new Map<string, Extract<AgentEvent, { kind: 'error' }>>()
   #retryHistory: TurnRetryStore
   #prefs: SessionPrefsStore
@@ -333,6 +337,7 @@ export class CodexProvider extends EventEmitter {
       // without polling every thread.
       if (method === 'thread/status/changed' && params?.threadId) {
         this.#status.set(params.threadId, mapThreadStatus(params.status))
+        this.#attached.add(params.threadId)
       }
       // Images are stored here, on the one funnel every live event passes
       // through, so a raw data URL can never reach an AgentEvent. Same call for
@@ -388,6 +393,7 @@ export class CodexProvider extends EventEmitter {
 
     this.#client.on('reconnected', () => {
       // Subscriptions live in app-server memory and are gone after a restart.
+      this.#attached.clear()
       this.emit('reconnected')
     })
 
@@ -404,6 +410,7 @@ export class CodexProvider extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    this.#attached.clear()
     await this.#client.close()
     await this.#supervisor.stop()
     this.#started = false
@@ -566,6 +573,7 @@ export class CodexProvider extends EventEmitter {
     if (!t) return null
     const status = this.#status.get(t.id) ?? mapThreadStatus(t.status)
     this.#status.set(t.id, status)
+    this.#attached.add(t.id)
     return {
       id: t.id,
       provider: this.id,
@@ -654,6 +662,7 @@ export class CodexProvider extends EventEmitter {
 
     const t = res.thread
     this.#status.set(t.id, 'idle')
+    this.#attached.add(t.id)
     // Remember what `thread/start` was actually given — the defaults above are
     // ours, and after this call they are the thread's. Writing at creation
     // rather than at the first turn is the point: the phone may not send a
@@ -736,6 +745,7 @@ export class CodexProvider extends EventEmitter {
     const status = this.#status.get(threadId) ?? mapThreadStatus(t?.status)
     if (!t) return null
     this.#status.set(threadId, status)
+    this.#attached.add(threadId)
     const retry = this.#retryNotices.get(threadId)
     if (retry) this.emit('event', retry)
     // One line per thread per process when the level we are about to put back on
@@ -779,6 +789,7 @@ export class CodexProvider extends EventEmitter {
     const t = res.thread
     const status = mapThreadStatus(t.status)
     this.#status.set(t.id, status)
+    this.#attached.add(t.id)
     // Before the summary below, so the fork reports what it inherited instead of
     // nothing. The app-server copies the transcript; it copies no settings.
     this.#prefs.copy(threadId, t.id)
@@ -808,6 +819,7 @@ export class CodexProvider extends EventEmitter {
       } catch {
         // Thread may have been deleted while we were away; drop it.
         this.#status.delete(threadId)
+        this.#attached.delete(threadId)
       }
     }
   }
@@ -968,6 +980,7 @@ export class CodexProvider extends EventEmitter {
   async deleteSession(threadId: string): Promise<void> {
     await this.#threadRpc(threadId, 'thread/delete')
     this.#status.delete(threadId)
+    this.#attached.delete(threadId)
     // After the RPC, unlike Claude which forgets first: a delete that failed
     // leaves a live thread behind, and its remembered level should outlive the
     // attempt rather than be dropped by a call that never happened.
@@ -1007,9 +1020,14 @@ export class CodexProvider extends EventEmitter {
   ): Promise<{ turnId: string }> {
     // A profile/model switch can leave an old saved thread readable but not
     // loaded after its first resume was rejected. Re-resume only when the
-    // caller selected a model (to apply that choice) or when this process has
-    // never attached the thread; ordinary turns keep the existing attachment.
-    if (opts?.model || !this.#status.has(threadId)) await this.resumeSession(threadId, { model: opts?.model })
+    // caller selected a model (to apply that choice) or when this app-server
+    // process has never attached the thread; ordinary turns keep the existing
+    // attachment. `#status` is deliberately not used here: a durable
+    // `thread/list` result tells us the status, but does not load the thread.
+    if (opts?.model || !this.#attached.has(threadId)) {
+      const session = await this.resumeSession(threadId, { model: opts?.model })
+      if (!session || !this.#attached.has(threadId)) throw new SessionNotFoundError(threadId)
+    }
     // The app-server will accept any number of images; the cap is ours, and it
     // has to be applied here rather than only when the transcript is read back,
     // or the phone shows a picture the agent never got.

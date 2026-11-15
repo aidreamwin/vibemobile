@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppServerClient } from './AppServerClient.js'
 import { CodexProvider } from './CodexProvider.js'
+import { SessionNotFoundError } from '../providers/types.js'
 
 describe('CodexProvider session listing', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -135,6 +136,42 @@ describe('CodexProvider session listing', () => {
       'thread/list',
       expect.objectContaining({ modelProviders: [], archived: true }),
     )
+    await provider.stop()
+  })
+
+  it('resumes a durable thread before its first turn after an app-server restart', async () => {
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockRejectedValueOnce(new Error('thread not loaded: thread-1'))
+      .mockResolvedValueOnce({
+        data: [{ id: 'thread-1', name: 'Saved', status: 'idle', model: 'old-model', cwd: 'C:/workspace' }],
+      })
+      .mockResolvedValueOnce({
+        thread: { id: 'thread-1', name: 'Saved', status: 'idle', model: 'old-model' },
+        cwd: 'C:/workspace',
+      })
+      .mockResolvedValueOnce({ turn: { id: 'turn-1' } })
+
+    const provider = new CodexProvider({ workspaceRoots: [] })
+
+    // This is what registry.forSession does before routing the websocket turn.
+    await expect(provider.getSession('thread-1')).resolves.toMatchObject({ id: 'thread-1' })
+    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).resolves.toEqual({
+      turnId: 'turn-1',
+    })
+    expect(request).toHaveBeenNthCalledWith(3, 'thread/resume', expect.objectContaining({ threadId: 'thread-1' }))
+    expect(request).toHaveBeenNthCalledWith(4, 'turn/start', expect.objectContaining({ threadId: 'thread-1' }))
+    await provider.stop()
+  })
+
+  it('recognizes the newer thread-not-found wording', async () => {
+    const request = vi.spyOn(AppServerClient.prototype, 'request').mockRejectedValueOnce(
+      new Error('thread not found: thread-1'),
+    )
+    const provider = new CodexProvider({ workspaceRoots: [] })
+
+    await expect(provider.deleteSession('thread-1')).rejects.toBeInstanceOf(SessionNotFoundError)
+    expect(request).toHaveBeenCalledWith('thread/delete', { threadId: 'thread-1' })
     await provider.stop()
   })
 
