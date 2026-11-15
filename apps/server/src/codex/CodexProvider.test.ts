@@ -164,6 +164,25 @@ describe('CodexProvider session listing', () => {
     await provider.stop()
   })
 
+  it('starts a listed thread when resume can only recover its durable metadata', async () => {
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockRejectedValueOnce(new Error('no rollout found for thread id thread-1'))
+      .mockRejectedValueOnce(new Error('thread not loaded: thread-1'))
+      .mockResolvedValueOnce({
+        data: [{ id: 'thread-1', name: 'Saved', status: 'idle', model: 'old-model', cwd: 'C:/workspace' }],
+      })
+      .mockResolvedValueOnce({ turn: { id: 'turn-1' } })
+
+    const provider = new CodexProvider({ workspaceRoots: [] })
+
+    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).resolves.toEqual({
+      turnId: 'turn-1',
+    })
+    expect(request).toHaveBeenNthCalledWith(4, 'turn/start', expect.objectContaining({ threadId: 'thread-1' }))
+    await provider.stop()
+  })
+
   it('recognizes the newer thread-not-found wording', async () => {
     const request = vi.spyOn(AppServerClient.prototype, 'request').mockRejectedValueOnce(
       new Error('thread not found: thread-1'),

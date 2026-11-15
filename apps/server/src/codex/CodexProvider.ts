@@ -1024,9 +1024,13 @@ export class CodexProvider extends EventEmitter {
     // process has never attached the thread; ordinary turns keep the existing
     // attachment. `#status` is deliberately not used here: a durable
     // `thread/list` result tells us the status, but does not load the thread.
+    // `resumeSession` can still return a durable summary when the selected
+    // profile cannot load the old rollout. That summary proves the session
+    // exists; the app-server then gets the final say from `turn/start` instead
+    // of this local cache turning it into a misleading "session not found".
     if (opts?.model || !this.#attached.has(threadId)) {
       const session = await this.resumeSession(threadId, { model: opts?.model })
-      if (!session || !this.#attached.has(threadId)) throw new SessionNotFoundError(threadId)
+      if (!session) throw new SessionNotFoundError(threadId)
     }
     // The app-server will accept any number of images; the cap is ours, and it
     // has to be applied here rather than only when the transcript is read back,
