@@ -30,6 +30,17 @@ export const DEFAULT_PREFS: DisplayPrefs = {
   hideCompaction: false,
 }
 
+export const COMPACT_PREFS: DisplayPrefs = {
+  hideReasoning: true,
+  hideCommand: true,
+  hideTool: true,
+  hideFileChange: true,
+  hideMcp: true,
+  hideWebSearch: true,
+  hidePlan: true,
+  hideCompaction: false,
+}
+
 export interface DisplayOption {
   key: keyof DisplayPrefs
   label: string
@@ -77,6 +88,7 @@ interface DisplayState {
   prefs: DisplayPrefs
   toggle: (key: keyof DisplayPrefs) => void
   reset: () => void
+  compact: () => void
 }
 
 export const useDisplayPrefs = create<DisplayState>((set, get) => ({
@@ -89,6 +101,10 @@ export const useDisplayPrefs = create<DisplayState>((set, get) => ({
   reset: () => {
     persist(DEFAULT_PREFS)
     set({ prefs: { ...DEFAULT_PREFS } })
+  },
+  compact: () => {
+    persist(COMPACT_PREFS)
+    set({ prefs: { ...COMPACT_PREFS } })
   },
 }))
 

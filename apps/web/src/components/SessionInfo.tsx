@@ -3,6 +3,7 @@ import { Download, Info, Loader2 } from 'lucide-react'
 import { Popover } from 'radix-ui'
 import type { ProviderId } from '@vibemobile/protocol'
 import { api } from '../lib/api'
+import { currentProvider } from '../lib/currentProvider'
 import { runnerId } from '../lib/runner'
 
 export default function SessionInfo({
@@ -14,6 +15,27 @@ export default function SessionInfo({
   onDownload: () => void
   downloading: boolean
 }) {
+  const [open, setOpen] = useState(false)
+  const [supplier, setSupplier] = useState<ReturnType<typeof currentProvider>>(null)
+  const [loadingProvider, setLoadingProvider] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setSupplier(null)
+    setLoadingProvider(true)
+    void api
+      .agentProfiles()
+      .then((result) => {
+        if (active) setSupplier(currentProvider(provider, result))
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setLoadingProvider(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [open, provider])
   const [runnerName, setRunnerName] = useState(runnerId || '本机')
   useEffect(() => {
     if (!runnerId) return
@@ -38,7 +60,7 @@ export default function SessionInfo({
           ? 'OpenCode'
           : (provider ?? '未知')
   return (
-    <Popover.Root>
+    <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
           type="button"
@@ -69,6 +91,15 @@ export default function SessionInfo({
             <div className="flex items-start gap-3">
               <dt className="w-12 shrink-0 text-muted-foreground">Agent</dt>
               <dd className="min-w-0 flex-1 text-foreground">{agent}</dd>
+            </div>
+            <div className="flex items-start gap-3">
+              <dt className="w-12 shrink-0 text-muted-foreground">Provider</dt>
+              <dd className="min-w-0 flex-1 text-foreground" aria-live="polite">
+                {loadingProvider ? '读取中…' : (supplier?.name ?? '暂无法获取')}
+                {!loadingProvider && supplier?.id && (
+                  <span className="block font-mono text-[11px] text-muted-foreground">{supplier.id}</span>
+                )}
+              </dd>
             </div>
           </dl>
           <div className="mt-3 border-t border-border pt-2">
