@@ -6,7 +6,7 @@ VibeMobile 的后端和前端使用**独立版本号**，分别记录在
 
 ## Unreleased
 
-当前 workspace 版本：`server 0.1.24` / `web 0.1.38`。
+当前 workspace 版本：`server 0.1.43` / `web 0.1.66`。
 
 ### Added
 
@@ -47,6 +47,7 @@ VibeMobile 的后端和前端使用**独立版本号**，分别记录在
 
 ### Fixed
 
+- Codex：不同 provider key 的会话可只读查看历史并“创建副本继续”，副本使用当前配置，保留单进程和单端口；修复启动参数对 provider key 的解析。
 - README 的「直接跑」快速开始没有构建后端，干净 clone 上 `npm start` 会失败。
 - README 中的测试数量已过期；改为描述测试分层，不再硬编码数量。
 - 路由中 `sandbox` / `approvalPolicy` 的 `any` 类型改为协议枚举。
