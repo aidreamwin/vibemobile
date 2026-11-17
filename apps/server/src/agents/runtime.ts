@@ -180,10 +180,7 @@ export function hasBinary(id: AgentRuntimeId, packRoot: string): boolean {
  */
 function findOnPath(name: string): ResolvedCommand | null {
   const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
-  const candidates =
-    process.platform === 'win32'
-      ? [`${name}.exe`, `${name}.cmd`, name]
-      : [name]
+  const candidates = process.platform === 'win32' ? [`${name}.exe`, `${name}.cmd`, name] : [name]
   for (const dir of dirs) {
     for (const candidate of candidates) {
       const file = path.join(dir, candidate)
@@ -213,6 +210,14 @@ function findOnPath(name: string): ResolvedCommand | null {
 /** The opencode entry point shipped in node_modules, if it is there at all. */
 export function bundledOpenCodeBin(): ResolvedCommand | null {
   const file = opencodeFileName()
+  try {
+    const pkg = require.resolve('@opencode/cli/package.json')
+    // postinstall selects the CPU-compatible binary, including baseline CPUs.
+    const binary = path.join(path.dirname(pkg), 'bin', file)
+    if (existsSync(binary)) return { cmd: binary, args: [] }
+  } catch {
+    // Incomplete installation; try the optional platform package.
+  }
   const target = OPENCODE_PLATFORM[claudePlatformKey()]
   if (target) {
     try {
@@ -220,15 +225,8 @@ export function bundledOpenCodeBin(): ResolvedCommand | null {
       const binary = path.join(path.dirname(pkg), 'bin', file)
       if (existsSync(binary)) return { cmd: binary, args: [] }
     } catch {
-      // Optional platform package absent; try the wrapper.
+      // Optional platform package absent as well.
     }
-  }
-  try {
-    const pkg = require.resolve('@opencode/cli/package.json')
-    const binary = path.join(path.dirname(pkg), 'bin', file)
-    if (existsSync(binary)) return { cmd: binary, args: [] }
-  } catch {
-    // Not a dependency of this repo, which is the normal case.
   }
   return null
 }
@@ -302,8 +300,6 @@ export function bundledAgentVersion(id: AgentRuntimeId): string | null {
     }
   }
   if (id === 'opencode') {
-    // Not a dependency of this repo; a developer who added it should see the
-    // version, and everyone else gets null until a runtime pack is installed.
     try {
       const pkg = require.resolve('@opencode/cli/package.json')
       const parsed = JSON.parse(readFileSync(pkg, 'utf8')) as { version?: unknown }

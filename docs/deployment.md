@@ -163,8 +163,8 @@ docker compose logs -f      # 看自动生成的 PIN（若未在 .env 指定）
 - 三个代理的登录态都不在镜像里：需要时挂载 `~/.codex`、`~/.claude`、`~/.config/opencode`，
   或提供 `ANTHROPIC_*` 等环境变量。
 - opencode 在 Docker 里通常要显式 attach：传 `OPENCODE_ATTACH_URL` + `OPENCODE_SERVER_PASSWORD`，
-  并挂载 `~/.local/share/opencode`（会话库）和 `~/.config/opencode`（凭据）。不挂载就让
-  容器内的 agents 更新安装 `@opencode/cli`，但会话不会与宿主机 TUI 共享。
+  并挂载 `~/.local/share/opencode`（会话库）和 `~/.config/opencode`（凭据）。不 attach 时使用
+  随应用安装的 `@opencode/cli`，但会话不会与宿主机 TUI 共享。
 - Codex CLI 在构建阶段单独装到 `/opt/codex-cli`，因为它在根
   `devDependencies` 里，会被 `npm prune --omit=dev` 删掉。版本从
   `package.json` 读取，不在 Dockerfile 里另写一份。
@@ -191,7 +191,7 @@ docker compose logs -f      # 看自动生成的 PIN（若未在 .env 指定）
 | `CODEX_PORT` / `CODEX_BIN` | `8788` / PATH | 自建 app-server 时的端口与可执行文件 |
 | `OPENCODE_ATTACH_URL` | — | 附加到已有的 opencode service（也可用 `OPENCODE_URL`） |
 | `OPENCODE_SERVER_PASSWORD` | — | 附加 service 的密码；不填则读 `service.json` |
-| `OPENCODE_PORT` / `OPENCODE_BIN` | `6820` / PATH | 私有 `opencode serve` 的端口与可执行文件 |
+| `OPENCODE_PORT` / `OPENCODE_BIN` | 开发 `6820`、runner `6920` / 内置 CLI | 私有 `opencode serve` 的端口与可执行文件 |
 | `OPENCODE_SERVICE_FILE` | 用户 state 目录 | 覆盖 `~/.local/state/opencode/service.json` 的位置 |
 | `OPENCODE_NO_ATTACH` | 关 | 真值则跳过发现，总是起私有 server |
 

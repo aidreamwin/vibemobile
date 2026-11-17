@@ -17,6 +17,7 @@ const serviceToken = crypto.randomBytes(32).toString('hex')
 Object.assign(process.env, {
   PORT: String(httpPort),
   CODEX_PORT: String(codexPort),
+  OPENCODE_PORT: String(port(process.env.OPENCODE_PORT, 6920)),
   CODEX_WS_URL: '',
   VIBEMOBILE_HOST: '127.0.0.1',
   VIBEMOBILE_PIN: '',

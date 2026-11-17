@@ -1,5 +1,7 @@
+import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -76,6 +78,65 @@ describe('service records', () => {
 })
 
 describe('OpencodeService', () => {
+  it('releases a rejected child and its port before retrying', async () => {
+    const listener = net.createServer()
+    await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve))
+    const port = (listener.address() as net.AddressInfo).port
+    await new Promise<void>((resolve) => listener.close(() => resolve()))
+    const children: ChildProcess[] = []
+    const spawnImpl = vi.fn(() => {
+      const version = children.length ? '2.3.0' : '2.2.5'
+      const child = spawn(
+        process.execPath,
+        [
+          '-e',
+          `
+        require('node:http').createServer((req, res) => {
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify({ version: '${version}', pid: process.pid }))
+        }).listen(${port}, '127.0.0.1')
+      `,
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+      )
+      children.push(child)
+      return child
+    })
+    const service = new OpencodeService({ port, noAttach: true, spawnImpl: spawnImpl as unknown as typeof spawn })
+    try {
+      await expect(service.ensure()).rejects.toThrow('spawned opencode 2.2.5 is outside 2.3.x')
+      expect(children[0].exitCode !== null || children[0].signalCode !== null).toBe(true)
+      expect(service.isOwned).toBe(false)
+      expect(service.mode).toBe('none')
+      expect(service.baseUrl).toBeNull()
+      expect(service.lastError).toContain('2.2.5')
+      await expect(service.ensure()).resolves.toBe(`http://127.0.0.1:${port}`)
+      expect(service.version).toBe('2.3.0')
+      expect(spawnImpl).toHaveBeenCalledTimes(2)
+    } finally {
+      await service.stop()
+      for (const child of children) {
+        if (child.exitCode === null && child.signalCode === null) child.kill()
+      }
+    }
+  }, 15_000)
+
+  it('preserves the spawn error instead of replacing it with a readiness error', async () => {
+    const service = new OpencodeService({
+      port: 1,
+      noAttach: true,
+      bin: path.join(temp(), 'missing-opencode'),
+      fetchImpl: (async () => {
+        throw new Error('offline')
+      }) as typeof fetch,
+    })
+    service.on('error', () => {})
+    await expect(service.ensure()).rejects.toThrow(/ENOENT/)
+    expect(service.isOwned).toBe(false)
+    expect(service.lastError).toContain('ENOENT')
+    await service.stop()
+  })
+
   it('attaches to a live service and never spawns', async () => {
     const dir = temp()
     const file = serviceFile(dir, {

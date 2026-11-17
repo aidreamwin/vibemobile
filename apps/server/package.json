@@ -1,6 +1,6 @@
 {
   "name": "@vibemobile/server",
-  "version": "0.1.46",
+  "version": "0.1.47",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/static": "^10.1.6",
     "@fastify/websocket": "^11.0.2",
+    "@opencode/cli": "2.3.0",
     "@vibemobile/protocol": "*",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/headless": "^5.5.0",

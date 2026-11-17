@@ -85,7 +85,7 @@ OpenCode 的优先级是 `OPENCODE_BIN` → `agents/opencode/current` → 内置
 - 新 Codex 包起不来时，安装任务会自动把 `current` 切回上一版。
 - `manifest.ts` 是白名单：只列经过本应用验证的版本。Codex 的 app-server 协议没有版本协商，**不要加「latest」或自动追新**。
 - OpenCode 的 HTTP API 标注 experimental，所以用精确 pin；升版必须重跑 `npm run smoke:opencode` 并核对事件字段。
-- 升代理版本时：改 `manifest.ts` → 跑 `npm run smoke` / `npm run test:approval` / Claude 冒烟 / `npm run smoke:opencode` → 再发布。
+- 升代理版本时：同步 `manifest.ts`、内置依赖及锁文件；OpenCode 同步版本闸门和 `allowScripts` → 跑 Codex / Claude / OpenCode 冒烟及审批测试 → 再发布。
 
 ## 故障排查
 

@@ -347,10 +347,12 @@ export class OpencodeService extends EventEmitter {
     pipe(child.stdout, 'opencode')
     pipe(child.stderr, 'opencode:err')
 
+    let startupError: Error | undefined
     child.on('error', (err) => {
       // spawn() reports ENOENT asynchronously; without this the readiness loop
       // would spin for its full 30 s on a machine with no binary.
       this.#log(`opencode spawn failed: ${err.message}`)
+      startupError = err
       this.#lastError = err.message
       if (this.#child === child) this.#child = undefined
       this.emit('error', err)
@@ -381,31 +383,46 @@ export class OpencodeService extends EventEmitter {
       }, delay)
     })
 
-    const deadline = Date.now() + READY_TIMEOUT_MS
-    while (Date.now() < deadline) {
-      if (!this.#child) throw new Error('opencode exited before becoming ready')
-      const info = await this.#probe(`http://127.0.0.1:${port}`, password, HEALTH_TIMEOUT_MS)
-      if (info) {
-        // A Windows PATH install is a `.cmd` shim, so the direct child is
-        // cmd.exe and `/api/info.pid` is the grandchild. The random password
-        // already proves this is our server; pid equality is only a hint.
-        if (info.pid !== child.pid) {
-          this.#log(`port ${port} answered with pid ${info.pid} (shim pid ${child.pid ?? 'none'})`)
+    try {
+      const deadline = Date.now() + READY_TIMEOUT_MS
+      while (Date.now() < deadline) {
+        if (this.#child !== child) throw startupError ?? new Error('opencode exited before becoming ready')
+        const info = await this.#probe(`http://127.0.0.1:${port}`, password, HEALTH_TIMEOUT_MS)
+        if (this.#child !== child) throw startupError ?? new Error('opencode exited before becoming ready')
+        if (info) {
+          // A Windows PATH install is a `.cmd` shim, so the direct child is
+          // cmd.exe and `/api/info.pid` is the grandchild. The random password
+          // already proves this is our server; pid equality is only a hint.
+          if (info.pid !== child.pid) {
+            this.#log(`port ${port} answered with pid ${info.pid} (shim pid ${child.pid ?? 'none'})`)
+          }
+          if (!isSupportedVersion(info.version)) {
+            throw new Error(`spawned opencode ${info.version} is outside ${SUPPORTED_OPENCODE_MAJOR_MINOR}.x`)
+          }
+          this.#mode = 'managed'
+          this.#baseUrl = `http://127.0.0.1:${port}`
+          this.#password = password
+          this.#version = info.version
+          this.#restarts = 0
+          this.#log(`opencode ${info.version} ready on ${this.#baseUrl}`)
+          return this.#baseUrl
         }
-        if (!isSupportedVersion(info.version)) {
-          throw new Error(`spawned opencode ${info.version} is outside ${SUPPORTED_OPENCODE_MAJOR_MINOR}.x`)
-        }
-        this.#mode = 'managed'
-        this.#baseUrl = `http://127.0.0.1:${port}`
-        this.#password = password
-        this.#version = info.version
-        this.#restarts = 0
-        this.#log(`opencode ${info.version} ready on ${this.#baseUrl}`)
-        return this.#baseUrl
+        await new Promise((r) => setTimeout(r, 250))
       }
-      await new Promise((r) => setTimeout(r, 250))
+      throw new Error(`opencode not ready within ${READY_TIMEOUT_MS}ms on port ${port}`)
+    } catch (err) {
+      // A rejected version or readiness timeout still leaves a live child.
+      // Detach it before killing so its exit cannot trigger another startup.
+      if (this.#child === child) this.#child = undefined
+      this.#owned = false
+      this.#mode = 'none'
+      this.#baseUrl = null
+      this.#password = null
+      this.#version = null
+      this.#lastError = (err as Error).message
+      await this.#kill(child)
+      throw err
     }
-    throw new Error(`opencode not ready within ${READY_TIMEOUT_MS}ms on port ${port}`)
   }
 
   async #probe(url: string, password: string | undefined, timeoutMs: number): Promise<OpencodeInfo | null> {

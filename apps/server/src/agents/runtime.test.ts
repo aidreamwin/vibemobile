@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { isSupportedVersion } from '../opencode/server.js'
+import { AGENT_RUNTIMES } from './manifest.js'
 import {
   activeAgent,
   bundledAgentVersion,
@@ -119,6 +121,10 @@ describe('runtime packs', () => {
   it('reports the bundled versions', () => {
     expect(bundledAgentVersion('codex')).toMatch(/^\d+\.\d+\.\d+/)
     expect(bundledAgentVersion('claude')).toMatch(/^\d+\.\d+\.\d+/)
+    const opencodeVersion = bundledAgentVersion('opencode')
+    expect(opencodeVersion).toBe(AGENT_RUNTIMES.opencode.range)
+    expect(isSupportedVersion(opencodeVersion ?? '')).toBe(true)
+    expect(resolveOpencodeBin({ agentsDir: temp() }).cmd).toContain('node_modules')
   })
 
   it('reads the version out of a pack', () => {
