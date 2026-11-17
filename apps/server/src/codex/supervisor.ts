@@ -8,7 +8,7 @@
  * The server must bind loopback: app-server refuses to start a non-loopback
  * WS listener without auth, and we never want this port reachable anyway.
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { resolveCodexBin } from '../agents/runtime.js'
 import { codexProfileLaunch, type AgentConnection } from '../agents/profileRuntime.js'
@@ -181,15 +181,7 @@ export class AppServerSupervisor extends EventEmitter {
     const child = this.#child
     if (child) {
       this.#stopping = true
-      await new Promise<void>((resolve) => {
-        const done = () => resolve()
-        child.once('exit', done)
-        child.kill()
-        setTimeout(() => {
-          if (this.#child) this.#child.kill('SIGKILL')
-          resolve()
-        }, 5_000)
-      })
+      await this.#kill(child)
       this.#stopping = false
     }
     this.#restarts = 0
@@ -205,15 +197,24 @@ export class AppServerSupervisor extends EventEmitter {
     }
     const child = this.#child
     if (!child) return
-    await new Promise<void>((resolve) => {
-      const done = () => resolve()
-      child.once('exit', done)
-      child.kill()
-      // Windows can be slow to reap; don't hang shutdown forever.
-      setTimeout(() => {
-        if (this.#child) this.#child.kill('SIGKILL')
+    await this.#kill(child)
+  }
+
+  #kill(child: ChildProcess): Promise<void> {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
         resolve()
       }, 5_000)
+      child.once('exit', () => {
+        clearTimeout(timeout)
+        resolve()
+      })
+      if (process.platform === 'win32' && child.pid) {
+        // CODEX_BIN can be a Node launcher; killing only it leaves codex.exe listening.
+        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+      } else child.kill()
     })
   }
 }

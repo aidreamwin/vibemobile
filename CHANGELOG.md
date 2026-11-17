@@ -6,7 +6,7 @@ VibeMobile 的后端和前端使用**独立版本号**，分别记录在
 
 ## Unreleased
 
-当前 workspace 版本：`server 0.1.44` / `web 0.1.69`。
+当前 workspace 版本：`server 0.1.45` / `web 0.1.69`。
 
 ### Added
 
@@ -50,6 +50,7 @@ VibeMobile 的后端和前端使用**独立版本号**，分别记录在
 
 ### Fixed
 
+- Windows 更新及 Codex 重启时回收所属子进程，避免残留进程占用端口；PM2 启用 IPC 优雅退出和进程树清理。
 - Codex：不同 provider key 的会话可只读查看历史并“创建副本继续”，副本使用当前配置，保留单进程和单端口；修复启动参数对 provider key 的解析。
 - README 的「直接跑」快速开始没有构建后端，干净 clone 上 `npm start` 会失败。
 - README 中的测试数量已过期；改为描述测试分层，不再硬编码数量。

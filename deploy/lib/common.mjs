@@ -12,6 +12,7 @@ import https from 'node:https'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { reapWindowsDescendants, windowsDescendants } from './windows-process.mjs'
 
 export const isWindows = process.platform === 'win32'
 
@@ -431,6 +432,8 @@ export function ecosystemSource({ name, cwd, script, envFile, outFile, errorFile
     '    // The Hub reaps its default runner on SIGINT (up to 10 s); PM2 must not',
     '    // kill the process before that, or the runner child keeps the ports.',
     '    kill_timeout: 20000,',
+    '    shutdown_with_message: true,',
+    '    treekill: true,',
     '    windowsHide: true,',
     `    out_file: ${JSON.stringify(outFile)},`,
     `    error_file: ${JSON.stringify(errorFile)},`,
@@ -443,7 +446,13 @@ export function ecosystemSource({ name, cwd, script, envFile, outFile, errorFile
 }
 
 export function pm2Delete(name) {
-  runPm2(['delete', name], { allowFailure: true })
+  // Old Windows installs may only kill the Node parent. Capture its own
+  // descendants first so an orphaned CLI cannot keep the replacement's port.
+  const app = isWindows ? pm2Describe(name) : undefined
+  const descendants = app?.pid ? windowsDescendants(app.pid) : []
+  const result = runPm2(['delete', name], { allowFailure: true })
+  if (app && result.status !== 0) fail(`could not delete PM2 app ${name}`)
+  if (result.status === 0) reapWindowsDescendants(descendants)
 }
 
 export function pm2Start({ ecosystemFile, cwd }) {

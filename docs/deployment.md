@@ -201,6 +201,10 @@ docker compose logs -f      # 看自动生成的 PIN（若未在 .env 指定）
 
 ## 健康检查
 
+Windows 的 PM2 部署启用 `shutdown_with_message` 和 `treekill`。更新器停进程前记录该应用的子进程，停机后按 PID 和创建时间校验并回收残留进程；不会按端口查杀其他服务。
+
+失败更新留下同版本目录时，可用 `node deploy/update.mjs --target=<安装根> --replace-release` 重试。仅允许替换非活动 release；`vibemobile.env`、`data/` 和当前版本保留。
+
 ```bash
 curl http://localhost:3000/api/health
 ```
