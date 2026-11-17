@@ -8,14 +8,14 @@
 ```text
 <stateDir>/agents/
   codex/
-    0.166.0/            # npm 安装出来的独立目录
-    current -> 0.166.0  # Windows junction / POSIX symlink
+    0.169.0/            # npm 安装出来的独立目录
+    current -> 0.169.0  # Windows junction / POSIX symlink
   claude/
-    2.1.316/
-    current -> 2.1.316
+    2.1.326/
+    current -> 2.1.326
   opencode/
-    2.2.5/
-    current -> 2.2.5
+    2.3.0/
+    current -> 2.3.0
 ```
 
 `stateDir` 默认 `.vibemobile/`；`VIBEMOBILE_AGENTS_DIR` 可整体覆盖。目录随 `stateDir` 持久化（Docker 下是 `vibemobile-data` 卷）。
@@ -31,7 +31,7 @@ npm run agents:update             # 三个都更新
 npm run agents:update -- claude   # 只更新一个
 ```
 
-- 版本来自 [apps/server/src/agents/manifest.ts](../apps/server/src/agents/manifest.ts)：Codex / Claude 是**补丁级范围**（如 `~0.166.0`），OpenCode 是**精确 pin**（`2.2.5`）。客户端只能选择 agent id，不能指定版本。
+- 版本来自 [apps/server/src/agents/manifest.ts](../apps/server/src/agents/manifest.ts)：Codex / Claude 是**补丁级范围**（如 `~0.169.0`），OpenCode 是**精确 pin**（`2.3.0`）。客户端只能选择 agent id，不能指定版本。
 - 补丁升级不需要重新部署应用；minor / major 升级会改 `manifest.ts`，那一次仍需应用发布（协议措辞可能变化）。
 - Codex 更新完成后会重启 app-server：**正在执行的回合会中断**。
 - Claude 每回合现起子进程，**下一回合自动生效**，无需重启。

@@ -28,7 +28,7 @@ import { opencodeProfileEnv, type AgentConnection } from '../agents/profileRunti
 import type { OpencodeInfo } from './types.js'
 
 /** The major/minor line this build was written against. */
-export const SUPPORTED_OPENCODE_MAJOR_MINOR = '2.2'
+export const SUPPORTED_OPENCODE_MAJOR_MINOR = '2.3'
 
 export interface ServiceRecord {
   id?: string
@@ -108,7 +108,7 @@ export function isLoopbackUrl(raw: string): boolean {
   }
 }
 
-/** `2.2.5` -> true when the major/minor line is the one this build supports. */
+/** `2.3.0` -> true when the major/minor line is the one this build supports. */
 export function isSupportedVersion(version: string): boolean {
   const match = /^(\d+)\.(\d+)(?:[.-]|$)/.exec(version)
   return match ? `${match[1]}.${match[2]}` === SUPPORTED_OPENCODE_MAJOR_MINOR : false

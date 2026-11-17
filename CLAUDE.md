@@ -60,7 +60,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - `config.ts` 的 `repoRoot()` 从模块位置往上找含 `workspaces` 的 package.json，不从 cwd（workspace 脚本 cwd 是 `apps/server`，会解析出第二个 `.vibemobile/`）；`packages/protocol` 不发产物、只被 `import type`，改它不用构建。
 ### 代理运行时（`agents/`）
 - 二进制约在 `<stateDir>/agents/<id>/<version>`，`current` 是 junction/symlink；升级只换目录，不碰应用 `node_modules`；解析优先级 `CODEX_BIN` → pack → 内置 → PATH，Claude 走 SDK 的 `pathToClaudeCodeExecutable`，OpenCode 是 `OPENCODE_BIN` → pack → 内置 → PATH（Windows 的 `.cmd` shim 必须经 `cmd.exe`）。
-- 版本范围（`~x.y.z` 或精确 pin）只从 [manifest.ts](apps/server/src/agents/manifest.ts) 来；Codex/Claude 用 `~` 吃补丁，OpenCode 的 HTTP API 是 experimental → 精确 pin `2.2.5`；客户端只能选 id，别加「latest」，minor/major 变更必须改 manifest（要重新验证协议措辞）。
+- 版本范围（`~x.y.z` 或精确 pin）只从 [manifest.ts](apps/server/src/agents/manifest.ts) 来；Codex/Claude 用 `~` 吃补丁，OpenCode 的 HTTP API 是 experimental → 精确 pin `2.3.0`；客户端只能选 id，别加「latest」，minor/major 变更必须改 manifest（要重新验证协议措辞）。
 - Codex 换包后 `supervisor.restart()` 是进程级重启，进行中回合并丢；Claude 下一回合自动生效；OpenCode managed 模式重启私有 server，attach 的外部 service 不受影响；新包起不来必须回滚 `current`。
 - 更新是后台 job（`GET /api/agents` 轮询）；npm 用 `npm-cli.js` 直跑，别走 shell（安装路径可能带空格）。
 ### 应用升级（PM2）
@@ -119,7 +119,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - 模型列表是二进制内置目录（支持新模型只能升级行，`listModels()` 纯转发）；`supervisor.ts` 用 `require.resolve`，不看 PATH/`CODEX_CLI_PATH`。
 - 「没有这个线程」只有措辞（`thread not loaded`/`no rollout found`/`is not materialized yet`），全 `-32600`，集中在 `CodexProvider` 顶部谓词；措辞不在类型里且换过；未知 id → `SessionNotFoundError`（`#threadRpc`），路由 404；别把「没有历史」和「没有这个线程」混用（会把新建会话变 404）；`DELETE` 404 前端当成功。
 ### OpenCode 后端
-- API experimental：`client.ts` 只信 `types.ts` 窄类型，未知事件忽略；版本闸门 `2.2.x`，manifest 精确 pin。`server.ts` 先读 service.json 并对齐 `/api/info.pid` 再 attach，发现不到才 spawn 私有 `serve`；**版本不匹配绝不 spawn 第二个**（同 DB 无会话锁）。
+- API experimental：`client.ts` 只信 `types.ts` 窄类型，未知事件忽略；版本闸门 `2.3.x`，manifest 精确 pin。`server.ts` 先读 service.json 并对齐 `/api/info.pid` 再 attach，发现不到才 spawn 私有 `serve`；**版本不匹配绝不 spawn 第二个**（同 DB 无会话锁）。
 - 权限两张卡：`ask` = `*/*/ask`，`unattended` = `*/*/allow`；`startTurn` 先 `POST /agent {build}` + `PATCH /permissions` 再 prompt，失败不 prompt。无 OS 沙箱，别加只读。事件：`session.idle` 只改状态，`session.execution.*` 才结束回合；工具名只在 `tool.input.started/called`，用 `toolNames` 缓存。断线无回放，重连用 active + pending + 最新消息重建；游标 `oc:<轮数>`；表单只支持选项/文本/数字/布尔/多选，`external` 不弹；出站图片 `Prompt.FileAttachment`，首版不回读历史。
 ### 图片
 - 图片落 `.vibemobile/images/`（`<sha256[:32]>.<ext>`），转写只放 `/api/images/<token>`；代理会话文件只读：不写 `~/.codex/sessions/**`、`~/.claude/projects/**`，`*-sessions.json` 不记图。

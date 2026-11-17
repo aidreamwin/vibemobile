@@ -41,7 +41,7 @@
 
 - **没有 OS 沙箱。** 只有「按需确认 / 完全访问」两张卡；`plan` agent 仍允许
   shell，所以不提供「只读」。
-- **HTTP API 是 experimental。** 版本按 manifest 精确 pin；attach 只接受 `2.2.x`，
+- **HTTP API 是 experimental。** 版本按 manifest 精确 pin；attach 只接受 `2.3.x`，
   其他版本报告不可用而不是另起一个 server。
 - **断线没有事件回放。** 重连时用 active 列表、待审批/表单和最新消息重建进行中
   的回合；极短的增量可能缺失，刷新后以 transcript 为准。

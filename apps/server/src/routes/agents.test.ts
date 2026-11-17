@@ -35,7 +35,7 @@ describe('agent runtime routes', () => {
     const body = res.json() as { data: { id: string; supported: string; updating: boolean }[] }
     expect(body.data.map((agent) => agent.id)).toEqual(['codex', 'claude', 'opencode'])
     expect(body.data[0]?.supported).toMatch(/^~\d+\.\d+\.\d+/)
-    expect(body.data[2]?.supported).toBe('2.2.5')
+    expect(body.data[2]?.supported).toBe('2.3.0')
     expect(body.data.every((agent) => agent.updating === false)).toBe(true)
     await app.close()
   })

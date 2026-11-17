@@ -74,7 +74,10 @@ let provider: OpencodeProvider | undefined
 let base = ''
 
 try {
-  const { cmd, args } = resolveOpencodeBin()
+  const { cmd, args } = resolveOpencodeBin({
+    bin: process.env.OPENCODE_BIN,
+    agentsDir: process.env.VIBEMOBILE_AGENTS_DIR,
+  })
   log(`binary: ${cmd}`)
   const port = await freePort()
   base = `http://127.0.0.1:${port}`
@@ -145,11 +148,12 @@ try {
   })
   log(`session ${session.id}`)
 
-  const turn = await provider.startTurn(
-    session.id,
-    [{ type: 'text', text: 'Reply with the single word: pong' }],
-    { model: MODEL, effort: 'default', sandbox: 'workspace-write', approvalPolicy: 'on-request' },
-  )
+  const turn = await provider.startTurn(session.id, [{ type: 'text', text: 'Reply with the single word: pong' }], {
+    model: MODEL,
+    effort: 'default',
+    sandbox: 'workspace-write',
+    approvalPolicy: 'on-request',
+  })
   await waitFor(
     () => events.find((event) => event.kind === 'turn.completed' && event.turnId === turn.turnId),
     120_000,
@@ -179,18 +183,13 @@ try {
   const approval = await waitFor(
     () =>
       events.find(
-        (event): event is Extract<AgentEvent, { kind: 'approval.requested' }> =>
-          event.kind === 'approval.requested',
+        (event): event is Extract<AgentEvent, { kind: 'approval.requested' }> => event.kind === 'approval.requested',
       ),
     15_000,
     'approval.requested',
   )
   await provider.answerApproval(approval.approval.requestId, 'accept')
-  await waitFor(
-    () => events.find((event) => event.kind === 'approval.resolved'),
-    15_000,
-    'approval.resolved',
-  )
+  await waitFor(() => events.find((event) => event.kind === 'approval.resolved'), 15_000, 'approval.resolved')
   log('approval round trip')
 
   await provider.renameSession(session.id, 'smoke renamed')

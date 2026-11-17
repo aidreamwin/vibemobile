@@ -30,7 +30,7 @@ function serviceFile(dir: string, value: Record<string, unknown>): string {
   return file
 }
 
-function infoFetch(pid: number, version = '2.2.5'): typeof fetch {
+function infoFetch(pid: number, version = '2.3.0'): typeof fetch {
   return (async () => new Response(JSON.stringify({ version, pid }), { status: 200 })) as unknown as typeof fetch
 }
 
@@ -66,10 +66,11 @@ describe('service records', () => {
   })
 
   it('gates the experimental API on major.minor', () => {
-    expect(isSupportedVersion('2.2.5')).toBe(true)
-    expect(isSupportedVersion('2.2.9')).toBe(true)
-    expect(isSupportedVersion('2.3.0')).toBe(false)
-    expect(isSupportedVersion('3.2.0')).toBe(false)
+    expect(isSupportedVersion('2.3.0')).toBe(true)
+    expect(isSupportedVersion('2.3.9')).toBe(true)
+    expect(isSupportedVersion('2.2.5')).toBe(false)
+    expect(isSupportedVersion('2.4.0')).toBe(false)
+    expect(isSupportedVersion('3.3.0')).toBe(false)
     expect(isSupportedVersion('nope')).toBe(false)
   })
 })
@@ -81,7 +82,7 @@ describe('OpencodeService', () => {
       url: 'http://127.0.0.1:28894',
       pid: 42,
       password: 'pw',
-      version: '2.2.5',
+      version: '2.3.0',
     })
     const spawnImpl = vi.fn()
     const service = new OpencodeService({
@@ -104,7 +105,7 @@ describe('OpencodeService', () => {
     const service = new OpencodeService({
       port: 1,
       serviceFile: file,
-      fetchImpl: infoFetch(42, '2.3.0'),
+      fetchImpl: infoFetch(42, '2.2.5'),
       spawnImpl: spawnImpl as never,
     })
     await expect(service.ensure()).rejects.toThrow(/unsupported/)

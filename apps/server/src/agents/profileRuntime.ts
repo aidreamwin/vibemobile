@@ -69,7 +69,7 @@ export function claudeProfileOptions(profile?: StoredAgentProfile): { settings?:
   return { settings: { env }, ...(profile.model ? { model: profile.model } : {}) }
 }
 
-/** OpenCode 2.2 accepts the v1 provider shape and migrates it to its native schema. */
+/** OpenCode accepts the v1 provider shape and migrates it to its native schema. */
 export function opencodeProfileEnv(profile?: StoredAgentProfile, nativeContent?: string): NodeJS.ProcessEnv {
   if (!profile) return {}
   let native: { provider?: Record<string, unknown>; [key: string]: unknown } = {}

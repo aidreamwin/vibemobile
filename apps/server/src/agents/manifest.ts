@@ -28,9 +28,9 @@ export interface AgentRuntimeSpec {
  * but the patch line above is.
  */
 export const AGENT_RUNTIMES: Record<AgentRuntimeId, AgentRuntimeSpec> = {
-  codex: { displayName: 'Codex', package: '@openai/codex', range: '~0.166.0' },
-  claude: { displayName: 'Claude', package: '@anthropic-ai/claude-code', range: '~2.1.316' },
-  opencode: { displayName: 'OpenCode', package: '@opencode/cli', range: '2.2.5' },
+  codex: { displayName: 'Codex', package: '@openai/codex', range: '~0.169.0' },
+  claude: { displayName: 'Claude', package: '@anthropic-ai/claude-code', range: '~2.1.326' },
+  opencode: { displayName: 'OpenCode', package: '@opencode/cli', range: '2.3.0' },
 }
 
 export const AGENT_IDS = ['codex', 'claude', 'opencode'] as const satisfies readonly AgentRuntimeId[]
