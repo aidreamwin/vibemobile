@@ -10,6 +10,7 @@ import { Button } from './ui/button'
 export default function ChatLoadError({
   loadError,
   sessionInUse,
+  providerMismatch = false,
   forking,
   forkError,
   onFork,
@@ -18,6 +19,7 @@ export default function ChatLoadError({
 }: {
   loadError: string
   sessionInUse: boolean
+  providerMismatch?: boolean
   forking: boolean
   forkError: string | null
   onFork: () => void
@@ -28,7 +30,7 @@ export default function ChatLoadError({
     <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
       <div className="max-w-sm">
         <h1 className="text-base font-semibold text-foreground">
-          {sessionInUse ? '会话正在电脑端使用' : '无法打开会话'}
+          {sessionInUse ? '会话正在电脑端使用' : providerMismatch ? '会话配置不同' : '无法打开会话'}
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           {sessionInUse ? '同一个会话不能被两个客户端同时写入。关闭电脑端的该会话后重试，或创建副本继续。' : loadError}
@@ -36,7 +38,7 @@ export default function ChatLoadError({
         {forkError && <p className="mt-2 text-xs text-destructive">{forkError}</p>}
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {sessionInUse && (
+        {(sessionInUse || providerMismatch) && (
           <Button
             type="button"
             size="lg"

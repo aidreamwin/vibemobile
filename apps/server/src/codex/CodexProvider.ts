@@ -51,6 +51,7 @@ import {
 import {
   SessionInUseError,
   SessionNotFoundError,
+  SessionProviderMismatchError,
   UnknownApprovalError,
   type ListSessionsOptions,
 } from '../providers/types.js'
@@ -129,6 +130,14 @@ function isUnmaterializedThreadError(err: unknown): boolean {
 
 function isActiveWriterError(err: unknown): boolean {
   return ((err as Error)?.message ?? '').includes('already has an active writer')
+}
+
+function isProviderMismatchError(err: unknown): boolean {
+  const message = (err as Error)?.message ?? ''
+  return (
+    /This chat uses .+, but your current provider is .+\. Switch to .+ to continue\./.test(message) ||
+    /This chat uses model provider .+, which is no longer configured\./.test(message)
+  )
 }
 
 /**
@@ -711,18 +720,14 @@ export class CodexProvider extends EventEmitter {
       // the app-server has never heard of, both lookups return null and the
       // route answers with a 404.
       if (isActiveWriterError(err)) throw new SessionInUseError(threadId)
-      // Loading a saved thread and selecting the provider for its NEXT turn
-      // are separate operations in app-server. A thread created with another
-      // profile can therefore fail the resume validation when the selected
-      // profile has a different model catalogue (or the old model is not
-      // understood by the new gateway). The transcript is still valid and
-      // must remain open: the user can pick a compatible model, or send with
-      // the current one and let the backend report its own error.
-      //
-      // `thread/read` is deliberately attempted for every non-lock failure,
-      // including the "no rollout" response for a fresh thread. This keeps
-      // the fallback in one place and makes a provider/model mismatch an
-      // openable session instead of a blank error screen.
+      if (isProviderMismatchError(err)) {
+        this.#attached.delete(threadId)
+        throw new SessionProviderMismatchError(threadId)
+      }
+      // Other validation failures can be model-specific: let the user open
+      // readable history and select a compatible model. Key mismatches above
+      // require a copy and must not be mistaken for successful attachment.
+      // This also recovers fresh threads with no rollout yet.
       let readable: SessionSummary | null = null
       try {
         readable = await this.getSession(threadId)
@@ -782,7 +787,11 @@ export class CodexProvider extends EventEmitter {
   }
 
   async forkSession(threadId: string): Promise<SessionSummary> {
+    const modelProvider = this.#currentModelProvider()
+    const model = this.#connection?.()?.model
     const res = await this.#threadRpc<any>(threadId, 'thread/fork', {
+      ...(modelProvider ? { modelProvider } : {}),
+      ...(model ? { model } : {}),
       excludeTurns: true,
       // A source thread may have an active goal. Copy it without immediately
       // starting work before the user sends the next message in the new thread.

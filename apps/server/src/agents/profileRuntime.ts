@@ -26,24 +26,33 @@ export function codexProfileLaunch(
 ): { args: string[]; env: NodeJS.ProcessEnv } {
   if (!profile) return { args: [], env: {} }
   const values: Record<string, string | boolean> = {}
+  const args: string[] = []
   const env: NodeJS.ProcessEnv = {}
   if (profile.baseUrl || profile.apiKey) {
     // Codex 0.166 rejects cross-provider resumes before applying RPC overrides.
     // Change the endpoint/credentials without changing the native provider key.
     const provider = modelProvider ?? codexNativeModelProvider()
-    const prefix = `model_providers.${JSON.stringify(provider)}`
     values.model_provider = provider
-    values[`${prefix}.name`] = profile.name
-    values[`${prefix}.base_url`] = profile.baseUrl || 'https://api.openai.com/v1'
-    values[`${prefix}.wire_api`] = 'responses'
-    values[`${prefix}.requires_openai_auth`] = false
+    const definition: Record<string, string | boolean> = {
+      name: profile.name,
+      base_url: profile.baseUrl || 'https://api.openai.com/v1',
+      wire_api: 'responses',
+      requires_openai_auth: false,
+    }
     if (profile.apiKey) {
-      values[`${prefix}.env_key`] = 'VIBEMOBILE_CODEX_API_KEY'
+      definition.env_key = 'VIBEMOBILE_CODEX_API_KEY'
       env.VIBEMOBILE_CODEX_API_KEY = profile.apiKey
     }
+    // Codex splits dotted -c paths literally, including quotes. An inline
+    // TOML table preserves the exact provider key, including dots and casing.
+    const fields = Object.entries(definition)
+      .map(([key, value]) => `${key} = ${JSON.stringify(value)}`)
+      .join(', ')
+    args.push('-c', `model_providers={ ${JSON.stringify(provider)} = { ${fields} } }`)
   }
   if (profile.model) values.model = profile.model
-  return { args: Object.entries(values).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]), env }
+  args.push(...Object.entries(values).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]))
+  return { args, env }
 }
 
 /** --settings has priority over user settings without replacing the SDK environment. */

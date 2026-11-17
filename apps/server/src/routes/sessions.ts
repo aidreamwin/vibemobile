@@ -3,7 +3,7 @@ import type { ApprovalPolicy, SandboxMode, SessionSummary } from '@vibemobile/pr
 import type { Config } from '../config.js'
 import { registry } from '../providers/registry.js'
 import { probeCache } from '../providers/probeCache.js'
-import { SessionInUseError, SessionNotFoundError } from '../providers/types.js'
+import { SessionInUseError, SessionNotFoundError, SessionProviderMismatchError } from '../providers/types.js'
 import { requireAuth } from './guards.js'
 import { resolveDirectory, WorkspaceError } from '../files/workspace.js'
 import type { AgentProfileStore } from '../agents/profiles.js'
@@ -74,7 +74,7 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
       provider.id === 'opencode' ? `${OPENCODE_PROFILE_PROVIDER}/${opencodeProfileModelId(id) ?? id}` : id
     const profileKey = (id: string) =>
       provider.id === 'opencode' && id.startsWith(`${OPENCODE_PROFILE_PROVIDER}/`)
-        ? opencodeProfileModelId(id) ?? id
+        ? (opencodeProfileModelId(id) ?? id)
         : id
     const savedIds = saved.map(canonical)
     const configuredId = configured ? canonical(configured) : ''
@@ -86,9 +86,19 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
     const known = new Set(visible.map((model) => model.id))
     const manual = savedIds
       .filter((id) => !known.has(id))
-      .map((id) => ({ id, displayName: id, ...(savedContextWindows[profileKey(id)] ? { contextWindow: savedContextWindows[profileKey(id)] } : {}) }))
+      .map((id) => ({
+        id,
+        displayName: id,
+        ...(savedContextWindows[profileKey(id)] ? { contextWindow: savedContextWindows[profileKey(id)] } : {}),
+      }))
     if (configuredId && !known.has(configuredId) && !savedIds.includes(configuredId))
-      manual.unshift({ id: configuredId, displayName: configuredId, ...(savedContextWindows[profileKey(configuredId)] ? { contextWindow: savedContextWindows[profileKey(configuredId)] } : {}) })
+      manual.unshift({
+        id: configuredId,
+        displayName: configuredId,
+        ...(savedContextWindows[profileKey(configuredId)]
+          ? { contextWindow: savedContextWindows[profileKey(configuredId)] }
+          : {}),
+      })
     const enriched = visible.map((model) =>
       model.contextWindow || !savedContextWindows[profileKey(model.id)]
         ? model
@@ -291,7 +301,7 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
       if (!session) return reply.code(404).send({ error: 'session not found' })
       return session
     } catch (err) {
-      if (err instanceof SessionInUseError) {
+      if (err instanceof SessionInUseError || err instanceof SessionProviderMismatchError) {
         return reply.code(409).send({ error: err.code, message: err.message })
       }
       return notFoundOr(err, reply)

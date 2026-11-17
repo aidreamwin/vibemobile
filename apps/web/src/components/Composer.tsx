@@ -66,6 +66,7 @@ interface Props {
    */
   commands: string[]
   readOnly?: {
+    message?: string
     forking: boolean
     error: string | null
     onRetry: () => void
@@ -306,7 +307,7 @@ export default function Composer({
       <div className="safe-bottom shrink-0 px-3 pt-1">
         <div className="rounded-2xl border border-border bg-card p-1.5">
           <div className="min-h-[38px] px-2 py-1.5 text-[16px] leading-relaxed text-muted-foreground">
-            会话正在电脑端使用，当前仅可查看
+            {readOnly.message ?? '会话正在电脑端使用，当前仅可查看'}
           </div>
           {readOnly.error && <div className="px-2 pb-1 text-[11px] text-destructive">{readOnly.error}</div>}
           <div className="flex items-center gap-1">
@@ -322,14 +323,13 @@ export default function Composer({
               disabled={readOnly.forking}
               className="tap shrink-0 rounded-full text-muted-foreground"
               aria-label="重新尝试打开会话"
-              title="重试接管"
+              title="重新尝试打开会话"
             >
               <RefreshCw className="size-4.5" />
             </Button>
             <Button
               type="button"
               variant="ghost"
-              size="icon"
               onClick={readOnly.onFork}
               disabled={readOnly.forking}
               className="tap shrink-0 rounded-full text-muted-foreground"
@@ -337,6 +337,7 @@ export default function Composer({
               title="创建副本继续"
             >
               <GitFork className="size-4.5" />
+              {readOnly.forking ? '正在创建…' : '创建副本继续'}
             </Button>
           </div>
         </div>

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppServerClient } from './AppServerClient.js'
 import { CodexProvider } from './CodexProvider.js'
-import { SessionNotFoundError } from '../providers/types.js'
+import { SessionNotFoundError, SessionProviderMismatchError } from '../providers/types.js'
 import { AppServerSupervisor } from './supervisor.js'
 
 describe('CodexProvider session listing', () => {
@@ -241,12 +241,83 @@ describe('CodexProvider session listing', () => {
       .mockRejectedValueOnce(mismatch)
       .mockResolvedValueOnce(saved)
       .mockRejectedValueOnce(mismatch)
-      .mockResolvedValueOnce(saved)
     const provider = new CodexProvider({ workspaceRoots: [] })
 
-    await expect(provider.resumeSession('thread-1')).resolves.toMatchObject({ id: 'thread-1' })
-    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).rejects.toBe(mismatch)
+    await expect(provider.resumeSession('thread-1')).rejects.toBeInstanceOf(SessionProviderMismatchError)
+    await expect(provider.getSession('thread-1')).resolves.toMatchObject({ id: 'thread-1' })
+    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).rejects.toMatchObject({
+      code: 'session_provider_mismatch',
+      sessionId: 'thread-1',
+    })
     expect(request).not.toHaveBeenCalledWith('turn/start', expect.anything())
+    await provider.stop()
+  })
+
+  it('reports a removed provider as copyable without mistaking model or policy errors for a key mismatch', async () => {
+    const request = vi.spyOn(AppServerClient.prototype, 'request')
+    const provider = new CodexProvider({ workspaceRoots: [] })
+    request.mockRejectedValueOnce(
+      new Error(
+        'This chat uses model provider “old”, which is no longer configured. Restore this provider’s configuration to continue.',
+      ),
+    )
+    await expect(provider.resumeSession('thread-1')).rejects.toBeInstanceOf(SessionProviderMismatchError)
+    expect(request).toHaveBeenCalledTimes(1)
+
+    const policyError = new Error('Your organization does not allow this model provider.')
+    request.mockRejectedValueOnce(policyError).mockResolvedValueOnce({ thread: null })
+    await expect(provider.resumeSession('thread-1')).rejects.toBe(policyError)
+    await provider.stop()
+  })
+
+  it('copies history to a new id with the current provider and profile model, then sends only to the copy', async () => {
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockResolvedValueOnce({
+        thread: { id: 'copy-1', name: 'Saved', status: { type: 'idle' }, model: 'old-model' },
+        model: 'new-model',
+        cwd: 'C:/workspace',
+      })
+      .mockResolvedValueOnce({ turn: { id: 'turn-copy' } })
+    const provider = new CodexProvider({
+      workspaceRoots: [],
+      connection: () => ({
+        id: 'profile-0123456789abcdef',
+        name: 'Current',
+        baseUrl: 'https://gateway.example.test/v1',
+        apiKey: 'secret',
+        model: 'new-model',
+        models: ['new-model'],
+        updatedAt: 1,
+      }),
+    })
+    await expect(provider.forkSession('source-1')).resolves.toMatchObject({ id: 'copy-1', model: 'new-model' })
+    expect(request).toHaveBeenNthCalledWith(1, 'thread/fork', {
+      threadId: 'source-1',
+      modelProvider: 'OpenAI',
+      model: 'new-model',
+      excludeTurns: true,
+      deferGoalContinuation: true,
+    })
+    await expect(provider.startTurn('copy-1', [{ type: 'text', text: 'continue' }])).resolves.toEqual({
+      turnId: 'turn-copy',
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'turn/start', expect.objectContaining({ threadId: 'copy-1' }))
+    expect(request).not.toHaveBeenCalledWith('thread/resume', expect.anything())
+    await provider.stop()
+  })
+
+  it('lets an external app-server select the copy provider and model', async () => {
+    const request = vi.spyOn(AppServerClient.prototype, 'request').mockResolvedValue({
+      thread: { id: 'copy-1', status: { type: 'idle' } },
+    })
+    const provider = new CodexProvider({ workspaceRoots: [], attachUrl: 'ws://127.0.0.1:8788' })
+    await provider.forkSession('source-1')
+    expect(request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'source-1',
+      excludeTurns: true,
+      deferGoalContinuation: true,
+    })
     await provider.stop()
   })
 

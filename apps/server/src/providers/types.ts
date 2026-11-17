@@ -65,6 +65,15 @@ export class SessionInUseError extends Error {
   }
 }
 
+export class SessionProviderMismatchError extends Error {
+  readonly code = 'session_provider_mismatch'
+
+  constructor(readonly sessionId: string) {
+    super('此会话的 provider key 与当前配置不同，可查看历史，或创建副本后使用当前配置继续对话。')
+    this.name = 'SessionProviderMismatchError'
+  }
+}
+
 /**
  * The provider has no record of this session.
  *

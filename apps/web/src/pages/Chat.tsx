@@ -95,6 +95,7 @@ export default function Chat() {
   const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [readOnly, setReadOnly] = useState(false)
+  const [readOnlyMessage, setReadOnlyMessage] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportChoice, setExportChoice] = useState<ExportChoice | null>(null)
   const [forking, setForking] = useState(false)
@@ -187,6 +188,8 @@ export default function Chat() {
     setLoadError(null)
     setLoadErrorCode(null)
     setReadOnly(false)
+    setReadOnlyMessage(null)
+    setForking(false)
     setForkError(null)
     // Cleared with the rest of the per-session state: a notice left over from
     // the previous session would claim THIS conversation was cut short, and a
@@ -209,6 +212,7 @@ export default function Chat() {
     // backend only forwards live events for threads it has re-attached to.
     let subscribed = false
     let viewingReadOnly = false
+    let readOnlyError: ApiError | null = null
 
     api
       .openSession(threadId)
@@ -216,16 +220,17 @@ export default function Chat() {
       // heavier than a phone screen needs, and every turn renders eagerly.
       .then(() => api.session(threadId, { items: PAGE_ITEMS }))
       .catch((err) => {
-        if (!(err instanceof ApiError) || err.code !== 'session_in_use') throw err
-        // The desktop Codex client owns the writer lock. A transcript GET is
-        // still safe, so show the saved conversation without taking over the
-        // session or attempting to resume its event stream.
+        if (!(err instanceof ApiError) || (err.code !== 'session_in_use' && err.code !== 'session_provider_mismatch'))
+          throw err
+        // Writer locks and provider-key mismatches still permit reading history.
         viewingReadOnly = true
+        readOnlyError = err
         return api.session(threadId, { items: PAGE_ITEMS })
       })
       .then((transcript) => {
         if (cancelled) return
         setReadOnly(viewingReadOnly)
+        setReadOnlyMessage(readOnlyError?.code === 'session_provider_mismatch' ? readOnlyError.message : null)
         hasOlderRef.current = transcript.hasMore === true
         // The cursor is only spendable when it came with `hasMore`; a provider
         // that cannot page answers `hasMore` with no cursor, and the UI says
@@ -284,7 +289,8 @@ export default function Chat() {
       .catch((err) => {
         if (cancelled) return
         setLoadError((err as Error).message)
-        setLoadErrorCode(err instanceof ApiError ? (err.code ?? null) : null)
+        setLoadErrorCode(readOnlyError?.code ?? (err instanceof ApiError ? (err.code ?? null) : null))
+        if (readOnlyError?.code === 'session_provider_mismatch') setLoadError(readOnlyError.message)
       })
       .finally(() => {
         if (cancelled) return
@@ -690,6 +696,7 @@ export default function Chat() {
       <ChatLoadError
         loadError={loadError}
         sessionInUse={loadErrorCode === 'session_in_use'}
+        providerMismatch={loadErrorCode === 'session_provider_mismatch'}
         forking={forking}
         forkError={forkError}
         onFork={forkAndContinue}
@@ -839,6 +846,7 @@ export default function Chat() {
           readOnly
             ? {
                 forking,
+                message: readOnlyMessage ?? undefined,
                 error: forkError,
                 onRetry: () => setLoadAttempt((attempt) => attempt + 1),
                 onFork: forkAndContinue,

@@ -16,11 +16,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import Fastify from 'fastify'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelInfo, SessionSummary } from '@vibemobile/protocol'
 import { loadConfig } from '../config.js'
 import { registry } from '../providers/registry.js'
 import type { AgentProvider, ListSessionsOptions } from '../providers/types.js'
+import { SessionProviderMismatchError } from '../providers/types.js'
 import { registerSessionRoutes } from './sessions.js'
 import { AgentProfileStore } from '../agents/profiles.js'
 
@@ -74,6 +75,7 @@ function stub(id: string, prefix: string, canPin: boolean, models: ModelInfo[] =
     },
     createSession: async () => row(`${prefix}new`),
     resumeSession: async (sessionId: string) => (sessionId.startsWith(prefix) ? row(sessionId) : null),
+    forkSession: async () => row(`${prefix}copy`),
     renameSession: async () => {},
     deleteSession: async () => {},
     archiveSession: async (sessionId: string, archived?: boolean) => {
@@ -106,8 +108,33 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await app.close()
   fs.rmSync(dir, { recursive: true, force: true })
+})
+
+it('offers a copy on provider mismatch while keeping the source transcript readable', async () => {
+  const provider = registry.require('alpha')
+  vi.spyOn(provider, 'resumeSession').mockRejectedValue(new SessionProviderMismatchError('a-source'))
+  const fork = vi.spyOn(provider, 'forkSession')
+  const opened = await app.inject({ method: 'POST', url: '/api/sessions/a-source/open' })
+  expect(opened.statusCode).toBe(409)
+  expect(opened.json()).toMatchObject({
+    error: 'session_provider_mismatch',
+    message: expect.stringContaining('创建副本'),
+  })
+
+  const history = await app.inject('/api/sessions/a-source')
+  expect(history.statusCode).toBe(200)
+  expect(history.json().session.id).toBe('a-source')
+  expect(fork).not.toHaveBeenCalled()
+
+  const copy = await app.inject({ method: 'POST', url: '/api/sessions/a-source/fork' })
+  expect(copy.statusCode).toBe(201)
+  expect(copy.json().id).toBe('acopy')
+  expect(fork).toHaveBeenCalledWith('a-source')
+  expect(await registry.forSession('acopy')).toBe(provider)
+  expect((await app.inject('/api/sessions/a-source')).json().session.id).toBe('a-source')
 })
 
 // Registered once, at import time: see the note at the top. `alpha` is first, so

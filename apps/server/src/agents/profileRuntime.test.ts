@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { claudeProfileOptions, codexProfileLaunch, opencodeProfileEnv } from './profileRuntime.js'
 import type { StoredAgentProfile } from './profiles.js'
+import { getStaticTOMLValue, parseTOML } from 'toml-eslint-parser'
+
+function providerConfig(args: string[]): Record<string, unknown> {
+  return getStaticTOMLValue(parseTOML(args.find((arg) => arg.startsWith('model_providers=')) ?? '')) as Record<
+    string,
+    unknown
+  >
+}
 
 const profile: StoredAgentProfile = {
   id: 'profile-0123456789abcdef',
@@ -17,8 +25,9 @@ describe('agent profile launch overrides', () => {
     const launch = codexProfileLaunch(profile, 'OpenAI')
     expect(launch.args.join(' ')).not.toContain(profile.apiKey)
     expect(launch.args).toContain('model_provider="OpenAI"')
-    expect(launch.args).toContain('model_providers."OpenAI".env_key="VIBEMOBILE_CODEX_API_KEY"')
-    expect(launch.args).toContain('model_providers."OpenAI".wire_api="responses"')
+    expect(providerConfig(launch.args)).toMatchObject({
+      model_providers: { OpenAI: { env_key: 'VIBEMOBILE_CODEX_API_KEY', wire_api: 'responses' } },
+    })
     expect(launch.env.VIBEMOBILE_CODEX_API_KEY).toBe(profile.apiKey)
     expect(codexProfileLaunch()).toEqual({ args: [], env: {} })
   })
@@ -27,10 +36,11 @@ describe('agent profile launch overrides', () => {
     for (const providerId of ['OpenAI', 'openai', 'custom', 'gateway.with.dots']) {
       const first = codexProfileLaunch(profile, providerId)
       const second = codexProfileLaunch({ ...profile, baseUrl: 'https://second.example.test/v1' }, providerId)
-      const prefix = `model_providers.${JSON.stringify(providerId)}`
       expect(first.args).toContain(`model_provider=${JSON.stringify(providerId)}`)
       expect(second.args).toContain(`model_provider=${JSON.stringify(providerId)}`)
-      expect(second.args).toContain(`${prefix}.base_url="https://second.example.test/v1"`)
+      expect(providerConfig(second.args)).toMatchObject({
+        model_providers: { [providerId]: { base_url: 'https://second.example.test/v1' } },
+      })
     }
   })
 
