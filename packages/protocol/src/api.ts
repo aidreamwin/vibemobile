@@ -440,6 +440,39 @@ export interface FileContent {
   rev?: string
 }
 
+// --------------------------------------------------- Codex global documents
+
+export type CodexGlobalCategory = 'rules' | 'skills' | 'memory'
+
+export interface CodexGlobalEntry {
+  id: string
+  category: CodexGlobalCategory
+  title: string
+  path: string
+  relativePath: string
+  source: string
+  exists: boolean
+  bytes: number
+  updatedAt: number
+}
+
+export interface CodexGlobalCatalog {
+  codexHome: string
+  entries: CodexGlobalEntry[]
+  warnings: string[]
+  memoryEnabled: boolean | null
+}
+
+export interface CodexGlobalDocument {
+  entry: CodexGlobalEntry
+  text: string
+  revision: string
+  truncated: boolean
+  editable: boolean
+  /** Files belonging to the selected skill, including its SKILL.md. */
+  files: CodexGlobalEntry[]
+}
+
 // --------------------------------------------------------------- runners
 
 export interface RunnerInfo {

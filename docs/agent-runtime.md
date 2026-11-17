@@ -52,6 +52,16 @@ npm run agents:update -- claude   # 只更新一个
 - 默认模型用于新建会话；已有会话继续使用其选择的模型，可在会话中手动切换。
 - 接口：`GET /api/agent-profiles`、`POST /api/agent-profiles/:agent`、`PATCH /api/agent-profiles/:agent/:id`、`DELETE /api/agent-profiles/:agent/:id`、`POST /api/agent-profiles/:agent/:id/activate`；PATCH 的 `id=native` 编辑原文件（须传 `revision`），activate 的 `id=native` 恢复现有配置。
 
+## Codex 全局文档
+
+设置页的“Codex 全局设置”位于 Agent 配置下方，管理当前执行机运行用户的文档；切换执行机后读取另一台机器的内容。
+
+- 固定规则：浏览、创建和编辑 `CODEX_HOME/AGENTS.md`、`AGENTS.override.md`。未设置 `CODEX_HOME` 时使用 `~/.codex`。读取不存在的规则不会创建空文件；override 存在时优先于普通规则。
+- Skills：浏览 `~/.agents/skills` 和 `CODEX_HOME/skills`，并补充当前 Codex 报告的已加载插件技能。可以新建用户技能，编辑 `SKILL.md` 及其目录内的文本脚本、参考文档；保存技能说明时校验 YAML 的 `name`、`description`。插件更新可能覆盖插件技能的修改。
+- 记忆：浏览、编辑 `CODEX_HOME/memories` 和 `memories_v2` 下的 Markdown 文件，显示全局配置中的记忆开关。不会修改记忆数据库或自动启用记忆；Codex 的后续整理可能再次更新文件。
+- 保存要求文件版本与打开时一致，冲突返回 409，前端保留草稿。原有换行符和文件权限保留，使用同目录临时文件替换。超过 512 KB 或非 UTF-8 的文件仅可浏览；目录链接不能绕过全局文档的访问范围。
+- 该功能复用现有执行服务和 Hub 隧道，不启动额外的 Codex 进程，不增加监听端口。编辑文档不会重启 Codex；已有会话可能仍保留先前加载的上下文。
+
 ## 解析优先级
 
 | 场景 | 使用 |

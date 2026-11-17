@@ -21,6 +21,8 @@ import { AgentProfileStore, AgentProfileError } from './agents/profiles.js'
 import { opencodeProfileEnv } from './agents/profileRuntime.js'
 import { NativeAgentConfigStore } from './agents/nativeConfig.js'
 import { registerAgentProfileRoutes } from './routes/agentProfiles.js'
+import { registerCodexGlobalRoutes } from './routes/codexGlobal.js'
+import { CodexGlobalStore } from './agents/codexGlobal.js'
 import { registerSystemRoutes } from './routes/system.js'
 import { registerHub } from './ws/hub.js'
 import { registerTerminal } from './ws/terminal.js'
@@ -158,6 +160,7 @@ registerAgentProfileRoutes(
   new NativeAgentConfigStore(config.stateDir),
 )
 registerSystemRoutes(app, config)
+registerCodexGlobalRoutes(app, config, new CodexGlobalStore({ skills: () => codex.listGlobalSkills() }))
 registerSessionRoutes(app, config, agentProfiles)
 registerFileRoutes(app, config)
 registerImageRoutes(app, config)

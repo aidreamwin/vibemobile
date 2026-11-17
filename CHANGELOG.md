@@ -6,10 +6,11 @@ VibeMobile 的后端和前端使用**独立版本号**，分别记录在
 
 ## Unreleased
 
-当前 workspace 版本：`server 0.1.43` / `web 0.1.66`。
+当前 workspace 版本：`server 0.1.44` / `web 0.1.67`。
 
 ### Added
 
+- 设置页增加“Codex 全局设置”：浏览、编辑当前执行机的固定规则、Skills 和记忆文件，并支持新建用户技能。
 - `LICENSE`（MIT）。
 - `SECURITY.md`：威胁模型、漏洞报告渠道和安全部署清单。
 - `CONTRIBUTING.md`：开发、验证、PR 和版本号约定。

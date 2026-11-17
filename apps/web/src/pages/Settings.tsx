@@ -1,6 +1,7 @@
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import AgentProfilesSection from '../components/AgentProfilesSection'
+import CodexGlobalSection from '../components/CodexGlobalSection'
 import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowUpCircle,
@@ -294,6 +295,8 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
           <AgentsSection providers={providers} />
 
           <AgentProfilesSection />
+
+          <CodexGlobalSection />
 
           <SystemUpdateSection runnerName={runners.find((runner) => runner.id === runnerId)?.name} />
 

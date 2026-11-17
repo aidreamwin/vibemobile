@@ -17,6 +17,8 @@ import { assertFree, port } from './runtime.js'
 import { AgentProfileStore } from '../agents/profiles.js'
 import { registerAgentProfileRoutes } from '../routes/agentProfiles.js'
 import { NativeAgentConfigStore } from '../agents/nativeConfig.js'
+import { CodexGlobalStore } from '../agents/codexGlobal.js'
+import { registerCodexGlobalRoutes } from '../routes/codexGlobal.js'
 
 const serviceToken = crypto.randomBytes(32).toString('hex')
 const tokens = [crypto.randomBytes(32).toString('hex'), crypto.randomBytes(32).toString('hex')]
@@ -87,6 +89,11 @@ beforeAll(async () => {
     })
     const profileDir = mkdtempSync(path.join(os.tmpdir(), 'vbm-tunnel-profiles-'))
     profileDirs.push(profileDir)
+    registerCodexGlobalRoutes(
+      app,
+      { ...config, authDisabled: true },
+      new CodexGlobalStore({ home: profileDir, env: {} }),
+    )
     registerAgentProfileRoutes(
       app,
       { ...config, authDisabled: true },
@@ -362,14 +369,45 @@ describe('distributed Hub and two reverse runners', () => {
       '/api/agents',
       '/api/agents/codex/update',
       '/api/agents/claude/check',
+      '/api/codex/global',
+      '/api/codex/global/document?id=test',
+      '/api/codex/global/skills',
       '/api/system/update',
       '/api/system/update/check',
     ]) {
       expect(allowedPath(path)).toBe(true)
     }
-    for (const path of ['/api/agents/codex', '/api/agents/x/delete', '/api/system/other']) {
+    for (const path of [
+      '/api/agents/codex',
+      '/api/agents/x/delete',
+      '/api/system/other',
+      '/api/codex/global/auth.json',
+      '/api/codex/global/../auth',
+    ]) {
       expect(allowedPath(path)).toBe(false)
     }
+  })
+
+  it('routes global document edits to the selected runner and requires Hub authentication', async () => {
+    const catalog = await hub.inject({ url: '/r/r1/api/codex/global', headers: { cookie } })
+    expect(catalog.statusCode).toBe(200)
+    const id = catalog.json().entries[0].id
+    const read = await hub.inject({ url: `/r/r1/api/codex/global/document?id=${id}`, headers: { cookie } })
+    const saved = await hub.inject({
+      method: 'PUT',
+      url: '/r/r1/api/codex/global/document',
+      headers: { cookie },
+      payload: {
+        id,
+        text: 'runner-1 rules',
+        revision: read.json().revision,
+      },
+    })
+    expect(saved.statusCode).toBe(200)
+    expect(saved.headers['cache-control']).toBe('no-store')
+    const other = await hub.inject({ url: `/r/r0/api/codex/global/document?id=${id}`, headers: { cookie } })
+    expect(other.json().text).toBe('')
+    expect((await hub.inject('/r/r1/api/codex/global')).statusCode).toBe(401)
   })
 
   it('rejects non-execution paths and unknown runners', async () => {

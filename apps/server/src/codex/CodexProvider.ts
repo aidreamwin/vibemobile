@@ -25,6 +25,7 @@ import type {
 import { AppServerClient, type ServerRequestContext } from './AppServerClient.js'
 import { AppServerSupervisor } from './supervisor.js'
 import type { AgentConnection } from '../agents/profileRuntime.js'
+import type { GlobalSkillLocation } from '../agents/codexGlobal.js'
 
 function contextWindowField(value: any): { contextWindow?: number } {
   const candidate = value?.contextWindow ?? value?.context_window ?? value?.context_length ?? value?.max_context_length
@@ -488,6 +489,16 @@ export class CodexProvider extends EventEmitter {
       return [entry, ...visible.filter((model) => model.id !== configured)]
     }
     return visible
+  }
+
+  async listGlobalSkills(): Promise<GlobalSkillLocation[]> {
+    // Settings must remain usable while the agent is offline. This never
+    // spawns a process just to browse global documents.
+    if (!this.ready) throw new Error('Codex is offline')
+    const result = (await this.#client.request('skills/list', { cwds: this.#roots, forceReload: true })) as {
+      data?: Array<{ skills?: GlobalSkillLocation[] }>
+    }
+    return (result.data ?? []).flatMap((entry) => entry.skills ?? [])
   }
 
   async listProjects(): Promise<Project[]> {

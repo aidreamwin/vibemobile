@@ -26,6 +26,28 @@ describe('CodexProvider session listing', () => {
     await provider.stop()
   })
 
+  it('discovers loaded global skills through the existing connection without starting another process', async () => {
+    vi.spyOn(AppServerClient.prototype, 'isReady', 'get').mockReturnValue(true)
+    const skill = { path: 'C:/user/.codex/skills/demo/SKILL.md', name: 'demo', scope: 'user' }
+    const request = vi.spyOn(AppServerClient.prototype, 'request').mockResolvedValue({ data: [{ skills: [skill] }] })
+    const start = vi.spyOn(AppServerSupervisor.prototype, 'start')
+    const provider = new CodexProvider({ workspaceRoots: ['C:/workspace'] })
+    await expect(provider.listGlobalSkills()).resolves.toEqual([skill])
+    expect(request).toHaveBeenCalledWith('skills/list', { cwds: ['C:/workspace'], forceReload: true })
+    expect(start).not.toHaveBeenCalled()
+    await provider.stop()
+  })
+
+  it('keeps document browsing independent of an offline Codex process', async () => {
+    const start = vi.spyOn(AppServerSupervisor.prototype, 'start')
+    const request = vi.spyOn(AppServerClient.prototype, 'request')
+    const provider = new CodexProvider({ workspaceRoots: [] })
+    await expect(provider.listGlobalSkills()).rejects.toThrow('offline')
+    expect(start).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
+    await provider.stop()
+  })
+
   it('limits the model picker to the active profile models', async () => {
     vi.spyOn(AppServerClient.prototype, 'request').mockResolvedValue({
       data: [

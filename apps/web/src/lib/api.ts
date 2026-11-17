@@ -5,6 +5,8 @@ import type {
   AgentRuntimeId,
   AgentRuntimeStatus,
   CreateSessionOptions,
+  CodexGlobalCatalog,
+  CodexGlobalDocument,
   FileContent,
   FileEntry,
   HealthResponse,
@@ -121,6 +123,12 @@ export const api = {
 
   // ---- runner-local agent profiles ----
   agentProfiles: () => request<AgentProfilesResponse>('/api/agent-profiles'),
+  codexGlobal: () => request<CodexGlobalCatalog>('/api/codex/global'),
+  codexGlobalDocument: (id: string) => request<CodexGlobalDocument>(`/api/codex/global/document${qs({ id })}`),
+  saveCodexGlobalDocument: (body: { id: string; text: string; revision: string }) =>
+    request<CodexGlobalDocument>('/api/codex/global/document', { method: 'PUT', body: JSON.stringify(body) }),
+  createCodexGlobalSkill: (body: { name: string; text: string }) =>
+    request<CodexGlobalDocument>('/api/codex/global/skills', { method: 'POST', body: JSON.stringify(body) }),
   fetchAgentProfileModels: (agent: AgentRuntimeId, id: string) =>
     request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}/models`),
   fetchUnsavedAgentProfileModels: (agent: AgentRuntimeId, body: { baseUrl: string; apiKey?: string }) =>
