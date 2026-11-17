@@ -294,10 +294,6 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
         <div className="mx-auto max-w-2xl">
           <AgentsSection providers={providers} />
 
-          <AgentProfilesSection />
-
-          <CodexGlobalSection />
-
           <SystemUpdateSection runnerName={runners.find((runner) => runner.id === runnerId)?.name} />
 
           <Section title="工作区">
@@ -996,41 +992,58 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
               ))
             }
           >
+            <AgentProfilesSection agent={id} />
+            {id === 'codex' && <CodexGlobalSection />}
             {agent?.error && <p className="text-destructive">{agent.error}</p>}
-            <div className="space-y-2">
-              {provider?.version && (
-                <Detail label="代理版本">
-                  <code>{provider.version}</code>
-                </Detail>
-              )}
-              {provider?.detail && <Detail label="详情">{provider.detail}</Detail>}
-              {agent && (
-                <Detail label="运行时版本">
-                  <code>{agent.active ?? '未找到'}</code>
-                </Detail>
-              )}
-              {agent && (
-                <Detail label="来源">
-                  {agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知'}
-                </Detail>
-              )}
-              {agent && (
-                <Detail label="支持范围">
-                  <code>{agent.supported}</code>
-                </Detail>
-              )}
-              {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
-              <p>
-                只下载到执行机器；Codex 更新会重启 app-server，OpenCode 更新会重启它的 server（两者都会中断当前回合），
-                Claude 下一回合生效；OpenCode attach 到外部 service 时，更新只对下次启动生效。
+            {provider?.available && provider.authenticated === false && (
+              <p className="text-warning">
+                请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
+                {LOGIN_FOLLOW_UP[id] ? ` ${LOGIN_FOLLOW_UP[id]}` : ''}
               </p>
-              {provider?.available && provider.authenticated === false && (
-                <p className="text-warning">
-                  请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
-                  {LOGIN_FOLLOW_UP[id] ? ` ${LOGIN_FOLLOW_UP[id]}` : ''}
+            )}
+            <details className="group border-t border-border/50 pt-4">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-[13px] [&::-webkit-details-marker]:hidden">
+                <span>运行信息</span>
+                <span className="flex items-center gap-2">
+                  <span className="font-mono text-xs">{agent?.active ?? status.version}</span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-3.5 text-muted-foreground/50 transition-transform group-open:rotate-90"
+                  />
+                </span>
+              </summary>
+              <div className="space-y-3 pt-3 text-xs leading-5">
+                {provider?.version && (
+                  <Detail label="代理版本">
+                    <code>{provider.version}</code>
+                  </Detail>
+                )}
+                {provider?.detail && <Detail label="详情">{provider.detail}</Detail>}
+                {agent && (
+                  <Detail label="运行时版本">
+                    <code>{agent.active ?? '未找到'}</code>
+                  </Detail>
+                )}
+                {agent && (
+                  <Detail label="来源">
+                    {agent.source === 'runtime' ? '运行时包' : agent.source === 'bundled' ? '内置' : '未知'}
+                  </Detail>
+                )}
+                {agent && (
+                  <Detail label="支持范围">
+                    <code>{agent.supported}</code>
+                  </Detail>
+                )}
+                {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
+                <p>
+                  {id === 'codex'
+                    ? '更新在当前执行机进行，完成后会重启 Codex，并中断正在进行的对话。'
+                    : id === 'claude'
+                      ? '更新在当前执行机进行，下一次对话时生效。'
+                      : '更新在当前执行机进行，重启时会中断正在进行的对话；连接外部服务时，下次启动生效。'}
                 </p>
-              )}
-            </div>
+              </div>
+            </details>
           </InfoRow>
         )
       })}
@@ -1078,8 +1091,13 @@ function InfoRow({
         {action && <div className="shrink-0 pr-2">{action}</div>}
       </div>
       {open && (
-        <Sheet title={label} closeLabel="完成" onClose={() => setOpen(false)}>
-          <div className="space-y-4 px-4 pt-3 pb-6 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+        <Sheet
+          title={label}
+          closeLabel="完成"
+          onClose={() => setOpen(false)}
+          className="sm:inset-x-6 sm:bottom-6 sm:rounded-2xl"
+        >
+          <div className="space-y-5 px-5 pt-4 pb-6 text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             {children}
           </div>
         </Sheet>

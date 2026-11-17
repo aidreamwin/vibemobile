@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Check,
   ChevronRight,
-  Code2,
   Download,
   HardDrive,
   LoaderCircle,
@@ -10,24 +9,23 @@ import {
   Pencil,
   Plus,
   Server,
-  Sparkles,
-  Terminal,
   Trash2,
   X,
-  type LucideIcon,
 } from 'lucide-react'
-import type { AgentProfile, AgentProfilesResponse, AgentRuntimeId, ModelInfo, NativeAgentProfile } from '@vibemobile/protocol'
+import type {
+  AgentProfile,
+  AgentProfilesResponse,
+  AgentRuntimeId,
+  ModelInfo,
+  NativeAgentProfile,
+} from '@vibemobile/protocol'
 import { api } from '../lib/api'
 import SelectField from './SelectField'
 import Sheet from './Sheet'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
-const AGENTS: { id: AgentRuntimeId; name: string; icon: LucideIcon; accent: string; tint: string }[] = [
-  { id: 'codex', name: 'Codex', icon: Code2, accent: 'text-sky-400', tint: 'bg-sky-400/10' },
-  { id: 'claude', name: 'Claude', icon: Sparkles, accent: 'text-amber-400', tint: 'bg-amber-400/10' },
-  { id: 'opencode', name: 'OpenCode', icon: Terminal, accent: 'text-violet-400', tint: 'bg-violet-400/10' },
-]
+const AGENT_NAMES: Record<AgentRuntimeId, string> = { codex: 'Codex', claude: 'Claude', opencode: 'OpenCode' }
 
 const ERROR_LABELS: Record<string, string> = {
   invalid_agent_profile_name: '请输入 1–100 个字符的配置名称。',
@@ -99,9 +97,8 @@ function editorSnapshot(
   ])
 }
 
-export default function AgentProfilesSection() {
+export default function AgentProfilesSection({ agent: selected }: { agent: AgentRuntimeId }) {
   const [data, setData] = useState<AgentProfilesResponse>(EMPTY_DATA)
-  const [selected, setSelected] = useState<AgentRuntimeId>('codex')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -141,7 +138,7 @@ export default function AgentProfilesSection() {
     void load()
   }, [load])
 
-  const agent = AGENTS.find((item) => item.id === selected) ?? AGENTS[0]
+  const agentName = AGENT_NAMES[selected]
   const profiles = data.data[selected]
   const limitation = data.limitations?.[selected]
   const native = data.native?.[selected]
@@ -155,17 +152,17 @@ export default function AgentProfilesSection() {
       (!panel.profile ||
         clearKey ||
         apiKey.trim() ||
-        editorSnapshot(name, baseUrl, model, providerId, modelAliases, providerModels, modelContextWindows) !== initialValues),
+        editorSnapshot(name, baseUrl, model, providerId, modelAliases, providerModels, modelContextWindows) !==
+          initialValues),
   )
 
   function edit(profile?: AgentProfile) {
     const aliases = isNative(profile) ? { ...profile.modelAliases } : {}
-    const models =
-      isNative(profile)
-        ? profile.providerId
-          ? (profile.providers.find((item) => item.id === profile.providerId)?.models ?? [])
-          : []
-        : [...new Set([...(profile?.models ?? []), ...(profile?.model ? [profile.model] : [])])]
+    const models = isNative(profile)
+      ? profile.providerId
+        ? (profile.providers.find((item) => item.id === profile.providerId)?.models ?? [])
+        : []
+      : [...new Set([...(profile?.models ?? []), ...(profile?.model ? [profile.model] : [])])]
     setInitialValues(
       editorSnapshot(
         profile?.name ?? '',
@@ -187,9 +184,7 @@ export default function AgentProfilesSection() {
     setClearKey(false)
     setProviderId(isNative(profile) ? (profile.providerId ?? '') : '')
     setModelAliases(isNative(profile) ? { ...profile.modelAliases } : {})
-    setProviderModels(
-      models,
-    )
+    setProviderModels(models)
     setModelContextWindows(isNative(profile) ? {} : { ...(profile?.modelContextWindows ?? {}) })
     setNewModel('')
     setModelFetchError(null)
@@ -261,32 +256,9 @@ export default function AgentProfilesSection() {
   }
 
   return (
-    <section className="mt-6" aria-label="Agent 配置">
-      <div className="flex items-center justify-between px-1 pb-2">
-        <h2 className="text-xs font-medium text-muted-foreground">Agent 配置</h2>
-      </div>
-      <div className="surface-list overflow-hidden shadow-sm">
-        <fieldset
-          className="m-2 grid min-w-0 grid-cols-3 gap-1 rounded-xl border-0 bg-background/50 p-1"
-          aria-label="选择 Agent"
-        >
-          {AGENTS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={selected === item.id}
-              onClick={() => {
-                setSelected(item.id)
-                setError(null)
-              }}
-              className={`tap relative flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-ring ${selected === item.id ? `${item.tint} font-medium text-foreground shadow-sm ring-1 ring-inset ring-current/15` : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'}`}
-            >
-              <item.icon className={`size-4 shrink-0 ${selected === item.id ? item.accent : ''}`} />
-              {item.name}
-            </button>
-          ))}
-        </fieldset>
-
+    <section aria-label={`${agentName} 供应商配置`}>
+      <h2 className="mb-2 text-xs font-medium text-muted-foreground">供应商配置</h2>
+      <div>
         {loading ? (
           <div className="flex items-center justify-center gap-2 px-4 py-7 text-xs text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" /> 读取配置中…
@@ -294,34 +266,46 @@ export default function AgentProfilesSection() {
         ) : !loaded ? (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">配置读取失败，请重试。</p>
         ) : profiles.length || native ? (
-          <div className="divide-y divide-border/70">
+          <div className="divide-y divide-border/50">
             {native && (
-              <div className="flex min-w-0 items-center gap-2 py-3 pl-4 pr-1">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <HardDrive className="size-3.5" />
-                </div>
-                <button type="button" onClick={() => edit(native)} disabled={busy || Boolean(native.error)} className="min-h-11 min-w-0 flex-1 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" aria-label={`Edit ${native.name}`}>
+              <div className="flex min-w-0 items-center gap-3 py-3">
+                <HardDrive aria-hidden="true" strokeWidth={1.5} className="size-5 shrink-0 text-muted-foreground" />
+                <button
+                  type="button"
+                  onClick={() => edit(native)}
+                  disabled={busy || Boolean(native.error)}
+                  className="min-h-11 min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
+                  aria-label={`编辑 ${native.name}`}
+                >
                   <span className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 truncate text-[13px] font-medium">{native.name}</span>
-                    <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">执行机现有</span>
-                    {native.active && !limitation && <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">当前使用</span>}
+                    <span className="min-w-0 truncate text-[15px] font-medium text-foreground">{native.name}</span>
+                    {native.active && !limitation && (
+                      <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">
+                        当前使用
+                      </span>
+                    )}
                   </span>
                 </button>
                 {!native.active && (
-                  <Button variant="outline" size="sm" disabled={busy || Boolean(limitation)} onClick={() => { setError(null); setPanel({ kind: 'activate', profile: native }) }} className="h-11 rounded-xl px-3 text-[13px]">
-                    Use
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy || Boolean(limitation)}
+                    onClick={() => {
+                      setError(null)
+                      setPanel({ kind: 'activate', profile: native })
+                    }}
+                    className="h-11 px-3 text-[13px] text-primary"
+                  >
+                    启用
                   </Button>
                 )}
-                {native.error && <span className="text-xs text-destructive">Error</span>}
+                {native.error && <span className="text-xs text-destructive">读取失败</span>}
               </div>
             )}
             {profiles.map((profile) => (
-              <div key={profile.id} className="flex min-w-0 items-center gap-2 py-3 pl-4 pr-1">
-                  <div
-                  className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-secondary text-muted-foreground"
-                >
-                  <Server className="size-3.5" />
-                </div>
+              <div key={profile.id} className="flex min-w-0 items-center gap-3 py-3">
+                <Server aria-hidden="true" strokeWidth={1.5} className="size-5 shrink-0 text-muted-foreground" />
                 <button
                   type="button"
                   onClick={() => edit(profile)}
@@ -329,20 +313,24 @@ export default function AgentProfilesSection() {
                   aria-label={`编辑 ${profile.name}`}
                 >
                   <span className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 truncate text-[13px] font-medium">{profile.name}</span>
-                    {profile.active && !limitation && <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">当前使用</span>}
+                    <span className="min-w-0 truncate text-[15px] font-medium text-foreground">{profile.name}</span>
+                    {profile.active && !limitation && (
+                      <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">
+                        当前使用
+                      </span>
+                    )}
                   </span>
                 </button>
                 {!profile.active && (
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     disabled={busy || Boolean(limitation)}
                     onClick={() => {
                       setError(null)
                       setPanel({ kind: 'activate', profile })
                     }}
-                    className="h-11 rounded-xl px-3 text-[13px]"
+                    className="h-11 px-3 text-[13px] text-primary"
                   >
                     启用
                   </Button>
@@ -363,13 +351,13 @@ export default function AgentProfilesSection() {
           </div>
         ) : null}
 
-        <div className="px-3 py-2.5">
+        <div className="py-2">
           <Button
             type="button"
             variant="ghost"
             onClick={() => edit()}
             disabled={loading || busy || !loaded}
-            className="h-11 w-full justify-start rounded-xl px-3 text-sm text-primary"
+            className="-ml-2 h-11 justify-start px-2 text-sm text-primary"
           >
             <Plus className="size-4" /> 添加供应商
           </Button>
@@ -387,7 +375,8 @@ export default function AgentProfilesSection() {
 
       {panel?.kind === 'edit' && (
         <Sheet
-          title={nativeEditor ? `${agent.name} 配置` : `${panel.profile ? '编辑' : '添加'} ${agent.name} 供应商`}
+          title={nativeEditor ? `${agentName} 配置` : `${panel.profile ? '编辑' : '添加'} ${agentName} 供应商`}
+          className="sm:inset-x-6 sm:bottom-6 sm:rounded-2xl"
           onClose={() => setPanel(null)}
           dismissable={!busy}
           footer={
@@ -410,10 +399,7 @@ export default function AgentProfilesSection() {
                 type="submit"
                 form="agent-profile-editor"
                 disabled={
-                  busy ||
-                  !changed ||
-                  !name.trim() ||
-                  Boolean(!nativeEditor && panel.profile?.active && limitation)
+                  busy || !changed || !name.trim() || Boolean(!nativeEditor && panel.profile?.active && limitation)
                 }
                 className="h-12 w-full rounded-xl text-sm"
               >
@@ -440,18 +426,18 @@ export default function AgentProfilesSection() {
           >
             <fieldset disabled={busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
               <label htmlFor="agent-profile-name" className="block space-y-2 text-xs text-muted-foreground">
-                  <span>
-                    配置名称 <span className="text-destructive">*</span>
-                  </span>
-                  <Input
-                    id="agent-profile-name"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="例如：公司网关、个人 API"
-                    maxLength={100}
-                    required
-                    className="h-12 rounded-xl text-base md:text-base"
-                  />
+                <span>
+                  配置名称 <span className="text-destructive">*</span>
+                </span>
+                <Input
+                  id="agent-profile-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="例如：公司网关、个人 API"
+                  maxLength={100}
+                  required
+                  className="h-12 rounded-xl text-base md:text-base"
+                />
               </label>
               {nativeEditor && nativeEditor.providers.length > 0 && (
                 <div className="space-y-2 text-xs text-muted-foreground">
@@ -786,7 +772,11 @@ export default function AgentProfilesSection() {
       )}
 
       {panel?.kind === 'menu' && (
-        <Sheet title={panel.profile.name} onClose={() => setPanel(null)}>
+        <Sheet
+          title={panel.profile.name}
+          onClose={() => setPanel(null)}
+          className="sm:inset-x-6 sm:bottom-6 sm:rounded-2xl"
+        >
           <div className="space-y-1 px-3 pt-1 pb-4">
             <button
               type="button"
@@ -812,7 +802,12 @@ export default function AgentProfilesSection() {
       )}
 
       {panel?.kind === 'delete' && (
-        <Sheet title="删除供应商配置" onClose={() => setPanel(null)} dismissable={!busy}>
+        <Sheet
+          title="删除供应商配置"
+          onClose={() => setPanel(null)}
+          dismissable={!busy}
+          className="sm:inset-x-6 sm:bottom-6 sm:rounded-2xl"
+        >
           <div className="space-y-4 px-4 pt-2 pb-5">
             <p className="text-sm text-foreground/85">删除「{panel.profile.name}」？此操作无法撤销。</p>
             {error && (
@@ -837,12 +832,13 @@ export default function AgentProfilesSection() {
           title={panel.profile ? '启用供应商配置' : '恢复执行机原有配置'}
           onClose={() => setPanel(null)}
           dismissable={!busy}
+          className="sm:inset-x-6 sm:bottom-6 sm:rounded-2xl"
         >
           <div className="space-y-4 px-4 pt-2 pb-5">
             <p className="text-sm text-foreground/85">
               {panel.profile
-                ? `将 ${agent.name} 切换到「${panel.profile.name}」。`
-                : `将 ${agent.name} 恢复为执行机原有的登录与连接设置。`}
+                ? `将 ${agentName} 切换到「${panel.profile.name}」。`
+                : `将 ${agentName} 恢复为执行机原有的登录与连接设置。`}
             </p>
             <p className="text-xs text-warning">
               {selected === 'claude'

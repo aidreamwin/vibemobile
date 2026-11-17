@@ -40,7 +40,7 @@ npm run agents:update -- claude   # 只更新一个
 
 ## 供应商配置
 
-- 设置页 →「Agent 配置」：按 Codex / Claude Code / OpenCode 添加、编辑、删除和启用供应商；保存与启用分开，恢复按钮切回执行机原有配置。
+- 设置页 →「代理」→ 对应代理 →「供应商配置」：分别为 Codex / Claude Code / OpenCode 添加、编辑、删除和启用供应商；保存与启用分开，恢复按钮切回执行机原有配置。
 - 「执行机现有配置」直接读取 Agent 原始文件，显示来源路径并提供编辑：Codex `config.toml` / `auth.json` 的 API Key、Claude `settings.json` 的连接与模型别名、OpenCode 配置内的供应商 / 模型。遵循 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`XDG_CONFIG_HOME`、`OPENCODE_CONFIG`。
 - 编辑现有配置会写回原文件；修改前备份到 `<stateDir>/agent-config-backups/`，保留注释与无关设置。文件在读取后被其他程序修改时返回 409，须刷新重读。密钥不回传，留空保留；Codex `env_key` 指定的环境凭据须在执行机修改。
 - 每份配置包含名称、接口地址、API Key、默认模型；OpenCode 启用时必须有接口地址和模型。Codex 使用 Responses 兼容接口，OpenCode 使用 Chat Completions 兼容接口。
@@ -54,7 +54,7 @@ npm run agents:update -- claude   # 只更新一个
 
 ## Codex 全局文档
 
-设置页的“Codex 全局设置”位于 Agent 配置下方，管理当前执行机运行用户的文档；切换执行机后读取另一台机器的内容。
+设置页通过“代理 → Codex → 全局设置”管理当前执行机运行用户的文档；切换执行机后读取另一台机器的内容。全局设置入口按代理归属收在各自的详情中，目前 Codex 支持固定规则、Skills 和记忆管理。
 
 - 固定规则：浏览、创建和编辑 `CODEX_HOME/AGENTS.md`、`AGENTS.override.md`。未设置 `CODEX_HOME` 时使用 `~/.codex`。读取不存在的规则不会创建空文件；override 存在时优先于普通规则。
 - Skills：浏览 `~/.agents/skills` 和 `CODEX_HOME/skills`，并补充当前 Codex 报告的已加载插件技能。可以新建用户技能，编辑 `SKILL.md` 及其目录内的文本脚本、参考文档；保存技能说明时校验 YAML 的 `name`、`description`。插件更新可能覆盖插件技能的修改。

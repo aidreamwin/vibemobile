@@ -23,6 +23,7 @@ export default function Sheet({
   children,
   footer,
   dismissable = true,
+  className = '',
 }: {
   title?: string
   /** Accessible name for a sheet that draws its own heading instead of using
@@ -33,6 +34,7 @@ export default function Sheet({
   children: React.ReactNode
   footer?: React.ReactNode
   dismissable?: boolean
+  className?: string
 }) {
   return (
     <SheetRoot
@@ -49,7 +51,7 @@ export default function Sheet({
            is the raised surface, matching what this sheet used before.
            gap-0 undoes the base's flex gap-4, which would add phantom space
            above the grab handle. */
-        className="safe-bottom max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-t border-input bg-card shadow-2xl shadow-black/50"
+        className={`safe-bottom max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-t border-input bg-card shadow-2xl shadow-black/50 ${className}`}
       >
         <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-input" aria-hidden="true" />
         <SheetHeader className="shrink-0 flex-row items-center gap-0 px-4 pt-2 pb-1">
