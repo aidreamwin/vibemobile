@@ -1,5 +1,6 @@
 import type { Settings } from '@anthropic-ai/claude-agent-sdk'
 import { AgentProfileError, type StoredAgentProfile } from './profiles.js'
+import { codexNativeModelProvider } from './codexNativeProvider.js'
 
 export type AgentConnection = () => StoredAgentProfile | undefined
 
@@ -19,16 +20,19 @@ export function opencodeProfileModelRef(value?: string): string | undefined {
 }
 
 /** Overrides are scoped to the runner's children; native login/MCP files stay intact. */
-export function codexProfileLaunch(profile?: StoredAgentProfile): { args: string[]; env: NodeJS.ProcessEnv } {
+export function codexProfileLaunch(
+  profile?: StoredAgentProfile,
+  modelProvider?: string,
+): { args: string[]; env: NodeJS.ProcessEnv } {
   if (!profile) return { args: [], env: {} }
   const values: Record<string, string | boolean> = {}
   const env: NodeJS.ProcessEnv = {}
   if (profile.baseUrl || profile.apiKey) {
-    // Codex app-server filters thread/list by the active provider key. Keep
-    // profile overrides under the user's existing `custom` key so runner can
-    // see and resume sessions created by desktop Codex.
-    const prefix = 'model_providers.custom'
-    values.model_provider = 'custom'
+    // Codex 0.166 rejects cross-provider resumes before applying RPC overrides.
+    // Change the endpoint/credentials without changing the native provider key.
+    const provider = modelProvider ?? codexNativeModelProvider()
+    const prefix = `model_providers.${JSON.stringify(provider)}`
+    values.model_provider = provider
     values[`${prefix}.name`] = profile.name
     values[`${prefix}.base_url`] = profile.baseUrl || 'https://api.openai.com/v1'
     values[`${prefix}.wire_api`] = 'responses'

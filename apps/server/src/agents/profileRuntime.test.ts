@@ -14,12 +14,24 @@ const profile: StoredAgentProfile = {
 
 describe('agent profile launch overrides', () => {
   it('passes Codex credentials through child environment, never command line', () => {
-    const launch = codexProfileLaunch(profile)
+    const launch = codexProfileLaunch(profile, 'OpenAI')
     expect(launch.args.join(' ')).not.toContain(profile.apiKey)
-    expect(launch.args).toContain('model_providers.custom.env_key="VIBEMOBILE_CODEX_API_KEY"')
-    expect(launch.args).toContain('model_providers.custom.wire_api="responses"')
+    expect(launch.args).toContain('model_provider="OpenAI"')
+    expect(launch.args).toContain('model_providers."OpenAI".env_key="VIBEMOBILE_CODEX_API_KEY"')
+    expect(launch.args).toContain('model_providers."OpenAI".wire_api="responses"')
     expect(launch.env.VIBEMOBILE_CODEX_API_KEY).toBe(profile.apiKey)
     expect(codexProfileLaunch()).toEqual({ args: [], env: {} })
+  })
+
+  it('keeps the same native provider identity across gateway profile switches', () => {
+    for (const providerId of ['OpenAI', 'openai', 'custom', 'gateway.with.dots']) {
+      const first = codexProfileLaunch(profile, providerId)
+      const second = codexProfileLaunch({ ...profile, baseUrl: 'https://second.example.test/v1' }, providerId)
+      const prefix = `model_providers.${JSON.stringify(providerId)}`
+      expect(first.args).toContain(`model_provider=${JSON.stringify(providerId)}`)
+      expect(second.args).toContain(`model_provider=${JSON.stringify(providerId)}`)
+      expect(second.args).toContain(`${prefix}.base_url="https://second.example.test/v1"`)
+    }
   })
 
   it('uses Claude settings without replacing the SDK process environment', () => {

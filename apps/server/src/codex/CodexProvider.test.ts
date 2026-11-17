@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppServerClient } from './AppServerClient.js'
 import { CodexProvider } from './CodexProvider.js'
 import { SessionNotFoundError } from '../providers/types.js'
+import { AppServerSupervisor } from './supervisor.js'
 
 describe('CodexProvider session listing', () => {
+  beforeEach(() => {
+    vi.spyOn(AppServerSupervisor.prototype, 'modelProvider', 'get').mockReturnValue('OpenAI')
+  })
   afterEach(() => vi.restoreAllMocks())
 
   it('lists sessions from every model provider after a profile switch', async () => {
@@ -74,7 +78,7 @@ describe('CodexProvider session listing', () => {
       'thread/resume',
       expect.objectContaining({
         threadId: 'thread-1',
-        modelProvider: 'custom',
+        modelProvider: 'OpenAI',
       }),
     )
     await provider.stop()
@@ -180,7 +184,7 @@ describe('CodexProvider session listing', () => {
     await provider.stop()
   })
 
-  it('starts a listed thread when resume can only recover its durable metadata', async () => {
+  it('preserves the resume failure when only durable metadata can be recovered', async () => {
     const request = vi
       .spyOn(AppServerClient.prototype, 'request')
       .mockRejectedValueOnce(new Error('no rollout found for thread id thread-1'))
@@ -188,25 +192,61 @@ describe('CodexProvider session listing', () => {
       .mockResolvedValueOnce({
         data: [{ id: 'thread-1', name: 'Saved', status: 'idle', model: 'old-model', cwd: 'C:/workspace' }],
       })
-      .mockResolvedValueOnce({ turn: { id: 'turn-1' } })
 
     const provider = new CodexProvider({ workspaceRoots: [] })
 
-    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).resolves.toEqual({
-      turnId: 'turn-1',
-    })
-    expect(request).toHaveBeenNthCalledWith(4, 'turn/start', expect.objectContaining({ threadId: 'thread-1' }))
+    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).rejects.toThrow(
+      'no rollout found',
+    )
+    expect(request).not.toHaveBeenCalledWith('turn/start', expect.anything())
     await provider.stop()
   })
 
   it('recognizes the newer thread-not-found wording', async () => {
-    const request = vi.spyOn(AppServerClient.prototype, 'request').mockRejectedValueOnce(
-      new Error('thread not found: thread-1'),
-    )
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockRejectedValueOnce(new Error('thread not found: thread-1'))
     const provider = new CodexProvider({ workspaceRoots: [] })
 
     await expect(provider.deleteSession('thread-1')).rejects.toBeInstanceOf(SessionNotFoundError)
     expect(request).toHaveBeenCalledWith('thread/delete', { threadId: 'thread-1' })
+    await provider.stop()
+  })
+
+  it('resumes a thread whose metadata is readable but whose status is notLoaded', async () => {
+    const thread = { id: 'thread-1', name: 'Saved', status: { type: 'notLoaded' }, cwd: 'C:/workspace' }
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockResolvedValueOnce({ thread })
+      .mockResolvedValueOnce({ thread: { ...thread, status: { type: 'idle' } } })
+      .mockResolvedValueOnce({ turn: { id: 'turn-1' } })
+    const provider = new CodexProvider({ workspaceRoots: [] })
+
+    await provider.getSession('thread-1')
+    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).resolves.toEqual({
+      turnId: 'turn-1',
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'thread/resume', expect.objectContaining({ threadId: 'thread-1' }))
+    expect(request).toHaveBeenNthCalledWith(3, 'turn/start', expect.objectContaining({ threadId: 'thread-1' }))
+    await provider.stop()
+  })
+
+  it('keeps history readable but reports a provider mismatch before sending to an unloaded thread', async () => {
+    const mismatch = new Error(
+      'This chat uses OpenAI, but your current provider is custom. Switch to OpenAI to continue.',
+    )
+    const saved = { thread: { id: 'thread-1', name: 'Saved', status: { type: 'notLoaded' } } }
+    const request = vi
+      .spyOn(AppServerClient.prototype, 'request')
+      .mockRejectedValueOnce(mismatch)
+      .mockResolvedValueOnce(saved)
+      .mockRejectedValueOnce(mismatch)
+      .mockResolvedValueOnce(saved)
+    const provider = new CodexProvider({ workspaceRoots: [] })
+
+    await expect(provider.resumeSession('thread-1')).resolves.toMatchObject({ id: 'thread-1' })
+    await expect(provider.startTurn('thread-1', [{ type: 'text', text: 'continue' }])).rejects.toBe(mismatch)
+    expect(request).not.toHaveBeenCalledWith('turn/start', expect.anything())
     await provider.stop()
   })
 
@@ -239,7 +279,7 @@ describe('CodexProvider session listing', () => {
     expect(request).toHaveBeenNthCalledWith(
       1,
       'thread/resume',
-      expect.objectContaining({ threadId: 'thread-1', modelProvider: 'custom', model: 'new-model' }),
+      expect.objectContaining({ threadId: 'thread-1', modelProvider: 'OpenAI', model: 'new-model' }),
     )
     expect(request).toHaveBeenNthCalledWith(2, 'turn/start', expect.objectContaining({ threadId: 'thread-1' }))
     await provider.stop()

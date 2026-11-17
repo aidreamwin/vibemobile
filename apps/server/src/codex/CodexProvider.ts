@@ -239,19 +239,12 @@ export class CodexProvider extends EventEmitter {
   }
 
   /**
-   * A rollout keeps the provider it was created with. Resuming it under a
-   * different profile must explicitly override that provider, otherwise the
-   * app-server rejects the resume before the user gets a chance to choose a
-   * compatible model. The profile launcher uses `custom`; without a managed
-   * profile Codex's native provider is OpenAI. An attached external server
-   * owns its provider selection, so leave its value untouched.
+   * Use the actual managed process's provider, including its original casing.
+   * An external server owns provider selection, so leave its value untouched.
    */
   #currentModelProvider(): string | undefined {
     if (!this.#connection) return undefined
-    const profile = this.#connection()
-    // Codex's native provider identifier is case-sensitive. The app-server
-    // reports and expects `OpenAI`; `custom` is the profile-backed identifier.
-    return profile?.baseUrl || profile?.apiKey ? 'custom' : 'OpenAI'
+    return this.#supervisor.modelProvider
   }
 
   /**
@@ -339,7 +332,8 @@ export class CodexProvider extends EventEmitter {
       // without polling every thread.
       if (method === 'thread/status/changed' && params?.threadId) {
         this.#status.set(params.threadId, mapThreadStatus(params.status))
-        this.#attached.add(params.threadId)
+        if (params.status?.type === 'notLoaded') this.#attached.delete(params.threadId)
+        else this.#attached.add(params.threadId)
       }
       // Images are stored here, on the one funnel every live event passes
       // through, so a raw data URL can never reach an AgentEvent. Same call for
@@ -575,7 +569,9 @@ export class CodexProvider extends EventEmitter {
     if (!t) return null
     const status = this.#status.get(t.id) ?? mapThreadStatus(t.status)
     this.#status.set(t.id, status)
-    this.#attached.add(t.id)
+    // A disk read succeeds for unloaded threads too; it does not attach them.
+    if (t.status?.type === 'notLoaded') this.#attached.delete(t.id)
+    else this.#attached.add(t.id)
     return {
       id: t.id,
       provider: this.id,
@@ -596,10 +592,8 @@ export class CodexProvider extends EventEmitter {
 
   /**
    * Read metadata for a saved thread without loading it into the active
-   * provider. `thread/read` only sees loaded threads; this is the bridge that
-   * keeps a conversation open when `thread/resume` rejected the selected
-   * provider or model. `thread/turns/list` can still read the persisted
-   * rollout after this summary has been recovered.
+   * provider. This also supports servers that reject `thread/read` for an
+   * unloaded thread. `thread/turns/list` can still read its persisted rollout.
    */
   async #sessionFromListing(threadId: string): Promise<SessionSummary | null> {
     for (const archived of [false, true]) {
@@ -696,7 +690,10 @@ export class CodexProvider extends EventEmitter {
    * subscription after an app-server restart, so this is called both when the
    * user opens a session and after every reconnect.
    */
-  async resumeSession(threadId: string, opts: { model?: string } = {}): Promise<SessionSummary | null> {
+  async resumeSession(
+    threadId: string,
+    opts: { model?: string; requireLoaded?: boolean } = {},
+  ): Promise<SessionSummary | null> {
     let res: any
     try {
       const modelProvider = this.#currentModelProvider()
@@ -726,13 +723,17 @@ export class CodexProvider extends EventEmitter {
       // including the "no rollout" response for a fresh thread. This keeps
       // the fallback in one place and makes a provider/model mismatch an
       // openable session instead of a blank error screen.
+      let readable: SessionSummary | null = null
       try {
-        const readable = await this.getSession(threadId)
-        if (readable) return readable
+        readable = await this.getSession(threadId)
       } catch {
         // Preserve the original resume error below. A read failure can be a
         // transient app-server problem rather than evidence that the thread
         // is gone.
+      }
+      if (readable) {
+        if (opts.requireLoaded && !this.#attached.has(threadId)) throw err
+        return readable
       }
       if (isUnmaterializedThreadError(err)) return null
       // Anything else the app-server calls an unknown thread. Unreachable with
@@ -1026,12 +1027,11 @@ export class CodexProvider extends EventEmitter {
     // process has never attached the thread; ordinary turns keep the existing
     // attachment. `#status` is deliberately not used here: a durable
     // `thread/list` result tells us the status, but does not load the thread.
-    // `resumeSession` can still return a durable summary when the selected
-    // profile cannot load the old rollout. That summary proves the session
-    // exists; the app-server then gets the final say from `turn/start` instead
-    // of this local cache turning it into a misleading "session not found".
+    // A durable summary is enough for viewing history, but sending requires
+    // a loaded thread. Preserve a resume failure (e.g. provider mismatch)
+    // rather than replacing it with turn/start's misleading not-found error.
     if (opts?.model || !this.#attached.has(threadId)) {
-      const session = await this.resumeSession(threadId, { model: opts?.model })
+      const session = await this.resumeSession(threadId, { model: opts?.model, requireLoaded: true })
       if (!session) throw new SessionNotFoundError(threadId)
     }
     // The app-server will accept any number of images; the cap is ours, and it

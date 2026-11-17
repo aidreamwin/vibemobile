@@ -12,6 +12,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { resolveCodexBin } from '../agents/runtime.js'
 import { codexProfileLaunch, type AgentConnection } from '../agents/profileRuntime.js'
+import { codexNativeModelProvider } from '../agents/codexNativeProvider.js'
 
 export interface SupervisorOptions {
   /** When set, we attach to this URL instead of spawning. */
@@ -43,6 +44,7 @@ export class AppServerSupervisor extends EventEmitter {
   #restarts = 0
   /** Pending crash-backoff spawn, so restart() can cancel it. */
   #restartTimer?: NodeJS.Timeout
+  #modelProvider?: string
 
   constructor(opts: SupervisorOptions = {}) {
     super()
@@ -62,6 +64,10 @@ export class AppServerSupervisor extends EventEmitter {
 
   get isManaged(): boolean {
     return !this.#opts.attachUrl
+  }
+
+  get modelProvider(): string | undefined {
+    return this.#modelProvider
   }
 
   async start(): Promise<void> {
@@ -85,7 +91,8 @@ export class AppServerSupervisor extends EventEmitter {
     // Resolved on every spawn, never cached: switching a runtime pack's
     // `current` must take effect on the respawn that follows the update.
     const { cmd, args } = resolveCodexBin({ bin: this.#opts.bin, agentsDir: this.#opts.agentsDir })
-    const profile = codexProfileLaunch(this.#opts.connection?.())
+    this.#modelProvider = codexNativeModelProvider()
+    const profile = codexProfileLaunch(this.#opts.connection?.(), this.#modelProvider)
     const fullArgs = [
       ...args,
       ...profile.args,
