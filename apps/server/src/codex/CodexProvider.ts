@@ -338,6 +338,14 @@ export class CodexProvider extends EventEmitter {
 
   #wire() {
     this.#client.on('notification', (method, params) => {
+      if (
+        method === 'warning' &&
+        typeof params?.message === 'string' &&
+        /^Model metadata for .+ not found\. Defaulting to fallback metadata\b/.test(params.message)
+      ) {
+        this.#onNotice(`Codex: ${params.message}`)
+        return
+      }
       // Track status locally so session lists can badge "needs attention"
       // without polling every thread.
       if (method === 'thread/status/changed' && params?.threadId) {

@@ -378,3 +378,28 @@ describe('CodexProvider session listing', () => {
     await provider.stop()
   })
 })
+
+it('logs model metadata fallback warnings without reporting a failed turn', async () => {
+  const clientEvents = vi.spyOn(AppServerClient.prototype, 'on')
+  const notice = vi.fn()
+  const provider = new CodexProvider({ workspaceRoots: [], onNotice: notice })
+  try {
+    const client = clientEvents.mock.contexts[0] as AppServerClient
+    const listener = vi.fn()
+    const threadId = 'thread-1'
+    const turnId = 'turn-1'
+    const message =
+      'Model metadata for `gpt-6.2-sol` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.'
+    provider.subscribe(listener)
+
+    client.emit('notification', 'warning', { threadId, message })
+    expect(notice).toHaveBeenCalledWith(`Codex: ${message}`)
+    expect(listener).not.toHaveBeenCalled()
+
+    client.emit('notification', 'error', { threadId, turnId, error: { message: '503 unavailable' }, willRetry: false })
+    expect(listener).toHaveBeenCalledWith({ kind: 'error', threadId, turnId, message: '503 unavailable', willRetry: false })
+  } finally {
+    clientEvents.mockRestore()
+    await provider.stop()
+  }
+})
