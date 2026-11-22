@@ -12,7 +12,7 @@ import { hashPin } from '../config.js'
 import { signSession, COOKIE_NAME } from '../auth/jwt.js'
 import { createHub, parsePublicOrigins, tokenHash } from './hubApp.js'
 import { connectRunner, parseHubUrl } from './bridge.js'
-import { allowedPath, PROTOCOL } from './wire.js'
+import { allowedPath, MAX_BODY, PROTOCOL } from './wire.js'
 import { assertFree, port } from './runtime.js'
 import { AgentProfileStore } from '../agents/profiles.js'
 import { registerAgentProfileRoutes } from '../routes/agentProfiles.js'
@@ -106,6 +106,9 @@ beforeAll(async () => {
     }))
     app.post('/api/sessions', async (req) => ({ id: 'created', index, body: req.body }))
     app.post('/api/sessions/same-id/open', () => ({ opened: true, index }))
+    app.get<{ Querystring: { over?: string } }>('/api/sessions/large', (req, reply) =>
+      reply.type('application/octet-stream').send(Buffer.alloc(MAX_BODY + (req.query.over ? 1 : 0), 0x5a)),
+    )
     app.get('/api/files/content', (req) => ({ index, query: req.query }))
     app.put('/api/files/content', (req, reply) => {
       if ((req.body as { rev: string }).rev !== 'current') return reply.code(409).send({ error: 'file_changed' })
@@ -290,6 +293,17 @@ describe('distributed Hub and two reverse runners', () => {
     const opened = await hub.inject({ method: 'POST', url: '/r/r1/api/sessions/same-id/open', headers: { cookie } })
     expect(opened.statusCode).toBe(200)
     expect(opened.json()).toMatchObject({ opened: true, index: 1 })
+  })
+
+  it('forwards a response at the byte limit and rejects a larger one', async () => {
+    const url = '/r/r0/api/sessions/large'
+    const atLimit = await hub.inject({ url, headers: { cookie } })
+    expect(atLimit.statusCode).toBe(200)
+    expect(atLimit.rawPayload.equals(Buffer.alloc(MAX_BODY, 0x5a))).toBe(true)
+
+    const overLimit = await hub.inject({ url: `${url}?over=1`, headers: { cookie } })
+    expect(overLimit.statusCode).toBe(502)
+    expect(await online('r0')).toBe(true)
   })
 
   it('preserves image bytes, MIME and private immutable caching', async () => {

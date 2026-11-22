@@ -112,6 +112,7 @@ npm run start:runner
 | 变量 | 默认 / 说明 |
 |---|---|
 | `PORT` | Hub 5900 |
+| `VIBEMOBILE_RUNNER_MAX_BODY_MB` | Hub 和 runner 单次转发的数据上限，默认 15 MiB，可设为 1–64 的整数 |
 | `VIBEMOBILE_RUNNER_PORT` | runner 私有 HTTP 5901 |
 | `CODEX_PORT` | runner Codex 6900；分布式入口忽略外部 `CODEX_WS_URL` |
 | `OPENCODE_PORT` | runner OpenCode 6920；attach 模式仍可用 `OPENCODE_ATTACH_URL` |
@@ -132,6 +133,10 @@ npm run start:runner
 同一机器运行多个 runner 时，HTTP 端口、Codex 端口、状态目录和必要的 Agent
 配置目录都要分别设置。runner 私有端口会拒绝 3000/8788，避免接入已有的单机
 服务。
+
+自定义传输上限时，Hub 和独立 runner 使用相同值。PM2 部署在各自安装目录的 `vibemobile.env` 中设置，
+再用各自的 `ecosystem.config.cjs` 重新加载配置；Docker Compose 部署在 `.env` 中设置后重新创建容器。
+Hub 管理的本机 runner 会继承 Hub 的值。该设置在进程启动时读取。
 
 ## 部署
 
@@ -166,7 +171,7 @@ Nginx 证书。完整配置见 [hub-tls.md](hub-tls.md)。
 
 - 协议版本 `vibemobile-runner-v1`。
 - 每 runner 最多 64 个并发 HTTP 和 64 个 WS。
-- HTTP 请求/响应上限 8 MiB，通道帧上限 12 MiB，发送缓冲上限 24 MiB。
+- HTTP 请求和响应默认各限 15 MiB；通道帧上限计入 Base64 编码和封包空间，发送缓冲上限为两帧。
 - HTTP 120 秒超时；只转发执行 API 和 `/ws`、`/ws/terminal`，不会转发任意地址、
   登录接口或用户 Cookie。
 - 同一 runner ID 只能有一个活连接，重复进程被拒。

@@ -13,6 +13,7 @@ services:
       VIBEMOBILE_RUNNER_TOKEN: ${VIBEMOBILE_RUNNER_TOKEN:?Set runner token}
       VIBEMOBILE_HUB_CA_FILE: ${RUNNER_HUB_CA_FILE:-}
       VIBEMOBILE_STATE_DIR: /app/.multi-runner/state
+      VIBEMOBILE_RUNNER_MAX_BODY_MB: ${VIBEMOBILE_RUNNER_MAX_BODY_MB:-15}
       VIBEMOBILE_ROOTS: /app/workspace
       VIBEMOBILE_SHELL: /bin/bash
     volumes:
