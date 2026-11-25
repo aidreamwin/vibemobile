@@ -295,11 +295,15 @@ export class AgentProfileStore {
   #commit(agent: AgentProfileId, next: ProfileFile): Promise<void> {
     const profile = next.profiles[agent].find((item) => item.id === next.active[agent])
     const current = this.current(agent)
-    // Antigravity's model catalogue is metadata for the settings editor.
-    // Only a connection change requires restarting its ACP process.
+    // ACP binds the gateway credentials and model catalogue when it authenticates.
     const changed =
       agent === 'antigravity'
-        ? current?.id !== profile?.id || current?.baseUrl !== profile?.baseUrl || current?.apiKey !== profile?.apiKey
+        ? current?.id !== profile?.id ||
+          current?.baseUrl !== profile?.baseUrl ||
+          current?.apiKey !== profile?.apiKey ||
+          current?.model !== profile?.model ||
+          JSON.stringify(current?.models) !== JSON.stringify(profile?.models) ||
+          JSON.stringify(current?.modelContextWindows) !== JSON.stringify(profile?.modelContextWindows)
         : JSON.stringify(current) !== JSON.stringify(profile)
     return this.#save(next, changed ? { agent, profile } : undefined)
   }

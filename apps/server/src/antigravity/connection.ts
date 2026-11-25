@@ -28,10 +28,13 @@ export async function connectCli(
   bin: string,
   apiKey?: string,
   baseUrl?: string,
+  gateway = false,
 ): Promise<ClientConnection> {
-  const env = apiKey
-    ? { ...process.env, GEMINI_API_KEY: apiKey, GOOGLE_GEMINI_BASE_URL: baseUrl || undefined }
-    : process.env
+  const env = gateway
+    ? { ...process.env, AGY_ACP_ENABLE_GATEWAY_AUTH: 'true' }
+    : apiKey
+      ? { ...process.env, GEMINI_API_KEY: apiKey, GOOGLE_GEMINI_BASE_URL: baseUrl || undefined }
+      : process.env
   const child = spawn(bin, ['acp'], { cwd, env, windowsHide: true })
   child.stderr.resume()
   try {

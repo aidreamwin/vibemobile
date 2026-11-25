@@ -14,15 +14,18 @@ import {
 import type { AgentEvent } from '@vibemobile/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AntigravityProvider } from './AntigravityProvider.js'
+import { acpModelId } from './modelGateway.js'
 
 let cwd: string
 let agent: AgentApp
+let nextAgent: () => AgentApp
 let provider: AntigravityProvider
 let connection: ClientConnection
 let events: AgentEvent[]
 let apiKey: string
 let launchKeys: (string | undefined)[]
 let baseUrl: string
+let models: string[]
 let launchUrls: (string | undefined)[]
 const configOptions = [
   {
@@ -37,32 +40,42 @@ const configOptions = [
     ],
   },
 ] satisfies SessionConfigOption[]
-beforeEach(() => {
-  apiKey = ''
-  launchKeys = []
-  baseUrl = ''
-  launchUrls = []
-  cwd = mkdtempSync(path.join(os.tmpdir(), 'vibe-agy-acp-'))
-  agent = new AgentApp().onRequest('initialize', () => ({
+function mockAgent() {
+  return new AgentApp().onRequest('initialize', () => ({
     protocolVersion: PROTOCOL_VERSION,
     agentInfo: { name: 'Antigravity ACP Server', version: '1.5.16' },
-    authMethods: [{ id: 'gemini-api-key', name: 'Gemini API key' }],
+    authMethods: [
+      { id: 'gemini-api-key', name: 'Gemini API key' },
+      { id: 'gateway', name: 'Gateway' },
+    ],
     agentCapabilities: {
       loadSession: true,
       sessionCapabilities: { list: {}, close: {} },
       promptCapabilities: { image: true },
     },
   }))
+}
+beforeEach(() => {
+  apiKey = ''
+  launchKeys = []
+  baseUrl = ''
+  models = []
+  launchUrls = []
+  cwd = mkdtempSync(path.join(os.tmpdir(), 'vibe-agy-acp-'))
+  agent = mockAgent()
+  nextAgent = () => agent
   provider = new AntigravityProvider({
     bin: 'agy',
     workspaceRoots: [cwd],
     stateDir: cwd,
-    apiKey: () => apiKey,
-    baseUrl: () => baseUrl,
+    profile: () =>
+      apiKey
+        ? { apiKey, baseUrl, name: 'Gemini', id: 'gemini', updatedAt: 1, models, model: models[0] ?? '' }
+        : undefined,
     connect: async (client, _cwd, _bin, key, url) => {
       launchKeys.push(key)
       launchUrls.push(url)
-      connection = client.connect(agent)
+      connection = client.connect(nextAgent())
       return connection
     },
   })
@@ -74,7 +87,182 @@ afterEach(async () => {
   rmSync(cwd, { recursive: true, force: true })
 })
 
+describe('supplier catalogues larger than the ACP limit', () => {
+  let prompts: { sessionId: string; model: string }[]
+  let closed: string[]
+  let failNextLoad: boolean
+  beforeEach(() => {
+    apiKey = 'test-key'
+    models = Array.from({ length: 100 }, (_, i) => `supplier-${i}`)
+    models[99] = 'gemini-4-neon-low'
+    prompts = []
+    closed = []
+    failNextLoad = false
+    const history = new Map<string, string[]>()
+    nextAgent = () => {
+      let choices: { name: string; value: string }[] = []
+      const selected = new Map<string, string>()
+      const held = new Map<string, (response: PromptResponse) => void>()
+      const controls = (id: string) => ({
+        configOptions: [{ ...configOptions[0], options: choices, currentValue: selected.get(id) ?? choices[0].value }],
+      })
+      return mockAgent()
+        .onRequest('authenticate', async ({ params }) => {
+          const gateway = params._meta?.gateway as { baseUrl: string; headers: Record<string, string> }
+          const response = await fetch(`${gateway.baseUrl}/v1beta/models`, { headers: gateway.headers })
+          const catalog = (await response.json()) as { models: { name: string; displayName: string }[] }
+          choices = catalog.models
+            .slice(0, 32)
+            .map((m) => ({ name: m.displayName, value: m.name.slice('models/'.length) }))
+          expect(choices[0].name).toBe(models[0])
+          return {}
+        })
+        .onRequest('session/new', () => {
+          const id = String(history.size + 1)
+          history.set(id, [])
+          selected.set(id, choices[0].value)
+          return { sessionId: id, ...controls(id) }
+        })
+        .onRequest('session/load', async ({ params: { sessionId }, client }) => {
+          if (failNextLoad) {
+            failNextLoad = false
+            throw new RequestError(-32603, 'load failed')
+          }
+          for (const [index, text] of (history.get(sessionId) ?? []).entries())
+            await client.notify('session/update', {
+              sessionId,
+              update: {
+                sessionUpdate: 'user_message_chunk',
+                messageId: `user-${index}`,
+                content: { type: 'text', text },
+              },
+            })
+          selected.set(sessionId, choices[0].value)
+          return controls(sessionId)
+        })
+        .onRequest('session/close', ({ params: { sessionId } }) => {
+          selected.delete(sessionId)
+          closed.push(sessionId)
+          return {}
+        })
+        .onRequest('session/set_config_option', ({ params: { sessionId, value } }) => {
+          expect(selected.has(sessionId)).toBe(true)
+          expect(choices.some((m) => m.value === value)).toBe(true)
+          selected.set(sessionId, String(value))
+          return controls(sessionId)
+        })
+        .onRequest('session/prompt', ({ params: { sessionId, prompt } }) => {
+          const model = choices.find((m) => m.value === selected.get(sessionId))
+          if (!model || prompt[0]?.type !== 'text') throw new Error('wrong ACP session or prompt')
+          const text = prompt[0].text
+          history.get(sessionId)?.push(text)
+          prompts.push({ sessionId, model: model.name })
+          if (text === 'hold') return new Promise<PromptResponse>((resolve) => held.set(sessionId, resolve))
+          return { stopReason: 'end_turn' }
+        })
+        .onNotification('session/cancel', ({ params: { sessionId } }) => {
+          held.get(sessionId)?.({ stopReason: 'cancelled' })
+        })
+    }
+  })
+
+  it('selects entries 32, 33 and 100, reuses one worker per group and preserves the chat across a switch and restart', async () => {
+    expect((await provider.listModels()).map((model) => model.id)).toEqual(models)
+    expect(launchKeys).toHaveLength(0)
+    const selections = [models[31], models[32], models[99], models[30]]
+    const chats = await Promise.all(selections.map((model) => provider.createSession({ cwd, model })))
+    const [a] = chats
+    expect(chats.map((chat) => chat.model)).toEqual(selections)
+    await Promise.all(chats.map((s) => provider.startTurn(s.id, [{ type: 'text', text: 'first' }])))
+    await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    expect(prompts).toHaveLength(chats.length)
+    for (const chat of chats) expect(prompts).toContainEqual({ sessionId: chat.id.slice(4), model: chat.model })
+    await provider.startTurn(a.id, [{ type: 'text', text: 'second' }], { model: 'gemini-4-neon', effort: 'low' })
+    await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    expect(launchKeys).toHaveLength(3)
+    expect(closed).toEqual([a.id.slice(4)])
+    expect(prompts.at(-1)).toEqual({ sessionId: a.id.slice(4), model: models[99] })
+    expect((await provider.getTranscript(a.id))?.turns).toHaveLength(2)
+    await provider.stop()
+    expect((await provider.resumeSession(a.id))?.model).toBe(models[99])
+    expect((await provider.getTranscript(a.id))?.turns).toHaveLength(2)
+    expect(launchKeys).toHaveLength(4)
+  })
+
+  it('recovers the previous selection after a failed switch and isolates simultaneous turns on different workers', async () => {
+    const a = await provider.createSession({ cwd, model: models[31] })
+    const first = connection
+    const b = await provider.createSession({ cwd, model: models[32] })
+    failNextLoad = true
+    await expect(provider.startTurn(a.id, [{ type: 'text', text: 'failed' }], { model: models[32] })).rejects.toThrow(
+      'load failed',
+    )
+    expect(prompts).toEqual([])
+    await provider.startTurn(a.id, [{ type: 'text', text: 'hold' }])
+    const { turnId } = await provider.startTurn(b.id, [{ type: 'text', text: 'hold' }])
+    await vi.waitFor(() => {
+      expect(prompts).toHaveLength(2)
+      expect(prompts).toContainEqual({ sessionId: a.id.slice(4), model: models[31] })
+      expect(prompts).toContainEqual({ sessionId: b.id.slice(4), model: models[32] })
+    })
+    first.close()
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'turn.completed', threadId: a.id, status: 'failed' }),
+      ),
+    )
+    expect((await provider.getSession(b.id))?.status).toBe('working')
+    await provider.interrupt(b.id, turnId)
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'turn.completed', threadId: b.id, status: 'interrupted' }),
+      ),
+    )
+  })
+})
+
 describe('Antigravity ACP session lifecycle', () => {
+  it('applies supplier defaults, accepts the old model/effort pair, and restores the selected full ID', async () => {
+    apiKey = 'supplier-key'
+    models = ['gateway-custom', 'gemini-4-neon-low']
+    let ignoreSelection = false
+    const prompt = vi.fn(() => ({ stopReason: 'end_turn' as const }))
+    const responses = (selected: string) => ({
+      configOptions: [
+        {
+          ...configOptions[0],
+          currentValue: selected,
+          options: models.map((id) => ({ value: acpModelId(id), name: id })),
+        },
+      ],
+    })
+    agent.onRequest('authenticate', ({ params }) => {
+      expect(params.methodId).toBe('gateway')
+      expect(JSON.stringify(params)).not.toContain(apiKey)
+      return {}
+    })
+    agent.onRequest('session/new', () => ({ sessionId: 'managed', ...responses(acpModelId(models[1])) }))
+    agent.onRequest('session/set_config_option', ({ params }) =>
+      responses(ignoreSelection ? acpModelId(models[1]) : String(params.value)),
+    )
+    agent.onRequest('session/load', () => responses(acpModelId(models[0])))
+    agent.onRequest('session/prompt', prompt)
+    expect((await provider.listModels()).map((m) => m.id)).toEqual(models)
+    const s = await provider.createSession({ cwd })
+    expect(s.model).toBe(models[0])
+    await provider.startTurn(s.id, [{ type: 'text', text: 'test' }], { model: 'gemini-4-neon', effort: 'low' })
+    await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    expect((await provider.getSession(s.id))?.model).toBe(models[1])
+    await provider.stop()
+    expect((await provider.resumeSession(s.id))?.model).toBe(models[1])
+    await expect(provider.createSession({ cwd, model: 'unconfigured' })).rejects.toMatchObject({ statusCode: 400 })
+    ignoreSelection = true
+    await expect(
+      provider.startTurn(s.id, [{ type: 'text', text: 'verify selection' }], { model: models[0] }),
+    ).rejects.toMatchObject({ statusCode: 502 })
+    expect(prompt).toHaveBeenCalledTimes(1)
+  })
+
   it('authenticates each managed connection before new or resumed sessions and restores CLI login on removal', async () => {
     let authenticatedLaunch = 0
     const methods: string[] = []
@@ -109,8 +297,8 @@ describe('Antigravity ACP session lifecycle', () => {
     apiKey = ''
     baseUrl = ''
     await expect(provider.probe()).resolves.toMatchObject({ available: true, authenticated: false })
-    expect(launchKeys).toEqual(['first-key', 'next-key', ''])
-    expect(launchUrls).toEqual(['https://gemini.example.test', 'https://other.example.test', ''])
+    expect(launchKeys).toEqual(['first-key', 'next-key', undefined])
+    expect(launchUrls).toEqual(['https://gemini.example.test', 'https://other.example.test', undefined])
     expect(methods).toEqual(['gemini-api-key', 'gemini-api-key'])
   })
 

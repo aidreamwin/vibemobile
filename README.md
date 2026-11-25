@@ -94,7 +94,8 @@ VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台�
 打开网页「设置 → 代理 → Antigravity → 添加供应商」，填写配置名称、Gemini API Key 和可选的 Gemini 兼容接口地址，保存后启用。
 接口地址留空使用 Google 官方接口，配置保存在当前 runner。启用「执行机现有配置」恢复 CLI 登录方式，Google 账号登录可使用 `agy acp --login`。
 在手机的「会话」中选择 Antigravity，可以新建对话，或打开该账号在允许的工作区内已有的 CLI 会话。
-模型和思考强度由会话返回，工具审批沿用 CLI 规则。置顶、归档和重命名保存在当前 runner。
+在供应商的「模型管理」里获取或手动添加完整模型 ID，点选默认模型。新建和已有会话都能选择已保存的模型。自定义模型使用支持 gateway 认证的 ACP CLI，runner 将完整 ID 发给 Gemini 兼容接口。使用 CLI 自带模型时可单独选择思考强度。
+工具审批沿用 CLI 规则。置顶、归档和重命名保存在当前 runner。
 容器部署需让 CLI、工作目录和登录凭据在 runner 容器内可访问。[Google 安装说明](https://antigravity.google/docs/getting-started?tab=cli) · [ACP 接口](https://antigravity.google/docs/ide/extensions/acp)
 
 ### 生产

@@ -71,7 +71,7 @@ describe('runner agent profiles', () => {
     const id = store.current('antigravity')?.id
     if (!id) throw new Error('expected active Antigravity profile')
     await store.update('antigravity', id, { models: ['gemini-4-neon-low'] })
-    expect(apply).toHaveBeenCalledTimes(1)
+    expect(apply).toHaveBeenCalledTimes(2)
     expect(new AgentProfileStore(dir).current('antigravity')?.models).toEqual(['gemini-4-neon-low'])
     await store.setAntigravityConnection({ baseUrl: 'https://gemini.example.test/' })
     expect(new AgentProfileStore(dir).antigravityBaseUrl).toBe('https://gemini.example.test')

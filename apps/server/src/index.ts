@@ -144,8 +144,7 @@ const agyBin = findCli(config.antigravityBin)
 const antigravity = agyBin
   ? new AntigravityProvider({
       bin: agyBin,
-      apiKey: () => agentProfiles.antigravityApiKey,
-      baseUrl: () => agentProfiles.antigravityBaseUrl,
+      profile: () => agentProfiles.current('antigravity'),
       workspaceRoots: config.workspaceRoots,
       stateDir: config.stateDir,
     })

@@ -34,13 +34,20 @@ import {
 } from '../providers/types.js'
 import { AgyApprovals } from './approvals.js'
 import { connectCli, deadline } from './connection.js'
+import type { AgentConnection } from '../agents/profileRuntime.js'
+import { acpModelId, startModelGateway, supplierModels } from './modelGateway.js'
 import { AgyTranscript, promptBlocks } from './transcript.js'
 
-type Ready = { connection: ClientConnection; info: InitializeResponse }
+type AcpClient = {
+  connection: ClientConnection
+  info: InitializeResponse
+  gateway?: Awaited<ReturnType<typeof startModelGateway>>
+}
 type Controls = { configOptions?: SessionConfigOption[] | null; modes?: SessionModeState | null }
 type TurnOptions = NonNullable<Parameters<AgentProvider['startTurn']>[2]>
 type PageOptions = NonNullable<Parameters<AgentProvider['getTranscript']>[1]>
 interface OpenSession {
+  client: AcpClient
   nativeId: string
   summary: SessionSummary
   history: AgyTranscript
@@ -56,12 +63,15 @@ interface ProviderOptions {
   bin: string
   workspaceRoots: string[]
   stateDir?: string
-  apiKey?: () => string
-  baseUrl?: () => string
+  profile?: AgentConnection
   connect?: typeof connectCli
 }
 
+// agy 1.5.17 only exposes the first 32 gateway models to session/set_config_option.
+const ACP_CATALOG_LIMIT = 32
 const publicId = (nativeId: string) => `agy:${nativeId}`
+// agy can return a file URL's pathname ("/D:/work") in session/list on Windows.
+const workspacePath = (cwd: string) => (process.platform === 'win32' ? cwd.replace(/^\/(?=[A-Za-z]:\/)/, '') : cwd)
 const loginHint = '请在设置的 Antigravity 页面保存 Gemini API Key，或在执行机上运行 agy acp --login。'
 const authRequired = (err: unknown) => err instanceof RequestError && err.code === -32000
 const clientError = (message: string, statusCode: number) => Object.assign(new Error(message), { statusCode })
@@ -85,12 +95,12 @@ export class AntigravityProvider implements AgentProvider {
   #emit = (event: AgentEvent) => {
     this.#events.emit('event', event)
   }
-  #pending?: Promise<Ready>
-  #ready?: Ready
+  #clients = new Map<number, Promise<AcpClient>>()
   #known = new Map<string, SessionSummary>()
   #revisions = new Map<string, string>()
   #opened = new Map<string, OpenSession>()
   #loading = new Map<string, Promise<OpenSession>>()
+  #closing = new Map<string, Promise<void>>()
   #approvals = new AgyApprovals(this.#emit, (id) => this.#status(id))
   #models: ModelInfo[] = []
   #images?: ImageStore
@@ -108,34 +118,59 @@ export class AntigravityProvider implements AgentProvider {
     }
   }
 
-  #client() {
-    if (this.#ready && !this.#ready.connection.signal.aborted) return Promise.resolve(this.#ready)
-    this.#pending ??= this.#connect().finally(() => {
-      this.#pending = undefined
-    })
-    return this.#pending
+  #client(model?: string) {
+    const profile = this.opts.profile?.()
+    const models = supplierModels(profile)
+    const index = model && models.length ? models.indexOf(model) : 0
+    if (index < 0) throw clientError('此供应商未配置选定的模型。', 400)
+    // The CLI can also use the catalogue's first model for background requests.
+    // Keep the supplier default first in every client.
+    const pageSize = ACP_CATALOG_LIMIT - 1
+    const group = Math.floor(Math.max(0, index - 1) / pageSize)
+    const cached = this.#clients.get(group)
+    if (cached) return cached
+    const start = 1 + group * pageSize
+    const catalog = models.slice(start, start + pageSize)
+    if (models.length) catalog.unshift(models[0])
+    const pending = this.#connect(profile, catalog)
+    this.#clients.set(group, pending)
+    const forget = () => {
+      if (this.#clients.get(group) === pending) this.#clients.delete(group)
+    }
+    void pending.then(({ connection }) => connection.closed.then(forget), forget)
+    return pending
   }
 
-  async #connect(): Promise<Ready> {
+  async #connect(profile: ReturnType<AgentConnection>, models: string[]): Promise<AcpClient> {
+    let connection: ClientConnection
     const app = new ClientApp()
-      .onNotification('session/update', ({ params }) => this.#update(params))
+      .onNotification('session/update', ({ params }) => this.#update(params, connection))
       .onRequest('session/request_permission', ({ params, signal }) => {
         const id = publicId(params.sessionId)
         const session = this.#opened.get(id)
         const turn = session?.history.turn
-        if (!session?.history.live || !turn) return { outcome: { outcome: 'cancelled' } }
+        if (!session?.history.live || session.client.connection !== connection || !turn)
+          return { outcome: { outcome: 'cancelled' } }
         return this.#approvals.request(id, turn.id, params, signal, () => this.interrupt(id, turn.id))
       })
     const cwd = this.opts.workspaceRoots[0]
     if (!cwd) throw new Error('Antigravity 需要至少一个工作区。')
-    const apiKey = this.opts.apiKey?.()
-    const connection = await (this.opts.connect ?? connectCli)(app, cwd, this.opts.bin, apiKey, this.opts.baseUrl?.())
+    const useGateway = models.length > 0
+    connection = await (this.opts.connect ?? connectCli)(
+      app,
+      cwd,
+      this.opts.bin,
+      profile?.apiKey,
+      profile?.baseUrl,
+      useGateway,
+    )
+    let gateway: AcpClient['gateway']
     try {
       const info = await connection.agent.request(
         'initialize',
         {
           protocolVersion: PROTOCOL_VERSION,
-          clientCapabilities: {},
+          clientCapabilities: useGateway ? { auth: { _meta: { gateway: true } } } : {},
           clientInfo: { name: 'VibeMobile', version: '1' },
         },
         deadline(),
@@ -146,7 +181,19 @@ export class AntigravityProvider implements AgentProvider {
         !info.agentCapabilities.sessionCapabilities?.list
       )
         throw new Error('此 Antigravity CLI 不支持所需的 ACP 会话接口，请更新 agy。')
-      if (apiKey) {
+      if (profile && useGateway) {
+        if (!info.authMethods?.some((method) => method.id === 'gateway'))
+          throw new Error('此 Antigravity CLI 不支持供应商模型网关，请更新 agy。')
+        gateway = await startModelGateway(profile, models)
+        await connection.agent.request(
+          'authenticate',
+          {
+            methodId: 'gateway',
+            _meta: { gateway: { baseUrl: gateway.baseUrl, headers: gateway.headers } },
+          },
+          deadline(),
+        )
+      } else if (profile?.apiKey) {
         if (!info.authMethods?.some((method) => method.id === 'gemini-api-key'))
           throw new Error('此 Antigravity CLI 不支持 Gemini API Key 登录，请更新 agy。')
         try {
@@ -155,18 +202,18 @@ export class AntigravityProvider implements AgentProvider {
           throw new Error('Antigravity 无法使用已保存的 Gemini API Key，请在设置中检查密钥。')
         }
       }
-      this.#ready = { connection, info }
       void connection.closed.then(() => {
-        if (this.#ready?.connection !== connection) return
-        this.#ready = undefined
+        gateway?.close()
         for (const session of this.#opened.values()) {
+          if (session.client.connection !== connection) continue
           if (session.history.live) this.#finish(session, 'failed', 'Antigravity CLI 已断开连接。')
+          this.#opened.delete(session.summary.id)
         }
-        this.#opened.clear()
-        this.#models = []
+        if (!gateway) this.#models = []
       })
-      return this.#ready
+      return { connection, info, gateway }
     } catch (err) {
+      gateway?.close()
       connection.close()
       throw err
     }
@@ -179,9 +226,13 @@ export class AntigravityProvider implements AgentProvider {
     return [...this.#opened.values()].some((session) => session.starting || session.history.live)
   }
   async stop() {
-    const ready = this.#ready ?? (await this.#pending?.catch(() => undefined))
-    ready?.connection.close()
-    await ready?.connection.closed
+    await Promise.all(
+      Array.from(this.#clients.values(), async (pending) => {
+        const client = await pending.catch(() => undefined)
+        client?.connection.close()
+        await client?.connection.closed
+      }),
+    )
   }
 
   async probe(): Promise<ProviderProbe> {
@@ -203,6 +254,10 @@ export class AntigravityProvider implements AgentProvider {
   }
 
   async listModels() {
+    const profile = this.opts.profile?.()
+    const models = supplierModels(profile)
+    if (models.length)
+      return models.map((id) => ({ id, displayName: id, contextWindow: profile?.modelContextWindows?.[id] }))
     return this.#models
   }
   async listProjects() {
@@ -214,7 +269,7 @@ export class AntigravityProvider implements AgentProvider {
     )
   }
 
-  #remember(info: SessionInfo, created = false) {
+  #remember(info: SessionInfo, client: AcpClient, created = false) {
     const id = publicId(info.sessionId)
     let summary = this.#known.get(id)
     const time = Date.parse(info.updatedAt ?? '') || (created ? Date.now() : 0)
@@ -225,14 +280,14 @@ export class AntigravityProvider implements AgentProvider {
         provider: this.id,
         title: '',
         preview: '',
-        cwd: info.cwd,
+        cwd: workspacePath(info.cwd),
         createdAt: time,
         updatedAt: time,
         needsAttention: false,
         status: 'idle',
         sandbox: 'workspace-write',
         approvalPolicy: 'on-request',
-        canDelete: Boolean(this.#ready?.info.agentCapabilities?.sessionCapabilities?.delete),
+        canDelete: Boolean(client.info.agentCapabilities?.sessionCapabilities?.delete),
         ...(prefs?.pinned ? { pinned: true } : {}),
         ...(prefs?.archived ? { archived: true } : {}),
       }
@@ -251,8 +306,9 @@ export class AntigravityProvider implements AgentProvider {
   #allowed(info: SessionInfo) {
     try {
       for (const dir of [info.cwd, ...(info.additionalDirectories ?? [])]) {
-        if (!path.isAbsolute(dir)) return false
-        resolveInside(this.opts.workspaceRoots, dir)
+        const cwd = workspacePath(dir)
+        if (!path.isAbsolute(cwd)) return false
+        resolveInside(this.opts.workspaceRoots, cwd)
       }
       return true
     } catch {
@@ -261,13 +317,17 @@ export class AntigravityProvider implements AgentProvider {
   }
 
   async #discover(cwd: string | undefined, visit: (summary: SessionSummary) => boolean) {
-    const { connection } = await this.#client()
+    const client = await this.#client()
     const seen = new Set<string>()
     let cursor: string | undefined
     do {
-      const page = await connection.agent.request('session/list', { ...(cwd ? { cwd } : {}), cursor }, deadline())
+      const page = await client.connection.agent.request(
+        'session/list',
+        { ...(cwd ? { cwd } : {}), cursor },
+        deadline(),
+      )
       for (const info of page.sessions) {
-        if (this.#allowed(info) && visit(this.#remember(info))) return
+        if (this.#allowed(info) && visit(this.#remember(info, client))) return
       }
       cursor = page.nextCursor ?? undefined
       if (cursor && seen.has(cursor)) throw new Error('Antigravity 返回了重复的会话列表游标。')
@@ -307,8 +367,9 @@ export class AntigravityProvider implements AgentProvider {
     return this.#known.get(id) ?? null
   }
 
-  #open(summary: SessionSummary) {
+  #open(summary: SessionSummary, client: AcpClient) {
     const session: OpenSession = {
+      client,
       nativeId: summary.id.slice(4),
       summary,
       options: [],
@@ -328,8 +389,13 @@ export class AntigravityProvider implements AgentProvider {
     session.options = data.configOptions
     const model = selectOption(session.options, 'model')
     const effort = selectOption(session.options, 'thought_level')
-    if (model?.type === 'select') session.summary.model = model.currentValue
-    if (effort?.type === 'select') session.summary.reasoningEffort = effort.currentValue
+    if (model?.type === 'select') {
+      const { gateway } = session.client
+      session.summary.model = gateway ? gateway.byAcpId.get(model.currentValue) : model.currentValue
+    }
+    session.summary.reasoningEffort =
+      !session.client.gateway && effort?.type === 'select' ? effort.currentValue : undefined
+    if (session.client.gateway) return
     this.#models = values(model).map((v) => ({
       id: v.value,
       displayName: v.name,
@@ -337,13 +403,15 @@ export class AntigravityProvider implements AgentProvider {
     }))
   }
 
-  async #configure(session: OpenSession, connection: ClientConnection, opts: TurnOptions) {
+  async #configure(session: OpenSession, opts: TurnOptions) {
+    const { connection, gateway } = session.client
     if (session.mode && session.mode.currentModeId !== 'default') {
       await connection.agent.request('session/set_mode', { sessionId: session.nativeId, modeId: 'default' }, deadline())
       session.mode.currentModeId = 'default'
     }
+    const modelId = opts.model && gateway ? acpModelId(opts.model) : opts.model
     for (const [category, value] of [
-      ['model', opts.model],
+      ['model', modelId],
       ['thought_level', opts.effort],
     ] as const) {
       if (!value) continue
@@ -360,27 +428,71 @@ export class AntigravityProvider implements AgentProvider {
           ),
         )
     }
+    const selected = session.summary.model
+    if (gateway && opts.model && selected !== opts.model) {
+      session.stale = true
+      throw clientError('Antigravity CLI 未应用选定的供应商模型。', 502)
+    }
+    if (gateway && selected && this.#prefs.get(session.summary.id)?.model !== selected)
+      this.#prefs.set(session.summary.id, { model: selected })
   }
 
   async createSession(opts: CreateSessionOptions) {
     checkPolicy(opts)
     const cwd = await resolveDirectory(this.opts.workspaceRoots, opts.cwd)
-    const { connection } = await this.#client()
+    const model = opts.model || supplierModels(this.opts.profile?.())[0]
+    const client = await this.#client(model)
+    let session: OpenSession | undefined
     try {
-      const result = await connection.agent.request('session/new', { cwd, mcpServers: [] }, deadline(30_000))
-      const summary = this.#remember({ sessionId: result.sessionId, cwd }, true)
-      const session = this.#open(summary)
+      const result = await client.connection.agent.request('session/new', { cwd, mcpServers: [] }, deadline(30_000))
+      const summary = this.#remember({ sessionId: result.sessionId, cwd }, client, true)
+      session = this.#open(summary, client)
       this.#controls(session, result)
-      await this.#configure(session, connection, opts)
+      await this.#configure(session, { model })
       this.#prune(session)
       return summary
     } catch (err) {
+      if (session) {
+        await this.#discard(session)
+        this.#known.delete(session.summary.id)
+      }
       if (authRequired(err)) throw clientError(loginHint, 409)
       throw err
     }
   }
 
+  async #closeNative(session: OpenSession) {
+    const { connection, info } = session.client
+    if (info.agentCapabilities?.sessionCapabilities?.close && !connection.signal.aborted)
+      await connection.agent.request('session/close', { sessionId: session.nativeId }, deadline())
+  }
+
+  #discard(session: OpenSession) {
+    const id = session.summary.id
+    if (this.#opened.get(id) !== session) return
+    this.#opened.delete(id)
+    const closing = this.#closeNative(session)
+      .catch(() => {})
+      .finally(() => this.#closing.delete(id))
+    this.#closing.set(id, closing)
+    return closing
+  }
+
+  async #attach(session: OpenSession, replay: boolean) {
+    const { connection, info } = session.client
+    const cwd = await resolveDirectory(this.opts.workspaceRoots, session.summary.cwd)
+    const method = !replay && info.agentCapabilities?.sessionCapabilities?.resume ? 'session/resume' : 'session/load'
+    const result = await connection.agent.request(
+      method,
+      { sessionId: session.nativeId, cwd, mcpServers: [] },
+      deadline(120_000),
+    )
+    this.#controls(session, result)
+  }
+
   async #load(id: string): Promise<OpenSession> {
+    const closing = this.#closing.get(id)
+    if (closing) await closing
     const loading = this.#loading.get(id)
     if (loading) return loading
     const existing = this.#opened.get(id)
@@ -396,24 +508,21 @@ export class AntigravityProvider implements AgentProvider {
   async #restore(id: string, existing?: OpenSession) {
     const summary = await this.getSession(id)
     if (!summary) throw new SessionNotFoundError(id)
-    const cwd = await resolveDirectory(this.opts.workspaceRoots, summary.cwd)
-    const { connection, info } = await this.#client()
+    const models = supplierModels(this.opts.profile?.())
+    const saved = this.#prefs.get(id)?.model
+    const model = saved && models.includes(saved) ? saved : models[0]
+    const client = await this.#client(model)
     // An idle CLI conversation can advance in another client between phone visits.
-    if (existing && info.agentCapabilities?.sessionCapabilities?.close)
-      await connection.agent.request('session/close', { sessionId: existing.nativeId }, deadline())
-    const session = this.#open(summary)
+    if (existing) await this.#closeNative(existing)
+    const session = this.#open(summary, client)
     try {
-      const result = await connection.agent.request(
-        'session/load',
-        { sessionId: session.nativeId, cwd, mcpServers: [] },
-        deadline(120_000),
-      )
+      await this.#attach(session, true)
       session.history.finish('completed')
-      this.#controls(session, result)
+      if (model) await this.#configure(session, { model })
       this.#prune(session)
       return session
     } catch (err) {
-      this.#opened.delete(id)
+      await this.#discard(session)
       if (err instanceof RequestError && err.code === -32002) {
         this.#known.delete(id)
         throw new SessionNotFoundError(id)
@@ -430,11 +539,7 @@ export class AntigravityProvider implements AgentProvider {
     )
     for (const session of idle.sort((a, b) => a.touched - b.touched)) {
       if (this.#opened.size <= 6) break
-      this.#opened.delete(session.summary.id)
-      if (this.#ready?.info.agentCapabilities?.sessionCapabilities?.close)
-        void this.#ready.connection.agent
-          .request('session/close', { sessionId: session.nativeId }, deadline())
-          .catch(() => {})
+      void this.#discard(session)
     }
   }
 
@@ -482,9 +587,9 @@ export class AntigravityProvider implements AgentProvider {
     if (!summary) throw new SessionNotFoundError(id)
     if (!summary.canDelete) throw clientError('此版本的 Antigravity CLI 仅支持在终端内删除会话。', 501)
     const open = this.#opened.get(id)
-    if (open?.history.live || open?.starting || this.#loading.has(id))
+    if (open?.history.live || open?.starting || this.#loading.has(id) || this.#closing.has(id))
       throw clientError('此 Antigravity 会话正在使用。', 409)
-    const { connection } = await this.#client()
+    const { connection } = open?.client ?? (await this.#client())
     await connection.agent.request('session/delete', { sessionId: id.slice(4) }, deadline())
     this.#opened.delete(id)
     this.#known.delete(id)
@@ -492,10 +597,10 @@ export class AntigravityProvider implements AgentProvider {
     this.#prefs.forget(id)
   }
 
-  #update({ sessionId, update }: SessionNotification) {
+  #update({ sessionId, update }: SessionNotification, connection: ClientConnection) {
     const id = publicId(sessionId)
     const session = this.#opened.get(id)
-    if (!session) return
+    if (!session || session.client.connection !== connection) return
     switch (update.sessionUpdate) {
       case 'session_info_update':
         if (update.title && !this.#prefs.get(id)?.title) {
@@ -539,15 +644,46 @@ export class AntigravityProvider implements AgentProvider {
     this.#status(session.summary.id)
   }
 
+  async #selectForTurn(session: OpenSession, opts: TurnOptions) {
+    if (!session.client.gateway) return this.#configure(session, opts)
+    let model = opts.model || session.summary.model || undefined
+    if (opts.effort) {
+      // Older web clients sent the base model and effort separately.
+      const variant = `${model}-${opts.effort}`
+      if (supplierModels(this.opts.profile?.()).includes(variant)) model = variant
+      else if (!model?.endsWith(`-${opts.effort}`)) throw clientError('请选择供应商提供的完整模型 ID。', 400)
+    }
+    if (!model || session.client.gateway.byAcpId.has(acpModelId(model))) return this.#configure(session, { model })
+    const next = await this.#client(model)
+    // Keep the native session ID and the transcript already displayed on the phone.
+    const previous = session.summary.model
+    try {
+      await this.#closeNative(session)
+      if (this.#opened.get(session.summary.id) !== session) throw new Error('Antigravity CLI 已断开连接。')
+      session.client = next
+      session.options = []
+      session.mode = undefined
+      await this.#attach(session, false)
+      await this.#configure(session, { model })
+    } catch (err) {
+      if (this.#opened.get(session.summary.id) === session) {
+        session.summary.model = previous
+        await this.#discard(session)
+      }
+      throw err
+    }
+  }
+
   async startTurn(id: string, input: AgentInput[], opts: TurnOptions = {}) {
     checkPolicy(opts)
     const session = await this.#load(id)
     if (session.starting || session.history.live) throw clientError('此 Antigravity 会话正在运行。', 409)
     session.starting = true
     try {
-      const { connection, info } = await this.#client()
-      const prompt = promptBlocks(input, Boolean(info.agentCapabilities?.promptCapabilities?.image))
-      await this.#configure(session, connection, opts)
+      const prompt = promptBlocks(input, Boolean(session.client.info.agentCapabilities?.promptCapabilities?.image))
+      await this.#selectForTurn(session, opts)
+      const { connection } = session.client
+      if (this.#opened.get(id) !== session || connection.signal.aborted) throw new Error('Antigravity CLI 已断开连接。')
       session.history.live = true
       const turnId = session.history.begin()
       session.history.userInput(prompt)
@@ -572,9 +708,9 @@ export class AntigravityProvider implements AgentProvider {
 
   #running(id: string, turnId: string) {
     const session = this.#opened.get(id)
-    if (!session?.history.live || session.history.turn?.id !== turnId || !this.#ready)
+    if (!session?.history.live || session.history.turn?.id !== turnId || session.client.connection.signal.aborted)
       throw clientError('Antigravity 回合已结束。', 409)
-    return { session, ...this.#ready }
+    return { session, ...session.client }
   }
 
   async steer(id: string, turnId: string, input: AgentInput[]) {

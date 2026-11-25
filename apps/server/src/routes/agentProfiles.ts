@@ -15,6 +15,7 @@ import {
   type AgentProfileStore,
 } from '../agents/profiles.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
+import { geminiModelsUrl } from '../antigravity/modelGateway.js'
 import { requireAuth } from './guards.js'
 import type { NativeAgentConfigStore } from '../agents/nativeConfig.js'
 import { AGENT_IDS } from '../agents/manifest.js'
@@ -220,8 +221,7 @@ async function fetchProfileModels(
 }
 
 async function fetchGeminiModels(profile: { baseUrl: string; apiKey: string }): Promise<ModelInfo[]> {
-  const base = profile.baseUrl || 'https://generativelanguage.googleapis.com'
-  const url = new URL(`${base}${/\/v1(?:beta)?$/.test(base) ? '' : '/v1beta'}/models`)
+  const url = new URL(geminiModelsUrl(profile.baseUrl))
   const headers: Record<string, string> = { accept: 'application/json' }
   if (profile.apiKey) headers['x-goog-api-key'] = profile.apiKey
   const models = new Map<string, ModelInfo>()

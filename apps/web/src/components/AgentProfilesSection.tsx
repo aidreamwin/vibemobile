@@ -224,7 +224,7 @@ export default function AgentProfilesSection({
       )
       setProviderModels((current) => [...new Set([...current, ...fetched])].slice(0, 100))
       setModelContextWindows((current) => ({ ...current, ...fetchedContextWindows }))
-      if (selected !== 'antigravity' && !model.trim() && fetched.length === 1) setModel(fetched[0])
+      if (!model.trim() && fetched.length === 1) setModel(fetched[0])
     } catch (err) {
       if (fetchId === modelFetchId.current) setModelFetchError(agentProfileErrorLabel(err))
     } finally {
@@ -400,14 +400,14 @@ export default function AgentProfilesSection({
                   {error}
                 </p>
               )}
-              {panel.profile?.active && changed && (selected !== 'antigravity' || connectionChanged) && (
+              {panel.profile?.active && changed && (
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {nativeEditor && limitation
                     ? '保存后需在外部服务中重新加载配置。'
                     : selected === 'claude'
                       ? '新配置从下一回合生效。'
                       : selected === 'antigravity'
-                        ? '当前回合结束后可以保存，新配置会重新连接 CLI。'
+                        ? '更改接口、密钥或模型会重新连接 CLI，请在当前回合结束后保存这些更改。'
                         : '保存将重启服务，中断正在进行的回合。'}
                 </p>
               )}
@@ -482,22 +482,20 @@ export default function AgentProfilesSection({
                   />
                 </div>
               )}
-              {selected !== 'antigravity' && (
-                <label htmlFor="agent-profile-model" className="block space-y-2 text-xs text-muted-foreground">
-                  <span>默认模型</span>
-                  <Input
-                    value={model}
-                    id="agent-profile-model"
-                    onChange={(event) => setModel(event.target.value)}
-                    placeholder="留空使用默认模型"
-                    list={selectedProvider ? 'agent-native-models' : undefined}
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="h-12 rounded-xl font-mono text-base md:text-base"
-                  />
-                </label>
-              )}
+              <label htmlFor="agent-profile-model" className="block space-y-2 text-xs text-muted-foreground">
+                <span>默认模型</span>
+                <Input
+                  value={model}
+                  id="agent-profile-model"
+                  onChange={(event) => setModel(event.target.value)}
+                  placeholder="留空使用默认模型"
+                  list={selectedProvider ? 'agent-native-models' : undefined}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="h-12 rounded-xl font-mono text-base md:text-base"
+                />
+              </label>
               <label htmlFor="agent-profile-base-url" className="block space-y-2 text-xs text-muted-foreground">
                 <span>接口地址</span>
                 <Input
@@ -629,35 +627,25 @@ export default function AgentProfilesSection({
                       </div>
                     )}
                     {modelFetchError && <p className="text-xs text-destructive">{modelFetchError}</p>}
-                    <p className="text-xs text-muted-foreground">
-                      {selected === 'antigravity'
-                        ? '供应商提供的模型 ID，最多保存 100 个。会话可选模型由 Antigravity CLI 决定。'
-                        : '点选模型设为默认，最多添加 100 个。'}
-                    </p>
+                    <p className="text-xs text-muted-foreground">点选模型设为默认，最多添加 100 个。</p>
                     {providerModels.length > 0 ? (
                       <div className="divide-y divide-border/60">
                         {providerModels.map((value) => (
                           <div key={value} className="flex min-w-0 items-center gap-1">
-                            {selected === 'antigravity' ? (
-                              <span className="min-w-0 flex-1 break-all py-3 font-mono text-sm text-foreground/80">
+                            <button
+                              type="button"
+                              className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
+                              onClick={() => setModel(value)}
+                              aria-label={`设为默认模型 ${value}`}
+                              aria-pressed={model === value}
+                            >
+                              <span
+                                className={`min-w-0 flex-1 break-all font-mono text-sm ${model === value ? 'text-primary' : 'text-foreground/80'}`}
+                              >
                                 {value}
                               </span>
-                            ) : (
-                              <button
-                                type="button"
-                                className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
-                                onClick={() => setModel(value)}
-                                aria-label={`设为默认模型 ${value}`}
-                                aria-pressed={model === value}
-                              >
-                                <span
-                                  className={`min-w-0 flex-1 break-all font-mono text-sm ${model === value ? 'text-primary' : 'text-foreground/80'}`}
-                                >
-                                  {value}
-                                </span>
-                                {model === value && <Check className="size-4 shrink-0 text-primary" />}
-                              </button>
-                            )}
+                              {model === value && <Check className="size-4 shrink-0 text-primary" />}
+                            </button>
                             <button
                               type="button"
                               className="tap size-11 shrink-0 rounded-lg text-muted-foreground hover:text-destructive"
@@ -691,7 +679,7 @@ export default function AgentProfilesSection({
                           const value = newModel.trim()
                           if (value && !providerModels.includes(value) && providerModels.length < 100) {
                             setProviderModels((current) => [...current, value])
-                            if (selected !== 'antigravity') setModel(value)
+                            setModel(value)
                             setNewModel('')
                           }
                         }}
@@ -707,7 +695,7 @@ export default function AgentProfilesSection({
                           const value = newModel.trim()
                           if (!value || providerModels.includes(value) || providerModels.length >= 100) return
                           setProviderModels((current) => [...current, value])
-                          if (selected !== 'antigravity') setModel(value)
+                          setModel(value)
                           setNewModel('')
                         }}
                         aria-label="添加模型"
