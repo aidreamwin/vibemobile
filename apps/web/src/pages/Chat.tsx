@@ -47,6 +47,8 @@ export default function Chat() {
   const [turnModel, setTurnModel] = useState('')
   const [turnEffort, setTurnEffort] = useState('')
   const [turnPermission, setTurnPermission] = useState<PermissionCard>('ask')
+  const permissionCards = permissionCardsFor(session?.provider, session?.permissionModes)
+  const selectedPermission = permissionCards.includes(turnPermission) ? turnPermission : 'ask'
   const [models, setModels] = useState<ModelInfo[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
   const [loadErrorCode, setLoadErrorCode] = useState<string | null>(null)
@@ -214,7 +216,7 @@ export default function Chat() {
           permissionCardFor(
             transcript.session.sandbox,
             transcript.session.approvalPolicy,
-            permissionCardsFor(transcript.session.provider),
+            permissionCardsFor(transcript.session.provider, transcript.session.permissionModes),
           ),
         )
         if (!viewingReadOnly) {
@@ -540,7 +542,7 @@ export default function Chat() {
           reader.readAsDataURL(blob)
         })
       })
-      const permission = PERMISSIONS[turnPermission]
+      const permission = PERMISSIONS[selectedPermission]
       await socket.startTurn(threadId, input, {
         model: turnModel || undefined,
         effort: turnEffort || undefined,
@@ -553,7 +555,7 @@ export default function Chat() {
       busy.current = false
       setRetrying(false)
     }
-  }, [threadId, readOnly, running, lastPrompt, turnPermission, turnModel, turnEffort])
+  }, [threadId, readOnly, running, lastPrompt, selectedPermission, turnModel, turnEffort])
 
   const stop = useCallback(async () => {
     if (readOnly || !threadId) return
@@ -822,9 +824,9 @@ export default function Chat() {
         effort={turnEffort}
         onModelChange={changeModel}
         onEffortChange={setTurnEffort}
-        permission={turnPermission}
+        permission={selectedPermission}
         onPermissionChange={setTurnPermission}
-        cards={permissionCardsFor(session?.provider)}
+        cards={permissionCards}
         commands={commands}
         readOnly={
           readOnly

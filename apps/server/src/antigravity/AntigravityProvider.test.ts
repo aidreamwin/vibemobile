@@ -27,6 +27,7 @@ let launchKeys: (string | undefined)[]
 let baseUrl: string
 let models: string[]
 let launchUrls: (string | undefined)[]
+let launchUnattended: boolean[]
 const configOptions = [
   {
     type: 'select',
@@ -61,6 +62,7 @@ beforeEach(() => {
   baseUrl = ''
   models = []
   launchUrls = []
+  launchUnattended = []
   cwd = mkdtempSync(path.join(os.tmpdir(), 'vibe-agy-acp-'))
   agent = mockAgent()
   nextAgent = () => agent
@@ -72,9 +74,10 @@ beforeEach(() => {
       apiKey
         ? { apiKey, baseUrl, name: 'Gemini', id: 'gemini', updatedAt: 1, models, model: models[0] ?? '' }
         : undefined,
-    connect: async (client, _cwd, _bin, key, url) => {
+    connect: async (client, _cwd, _bin, key, url, _gateway, unattended) => {
       launchKeys.push(key)
       launchUrls.push(url)
+      launchUnattended.push(Boolean(unattended))
       connection = client.connect(nextAgent())
       return connection
     },
@@ -222,6 +225,87 @@ describe('supplier catalogues larger than the ACP limit', () => {
 })
 
 describe('Antigravity ACP session lifecycle', () => {
+  it('discovers native permission modes and applies them across model and permission changes', async () => {
+    const choices = ['default', 'accept-edits', 'plan', 'auto']
+    const modesFor = (currentModeId: string) => ({
+      modes: { currentModeId, availableModes: choices.map((id) => ({ id, name: id })) },
+      configOptions: [
+        ...configOptions,
+        {
+          id: 'mode',
+          category: 'mode',
+          type: 'select' as const,
+          name: 'Mode',
+          currentValue: currentModeId,
+          options: choices.map((value) => ({ value, name: value })),
+        },
+      ] satisfies SessionConfigOption[],
+    })
+    const runs: { id: string; mode: string; unattended: boolean }[] = []
+    let count = 0
+    nextAgent = () => {
+      const unattended = launchUnattended.at(-1) ?? false
+      const selected = new Map<string, string>()
+      return mockAgent()
+        .onRequest('session/list', () => ({ sessions: [] }))
+        .onRequest('session/new', () => {
+          const id = `mode-${++count}`
+          selected.set(id, 'default')
+          return { sessionId: id, ...modesFor('default') }
+        })
+        .onRequest('session/close', ({ params }) => {
+          selected.delete(params.sessionId)
+          return {}
+        })
+        .onRequest('session/load', ({ params }) => {
+          selected.set(params.sessionId, 'default')
+          return modesFor('default')
+        })
+        .onRequest('session/set_config_option', ({ params }) => {
+          expect(params.configId).toBe('mode')
+          selected.set(params.sessionId, String(params.value))
+          return modesFor(String(params.value))
+        })
+        .onRequest('session/prompt', ({ params }) => {
+          runs.push({ id: params.sessionId, mode: selected.get(params.sessionId) ?? '', unattended })
+          return { stopReason: 'end_turn' }
+        })
+    }
+    expect((await provider.probe()).permissionModes).toEqual(['on-request', 'accept-edits', 'plan', 'auto', 'never'])
+    const session = await provider.createSession({ cwd, approvalPolicy: 'plan' })
+    expect(session.approvalPolicy).toBe('plan')
+    const other = await provider.createSession({ cwd })
+    const send = async (id: string, approvalPolicy: 'on-request' | 'accept-edits' | 'plan' | 'auto' | 'never') => {
+      await provider.startTurn(id, [{ type: 'text', text: 'test mode' }], {
+        approvalPolicy,
+        sandbox: approvalPolicy === 'never' ? 'danger-full-access' : 'workspace-write',
+      })
+      await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    }
+    await send(session.id, 'plan')
+    await send(session.id, 'accept-edits')
+    await send(session.id, 'auto')
+    await send(session.id, 'never')
+    await send(other.id, 'on-request')
+    expect(runs.at(-1)).toEqual({ id: other.id.slice(4), mode: 'default', unattended: false })
+    await provider.stop()
+    expect((await provider.resumeSession(session.id))?.approvalPolicy).toBe('never')
+    await send(session.id, 'never')
+    await send(session.id, 'on-request')
+    expect(
+      runs.filter((run) => run.id === session.id.slice(4)).map(({ mode, unattended }) => [mode, unattended]),
+    ).toEqual([
+      ['plan', false],
+      ['accept-edits', false],
+      ['auto', false],
+      ['default', true],
+      ['default', true],
+      ['default', false],
+    ])
+    expect((await provider.getSession(session.id))?.approvalPolicy).toBe('on-request')
+    expect(launchUnattended).toEqual([false, true, false, true])
+  })
+
   it('applies supplier defaults, accepts the old model/effort pair, and restores the selected full ID', async () => {
     apiKey = 'supplier-key'
     models = ['gateway-custom', 'gemini-4-neon-low']
@@ -450,7 +534,8 @@ describe('Antigravity ACP session lifecycle', () => {
       finish?.({ stopReason: 'cancelled' })
     })
     const { id } = await provider.createSession({ cwd })
-    await expect(provider.startTurn(id, [], { approvalPolicy: 'never' })).rejects.toThrow('按需确认')
+    await expect(provider.startTurn(id, [], { approvalPolicy: 'never' })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(provider.startTurn(id, [], { approvalPolicy: 'auto' })).rejects.toMatchObject({ statusCode: 400 })
     const { turnId } = await provider.startTurn(id, [{ type: 'text', text: 'start' }])
     await expect(provider.startTurn(id, [])).rejects.toThrow('正在运行')
     await provider.steer(id, turnId, [{ type: 'text', text: 'more' }])

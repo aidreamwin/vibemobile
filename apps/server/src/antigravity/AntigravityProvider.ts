@@ -15,6 +15,7 @@ import type {
   AgentEvent,
   AgentInput,
   ApprovalDecision,
+  ApprovalPolicy,
   ModelInfo,
   SessionStatus,
   SessionSummary,
@@ -42,6 +43,7 @@ type AcpClient = {
   connection: ClientConnection
   info: InitializeResponse
   gateway?: Awaited<ReturnType<typeof startModelGateway>>
+  unattended: boolean
 }
 type Controls = { configOptions?: SessionConfigOption[] | null; modes?: SessionModeState | null }
 type TurnOptions = NonNullable<Parameters<AgentProvider['startTurn']>[2]>
@@ -80,12 +82,31 @@ const selectOption = (options: SessionConfigOption[], category: string) =>
 const values = (option: ReturnType<typeof selectOption>) =>
   option?.type === 'select' ? option.options.flatMap((v) => ('options' in v ? v.options : [v])) : []
 
-function checkPolicy(opts: TurnOptions) {
+function permissionFor(opts: TurnOptions): ApprovalPolicy {
+  const policy = opts.approvalPolicy ?? 'on-request'
+  const expectedSandbox = policy === 'never' ? 'danger-full-access' : 'workspace-write'
   if (
-    (opts.sandbox && opts.sandbox !== 'workspace-write') ||
-    (opts.approvalPolicy && opts.approvalPolicy !== 'on-request')
+    (opts.sandbox && opts.sandbox !== expectedSandbox) ||
+    (policy === 'never' && opts.sandbox !== expectedSandbox) ||
+    !['on-request', 'accept-edits', 'plan', 'auto', 'never'].includes(policy)
   )
-    throw clientError('Antigravity 仅支持按需确认，工具权限由 CLI 规则控制。', 400)
+    throw clientError('Antigravity 不支持该权限组合。', 400)
+  return policy
+}
+
+const nativeMode = (policy: ApprovalPolicy) => (policy === 'on-request' || policy === 'never' ? 'default' : policy)
+
+function permissionModes(data: Controls, client: AcpClient): ApprovalPolicy[] {
+  const mode = selectOption(data.configOptions ?? [], 'mode')
+  const available = mode
+    ? values(mode).map((entry) => entry.value)
+    : (data.modes?.availableModes.map((entry) => entry.id) ?? [])
+  const policies: ApprovalPolicy[] = [
+    'on-request',
+    ...(['accept-edits', 'plan', 'auto'] as const).filter((entry) => available.includes(entry)),
+  ]
+  if (client.info.agentCapabilities?.sessionCapabilities?.close) policies.push('never')
+  return policies
 }
 
 export class AntigravityProvider implements AgentProvider {
@@ -95,7 +116,8 @@ export class AntigravityProvider implements AgentProvider {
   #emit = (event: AgentEvent) => {
     this.#events.emit('event', event)
   }
-  #clients = new Map<number, Promise<AcpClient>>()
+  #clients = new Map<string, Promise<AcpClient>>()
+  #permissionModes: ApprovalPolicy[] | undefined
   #known = new Map<string, SessionSummary>()
   #revisions = new Map<string, string>()
   #opened = new Map<string, OpenSession>()
@@ -118,7 +140,7 @@ export class AntigravityProvider implements AgentProvider {
     }
   }
 
-  #client(model?: string) {
+  #client(model?: string, unattended = false) {
     const profile = this.opts.profile?.()
     const models = supplierModels(profile)
     const index = model && models.length ? models.indexOf(model) : 0
@@ -127,21 +149,22 @@ export class AntigravityProvider implements AgentProvider {
     // Keep the supplier default first in every client.
     const pageSize = ACP_CATALOG_LIMIT - 1
     const group = Math.floor(Math.max(0, index - 1) / pageSize)
-    const cached = this.#clients.get(group)
+    const key = `${group}:${unattended}`
+    const cached = this.#clients.get(key)
     if (cached) return cached
     const start = 1 + group * pageSize
     const catalog = models.slice(start, start + pageSize)
     if (models.length) catalog.unshift(models[0])
-    const pending = this.#connect(profile, catalog)
-    this.#clients.set(group, pending)
+    const pending = this.#connect(profile, catalog, unattended)
+    this.#clients.set(key, pending)
     const forget = () => {
-      if (this.#clients.get(group) === pending) this.#clients.delete(group)
+      if (this.#clients.get(key) === pending) this.#clients.delete(key)
     }
     void pending.then(({ connection }) => connection.closed.then(forget), forget)
     return pending
   }
 
-  async #connect(profile: ReturnType<AgentConnection>, models: string[]): Promise<AcpClient> {
+  async #connect(profile: ReturnType<AgentConnection>, models: string[], unattended: boolean): Promise<AcpClient> {
     let connection: ClientConnection
     const app = new ClientApp()
       .onNotification('session/update', ({ params }) => this.#update(params, connection))
@@ -163,6 +186,7 @@ export class AntigravityProvider implements AgentProvider {
       profile?.apiKey,
       profile?.baseUrl,
       useGateway,
+      unattended,
     )
     let gateway: AcpClient['gateway']
     try {
@@ -211,7 +235,7 @@ export class AntigravityProvider implements AgentProvider {
         }
         if (!gateway) this.#models = []
       })
-      return { connection, info, gateway }
+      return { connection, info, gateway, unattended }
     } catch (err) {
       gateway?.close()
       connection.close()
@@ -233,12 +257,14 @@ export class AntigravityProvider implements AgentProvider {
         await client?.connection.closed
       }),
     )
+    this.#permissionModes = undefined
   }
 
   async probe(): Promise<ProviderProbe> {
     const base = { id: this.id, displayName: this.displayName }
     try {
-      const { connection, info } = await this.#client()
+      const client = await this.#client()
+      const { connection, info } = client
       const version = info.agentInfo?.version
       try {
         await connection.agent.request('session/list', { cwd: this.opts.workspaceRoots[0] }, deadline())
@@ -247,7 +273,28 @@ export class AntigravityProvider implements AgentProvider {
         if (!this.#opened.size) connection.close() // Next probe picks up a login completed in a terminal.
         return { ...base, version, available: true, authenticated: false, detail: loginHint }
       }
-      return { ...base, version, available: true, authenticated: true }
+      // ACP reports execution modes in session/new, not initialize. A closed
+      // empty session has no history and does not appear in agy's session list.
+      if (!this.#permissionModes && info.agentCapabilities?.sessionCapabilities?.close) {
+        try {
+          const result = await connection.agent.request(
+            'session/new',
+            { cwd: this.opts.workspaceRoots[0], mcpServers: [] },
+            deadline(),
+          )
+          await connection.agent.request('session/close', { sessionId: result.sessionId }, deadline())
+          this.#permissionModes = permissionModes(result, client)
+        } catch {
+          // Opening a real session can still discover supported modes later.
+        }
+      }
+      return {
+        ...base,
+        version,
+        available: true,
+        authenticated: true,
+        permissionModes: this.#permissionModes ?? ['on-request'],
+      }
     } catch (err) {
       return { ...base, available: false, detail: (err as Error).message }
     }
@@ -285,8 +332,8 @@ export class AntigravityProvider implements AgentProvider {
         updatedAt: time,
         needsAttention: false,
         status: 'idle',
-        sandbox: 'workspace-write',
-        approvalPolicy: 'on-request',
+        sandbox: prefs?.approvalPolicy === 'never' ? 'danger-full-access' : 'workspace-write',
+        approvalPolicy: prefs?.approvalPolicy ?? 'on-request',
         canDelete: Boolean(client.info.agentCapabilities?.sessionCapabilities?.delete),
         ...(prefs?.pinned ? { pinned: true } : {}),
         ...(prefs?.archived ? { archived: true } : {}),
@@ -385,8 +432,13 @@ export class AntigravityProvider implements AgentProvider {
 
   #controls(session: OpenSession, data: Controls) {
     if (data.modes) session.mode = data.modes
+    if (data.configOptions) session.options = data.configOptions
+    session.summary.permissionModes = permissionModes(
+      { modes: session.mode, configOptions: session.options },
+      session.client,
+    )
+    if (!session.client.unattended) this.#permissionModes = session.summary.permissionModes
     if (!data.configOptions) return
-    session.options = data.configOptions
     const model = selectOption(session.options, 'model')
     const effort = selectOption(session.options, 'thought_level')
     if (model?.type === 'select') {
@@ -405,10 +457,6 @@ export class AntigravityProvider implements AgentProvider {
 
   async #configure(session: OpenSession, opts: TurnOptions) {
     const { connection, gateway } = session.client
-    if (session.mode && session.mode.currentModeId !== 'default') {
-      await connection.agent.request('session/set_mode', { sessionId: session.nativeId, modeId: 'default' }, deadline())
-      session.mode.currentModeId = 'default'
-    }
     const modelId = opts.model && gateway ? acpModelId(opts.model) : opts.model
     for (const [category, value] of [
       ['model', modelId],
@@ -428,20 +476,55 @@ export class AntigravityProvider implements AgentProvider {
           ),
         )
     }
-    const selected = session.summary.model
-    if (gateway && opts.model && selected !== opts.model) {
+    if (gateway && opts.model && session.summary.model !== opts.model) {
       session.stale = true
       throw clientError('Antigravity CLI 未应用选定的供应商模型。', 502)
     }
-    if (gateway && selected && this.#prefs.get(session.summary.id)?.model !== selected)
-      this.#prefs.set(session.summary.id, { model: selected })
+  }
+
+  async #configurePermission(session: OpenSession, policy: ApprovalPolicy) {
+    const mode = nativeMode(policy)
+    const option = selectOption(session.options, 'mode')
+    const current = option?.type === 'select' ? option.currentValue : session.mode?.currentModeId
+    if (policy !== 'on-request' && !session.summary.permissionModes?.includes(policy))
+      throw clientError('当前 Antigravity CLI 不支持所选权限模式。', 400)
+    if (session.client.unattended !== (policy === 'never')) throw new Error('Antigravity 权限与执行进程不一致。')
+    if (current && current !== mode) {
+      if (option?.type === 'select') {
+        this.#controls(
+          session,
+          await session.client.connection.agent.request(
+            'session/set_config_option',
+            { sessionId: session.nativeId, configId: option.id, value: mode },
+            deadline(),
+          ),
+        )
+        const applied = selectOption(session.options, 'mode')
+        if (applied?.type !== 'select' || applied.currentValue !== mode)
+          throw clientError('Antigravity CLI 未应用选定的权限模式。', 502)
+      } else {
+        await session.client.connection.agent.request(
+          'session/set_mode',
+          { sessionId: session.nativeId, modeId: mode },
+          deadline(),
+        )
+        if (session.mode) session.mode.currentModeId = mode
+      }
+    }
+    session.summary.approvalPolicy = policy
+    session.summary.sandbox = policy === 'never' ? 'danger-full-access' : 'workspace-write'
+    this.#prefs.set(session.summary.id, {
+      approvalPolicy: policy,
+      sandbox: session.summary.sandbox,
+      model: session.client.gateway ? (session.summary.model ?? undefined) : undefined,
+    })
   }
 
   async createSession(opts: CreateSessionOptions) {
-    checkPolicy(opts)
+    const policy = permissionFor(opts)
     const cwd = await resolveDirectory(this.opts.workspaceRoots, opts.cwd)
     const model = opts.model || supplierModels(this.opts.profile?.())[0]
-    const client = await this.#client(model)
+    const client = await this.#client(model, policy === 'never')
     let session: OpenSession | undefined
     try {
       const result = await client.connection.agent.request('session/new', { cwd, mcpServers: [] }, deadline(30_000))
@@ -449,6 +532,7 @@ export class AntigravityProvider implements AgentProvider {
       session = this.#open(summary, client)
       this.#controls(session, result)
       await this.#configure(session, { model })
+      await this.#configurePermission(session, policy)
       this.#prune(session)
       return summary
     } catch (err) {
@@ -518,7 +602,16 @@ export class AntigravityProvider implements AgentProvider {
     try {
       await this.#attach(session, true)
       session.history.finish('completed')
-      if (model) await this.#configure(session, { model })
+      if (model) {
+        await this.#configure(session, { model })
+        this.#prefs.set(id, { model })
+      }
+      // Opening history reports the remembered selection. The next turn applies it.
+      if (summary.approvalPolicy && !summary.permissionModes?.includes(summary.approvalPolicy)) {
+        summary.approvalPolicy = 'on-request'
+        summary.sandbox = 'workspace-write'
+        this.#prefs.set(id, { approvalPolicy: 'on-request', sandbox: 'workspace-write' })
+      }
       this.#prune(session)
       return session
     } catch (err) {
@@ -645,16 +738,27 @@ export class AntigravityProvider implements AgentProvider {
   }
 
   async #selectForTurn(session: OpenSession, opts: TurnOptions) {
-    if (!session.client.gateway) return this.#configure(session, opts)
+    const policy = permissionFor(opts)
     let model = opts.model || session.summary.model || undefined
-    if (opts.effort) {
+    if (session.client.gateway && opts.effort) {
       // Older web clients sent the base model and effort separately.
       const variant = `${model}-${opts.effort}`
       if (supplierModels(this.opts.profile?.()).includes(variant)) model = variant
       else if (!model?.endsWith(`-${opts.effort}`)) throw clientError('请选择供应商提供的完整模型 ID。', 400)
     }
-    if (!model || session.client.gateway.byAcpId.has(acpModelId(model))) return this.#configure(session, { model })
-    const next = await this.#client(model)
+    const settings = session.client.gateway ? { model } : opts
+    const unattended = policy === 'never'
+    if (
+      session.client.unattended === unattended &&
+      (!session.client.gateway || !model || session.client.gateway.byAcpId.has(acpModelId(model)))
+    ) {
+      await this.#configure(session, settings)
+      await this.#configurePermission(session, policy)
+      return
+    }
+    if (!session.client.info.agentCapabilities?.sessionCapabilities?.close)
+      throw clientError('当前 Antigravity CLI 不支持切换执行进程。', 400)
+    const next = await this.#client(model, unattended)
     // Keep the native session ID and the transcript already displayed on the phone.
     const previous = session.summary.model
     try {
@@ -664,7 +768,8 @@ export class AntigravityProvider implements AgentProvider {
       session.options = []
       session.mode = undefined
       await this.#attach(session, false)
-      await this.#configure(session, { model })
+      await this.#configure(session, { ...settings, model })
+      await this.#configurePermission(session, policy)
     } catch (err) {
       if (this.#opened.get(session.summary.id) === session) {
         session.summary.model = previous
@@ -675,7 +780,7 @@ export class AntigravityProvider implements AgentProvider {
   }
 
   async startTurn(id: string, input: AgentInput[], opts: TurnOptions = {}) {
-    checkPolicy(opts)
+    permissionFor(opts)
     const session = await this.#load(id)
     if (session.starting || session.history.live) throw clientError('此 Antigravity 会话正在运行。', 409)
     session.starting = true

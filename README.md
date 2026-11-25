@@ -231,18 +231,20 @@ expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
 
 ## 权限档位
 
-输入框上的权限项**每回合**决定沙箱和审批策略，并覆盖建会话时的预设。四档：
+输入框上的权限项**每回合**决定沙箱和审批策略，并覆盖建会话时的预设。
 
-| 档位 | Claude | Codex | OpenCode | 说明 |
+| 档位 | Claude | Codex | OpenCode | Antigravity |
 |---|---|---|---|---|
-| 按需确认 | `default` | `workspace-write` + `on-request` | `*/* → ask` | 需要时弹审批 |
-| 只读 | `plan` | `read-only` | — | 只读探索 |
-| 自动判断 | `auto` | — | — | Claude 专属；**不弹审批**，判不了时直接拦掉动作 |
-| 完全访问 | `bypassPermissions` | `danger-full-access` | `*/* → allow` | **无人值守**，不再有任何确认 |
+| 按需确认 | `default` | `workspace-write` + `on-request` | `*/* → ask` | `default` |
+| 只读 | `plan` | `read-only` | — | — |
+| 自动接受编辑 | — | — | — | `accept-edits` |
+| 规划模式 | — | — | — | `plan` |
+| 自动判断 | `auto` | — | — | `auto`（CLI 支持时） |
+| 完全访问 | `bypassPermissions` | `danger-full-access` | `*/* → allow` | CLI 免审批模式 |
 
 - OpenCode 没有 OS 沙箱（`plan` 仍允许 shell），所以只提供「按需确认 / 完全访问」两张卡。
 - 读不到会话当前档位时一律兜底到「按需确认」，绝不填「上次选过的那档」。
-- 「自动判断」不向手机抛审批，屏幕上看不出它放过了什么；它也不能在建会话时选。
+- Claude 自动判断由 SDK 执行。Antigravity 自动判断由 CLI 执行，风险操作仍可能弹审批。
 - 「完全访问」是本应用里唯一能让一部手机拿到无限制机器权限的入口。
 
 详细约束和已知边界见 [docs/limitations.md](docs/limitations.md)。
@@ -293,7 +295,7 @@ packages/protocol/src/
 - 新建会话时选的沙箱会被输入框上的权限项覆盖；9 种组合里有 6 种在输入框上
   表达不出来。
 - Claude 检测不到桌面端 CLI 的并发写入。
-- 「完全访问」等同于无人值守；「自动判断」不弹审批。
+- Antigravity 的自动判断取决于账号和终端沙箱支持，完全访问仍受 CLI 已配置的权限规则约束。
 - 图片缓存不跟随会话删除，也没有容量上限（整个删掉永远安全）。
 - Codex 的 `request_user_input` 链路只验证了一半。
 - 新建但未发消息的 Codex 会话，服务重启后找不回来。

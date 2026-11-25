@@ -29,6 +29,7 @@ export interface ProviderProbe {
   available: boolean
   version?: string
   authenticated?: boolean
+  permissionModes?: ApprovalPolicy[]
   detail?: string
 }
 

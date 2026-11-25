@@ -29,13 +29,16 @@ export async function connectCli(
   apiKey?: string,
   baseUrl?: string,
   gateway = false,
+  unattended = false,
 ): Promise<ClientConnection> {
   const env = gateway
     ? { ...process.env, AGY_ACP_ENABLE_GATEWAY_AUTH: 'true' }
     : apiKey
       ? { ...process.env, GEMINI_API_KEY: apiKey, GOOGLE_GEMINI_BASE_URL: baseUrl || undefined }
       : process.env
-  const child = spawn(bin, ['acp'], { cwd, env, windowsHide: true })
+  const args = ['acp']
+  if (unattended) args.push('--dangerously-skip-permissions')
+  const child = spawn(bin, args, { cwd, env, windowsHide: true })
   child.stderr.resume()
   try {
     await once(child, 'spawn')

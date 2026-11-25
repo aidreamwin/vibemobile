@@ -19,6 +19,8 @@ export interface ProviderStatus {
   available: boolean
   version?: string
   authenticated?: boolean
+  /** Permission choices reported by the agent runtime, when available. */
+  permissionModes?: ApprovalPolicy[]
   /** Human-readable reason when `available` is false. */
   detail?: string
 }
@@ -346,10 +348,8 @@ export interface SessionSummary {
    * sandbox/approvalPolicy field. The two halves are kept independent rather
    * than collapsed into a level, because the app-server treats them that way.
    *
-   * A pair naming `approvalPolicy: 'auto'` is Claude's 自动判断 rung and is never
-   * reported for a Codex session (that provider cannot accept the value, so it
-   * records nothing). Consumers offering a picker must leave the rung out for
-   * anything that is not Claude rather than render it and send it.
+   * Claude and supported Antigravity environments use `approvalPolicy: 'auto'`.
+   * Antigravity also exposes its native planning and edit approval modes.
    *
    * `undefined` means "not known" and is a real answer — a session this backend
    * never drove, one whose entry was evicted, or a Codex pair outside the three
@@ -361,6 +361,8 @@ export interface SessionSummary {
    */
   sandbox?: SandboxMode | null
   approvalPolicy?: ApprovalPolicy | null
+  /** Supported choices for this session, when determined by the runtime. */
+  permissionModes?: ApprovalPolicy[]
 }
 
 export interface TranscriptTurn {
@@ -407,8 +409,8 @@ export interface CreateSessionOptions {
 
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 /**
- * The union is deliberately WIDER than either backend's vocabulary: `'auto'` is
- * Claude's classifier mode and means nothing to the Codex app-server.
+ * The union includes provider-specific modes. Each provider validates the
+ * selections it can apply.
  *
  * It travels in this field rather than in one of its own because the pair is the
  * only channel a permission level has: the composer sends `(sandbox,
@@ -423,7 +425,7 @@ export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
  * app's `permissionCardsFor`, which does not offer the card for a provider that
  * has no such mode.
  */
-export type ApprovalPolicy = 'untrusted' | 'on-request' | 'never' | 'auto'
+export type ApprovalPolicy = 'untrusted' | 'on-request' | 'never' | 'auto' | 'accept-edits' | 'plan'
 
 // ------------------------------------------------------------------ files
 

@@ -39,6 +39,8 @@ const PERMISSION_HINTS: Record<PermissionCard, string> = {
   ask: '需要授权时先向你确认',
   readonly: '仅查看，不修改文件',
   auto: '由 Claude 自动判断工具权限',
+  'accept-edits': '工作区文件编辑自动通过，命令按规则审批',
+  plan: '先分析任务并制定执行计划',
   unattended: '不限目录、不限联网，谨慎使用',
 }
 
@@ -81,6 +83,8 @@ export default function NewSessionSheet({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pickingDirectory, setPickingDirectory] = useState(false)
+  const cards = permissionCardsFor(provider, providers?.find((item) => item.id === provider)?.permissionModes)
+  const selectedCard = cards.includes(cardPermission) ? cardPermission : 'ask'
 
   useEffect(() => {
     let cancelled = false
@@ -116,8 +120,8 @@ export default function NewSessionSheet({
         model: model || undefined,
         ...(usesPermissionCards(provider)
           ? {
-              sandbox: PERMISSIONS[cardPermission].sandbox,
-              approvalPolicy: PERMISSIONS[cardPermission].approvalPolicy,
+              sandbox: PERMISSIONS[selectedCard].sandbox,
+              approvalPolicy: PERMISSIONS[selectedCard].approvalPolicy,
             }
           : { sandbox, approvalPolicy }),
       })
@@ -222,13 +226,19 @@ export default function NewSessionSheet({
         {usesPermissionCards(provider) ? (
           <Field label="权限">
             <div className="space-y-1.5">
-              {permissionCardsFor(provider).map((card) => (
+              {cards.map((card) => (
                 <Option
                   key={card}
-                  selected={cardPermission === card}
+                  selected={selectedCard === card}
                   onClick={() => setCardPermission(card)}
                   label={PERMISSIONS[card].label}
-                  hint={PERMISSION_HINTS[card]}
+                  hint={
+                    provider === 'antigravity' && card === 'auto'
+                      ? '自动接受编辑，安全命令由 CLI 判断，风险操作仍可要求确认'
+                      : provider === 'antigravity' && card === 'unattended'
+                        ? '使用 CLI 的免审批模式，仍遵循执行机的权限规则'
+                        : PERMISSION_HINTS[card]
+                  }
                   danger={card === 'unattended'}
                 />
               ))}

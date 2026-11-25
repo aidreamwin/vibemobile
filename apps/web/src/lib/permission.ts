@@ -18,12 +18,10 @@ import type { ApprovalPolicy, ProviderId, SandboxMode } from '@vibemobile/protoc
  * (`codex/permission.ts`), so adding or removing a level means touching this
  * table, that collapse, and the value lists there.
  *
- * `'auto'` — 自动判断 — is Claude-only and is filtered out for every other
- * provider by `permissionCardsFor` below. It is the one rung with no Codex
- * equivalent, and Codex cannot accept the value (`codex/permission.ts` rejects
- * it), so offering it there would be a card that silently does nothing.
+ * Antigravity exposes its supported native modes in session and provider
+ * metadata. Codex cannot accept `auto`, and OpenCode only supports two cards.
  */
-export type PermissionCard = 'ask' | 'readonly' | 'auto' | 'unattended'
+export type PermissionCard = 'ask' | 'readonly' | 'auto' | 'unattended' | 'accept-edits' | 'plan'
 
 export const PERMISSIONS: Record<
   PermissionCard,
@@ -35,6 +33,8 @@ export const PERMISSIONS: Record<
   // already shows 自动 in two places (`Composer.tsx`), and one word meaning two
   // things in one 390px control row is not worth the two characters saved.
   auto: { label: '自动判断', approvalPolicy: 'auto', sandbox: 'workspace-write' },
+  'accept-edits': { label: '自动接受编辑', approvalPolicy: 'accept-edits', sandbox: 'workspace-write' },
+  plan: { label: '规划模式', approvalPolicy: 'plan', sandbox: 'workspace-write' },
   // Id renamed from 'auto' to 'unattended' when the rung above arrived. The
   // behaviour did not change; this is the word the rest of the project already
   // uses for it (`isUnattended`, "unattended tool calls" in the server log).
@@ -53,6 +53,7 @@ const CODEX_CARDS: PermissionCard[] = ['ask', 'readonly', 'unattended']
  * rungs are offered.
  */
 const OPENCODE_CARDS: PermissionCard[] = ['ask', 'unattended']
+const ANTIGRAVITY_CARDS: PermissionCard[] = ['ask', 'accept-edits', 'plan', 'auto', 'unattended']
 
 /**
  * The cards to offer for a session, by provider.
@@ -69,8 +70,9 @@ const OPENCODE_CARDS: PermissionCard[] = ['ask', 'unattended']
  * error, so the composer only exists once `SessionSummary.provider` is known
  * (it is a required field) — a property of that page, not of this type.
  */
-export function permissionCardsFor(provider: ProviderId | undefined): PermissionCard[] {
-  if (provider === 'antigravity') return ['ask']
+export function permissionCardsFor(provider: ProviderId | undefined, modes?: ApprovalPolicy[]): PermissionCard[] {
+  if (provider === 'antigravity')
+    return ANTIGRAVITY_CARDS.filter((card) => card === 'ask' || modes?.includes(PERMISSIONS[card].approvalPolicy))
   if (provider === 'claude') return PERMISSION_CARDS
   if (provider === 'opencode') return OPENCODE_CARDS
   return CODEX_CARDS

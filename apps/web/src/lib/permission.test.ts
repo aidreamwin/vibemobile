@@ -74,9 +74,16 @@ describe('permissionCardsFor', () => {
     expect(permissionCardsFor('some-future-agent')).toEqual(WITHOUT_AUTO)
   })
 
-  it('only offers the CLI approval mode for Antigravity when creating or driving a session', () => {
+  it('offers Antigravity modes according to the runner capabilities', () => {
     expect(usesPermissionCards('antigravity')).toBe(true)
     expect(permissionCardsFor('antigravity')).toEqual(['ask'])
+    const cards = permissionCardsFor('antigravity', ['on-request', 'accept-edits', 'plan', 'never'])
+    expect(cards).toEqual(['ask', 'accept-edits', 'plan', 'unattended'])
+    for (const card of cards) {
+      const { sandbox, approvalPolicy } = PERMISSIONS[card]
+      expect(permissionCardFor(sandbox, approvalPolicy, cards)).toBe(card)
+    }
+    expect(permissionCardsFor('antigravity', ['on-request', 'auto', 'never'])).toEqual(['ask', 'auto', 'unattended'])
   })
 
   it('keeps the order and the safe card in every list', () => {
