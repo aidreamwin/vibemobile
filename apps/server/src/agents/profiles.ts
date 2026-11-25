@@ -1,7 +1,12 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AgentProfileRequest, AgentRuntimeId, AgentProfilesResponse } from '@vibemobile/protocol'
+import type {
+  AgentProfileRequest,
+  AgentRuntimeId,
+  AgentProfilesResponse,
+  AntigravityConnectionRequest,
+} from '@vibemobile/protocol'
 import { AGENT_IDS } from './manifest.js'
 
 export interface StoredAgentProfile {
@@ -21,6 +26,7 @@ interface ProfileFile {
   profiles: Record<AgentRuntimeId, StoredAgentProfile[]>
   nativeNames: Partial<Record<AgentRuntimeId, string>>
   antigravityApiKey: string
+  antigravityBaseUrl: string
 }
 
 export class AgentProfileError extends Error {
@@ -46,6 +52,7 @@ function emptyFile(): ProfileFile {
     profiles: { codex: [], claude: [], opencode: [] },
     nativeNames: {},
     antigravityApiKey: '',
+    antigravityBaseUrl: '',
   }
 }
 
@@ -60,12 +67,8 @@ function field(value: unknown, max: number): string {
   return value.trim()
 }
 
-export function cleanProfile(
-  input: AgentProfileRequest,
-): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model' | 'models' | 'modelContextWindows'> {
-  const name = field(input?.name, 100)
-  if (!name) throw new AgentProfileError('invalid_agent_profile_name')
-  const baseUrl = field(input?.baseUrl, 2048)
+function cleanBaseUrl(value: unknown): string {
+  const baseUrl = field(value, 2048)
   if (baseUrl) {
     let url: URL
     try {
@@ -77,6 +80,15 @@ export function cleanProfile(
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search)
       throw new AgentProfileError('invalid_agent_profile_url')
   }
+  return baseUrl.replace(/\/+$/, '')
+}
+
+export function cleanProfile(
+  input: AgentProfileRequest,
+): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model' | 'models' | 'modelContextWindows'> {
+  const name = field(input?.name, 100)
+  if (!name) throw new AgentProfileError('invalid_agent_profile_name')
+  const baseUrl = cleanBaseUrl(input?.baseUrl)
   const models = input.models ?? []
   if (
     !Array.isArray(models) ||
@@ -108,7 +120,7 @@ export function cleanProfile(
     throw new AgentProfileError('invalid_agent_profile_value')
   return {
     name,
-    baseUrl: baseUrl.replace(/\/+$/, ''),
+    baseUrl,
     apiKey: field(input?.apiKey, 2000),
     model: field(input?.model, 200),
     models: [...new Set(models.map((value) => value.trim()))],
@@ -138,11 +150,22 @@ export class AgentProfileStore {
     return this.#data.antigravityApiKey
   }
 
-  async setAntigravityApiKey(value: string | null): Promise<void> {
-    const key = value === null ? '' : field(value, 2000)
-    if (value !== null && !key) throw new AgentProfileError('invalid_antigravity_api_key')
-    const change = key !== this.antigravityApiKey ? { agent: 'antigravity' as const } : undefined
-    await this.#save({ ...this.#data, antigravityApiKey: key }, change)
+  get antigravityBaseUrl(): string {
+    return this.#data.antigravityBaseUrl
+  }
+
+  async setAntigravityConnection(input: AntigravityConnectionRequest): Promise<void> {
+    if (input?.apiKey === undefined && input?.baseUrl === undefined)
+      throw new AgentProfileError('invalid_antigravity_api_key')
+    const key = input.apiKey === null ? '' : field(input.apiKey ?? this.antigravityApiKey, 2000)
+    if (input.apiKey !== null && !key) throw new AgentProfileError('invalid_antigravity_api_key')
+    const baseUrl =
+      input.apiKey === null ? '' : cleanBaseUrl(input.baseUrl === undefined ? this.antigravityBaseUrl : input.baseUrl)
+    const changed = key !== this.antigravityApiKey || baseUrl !== this.antigravityBaseUrl
+    await this.#save(
+      { ...this.#data, antigravityApiKey: key, antigravityBaseUrl: baseUrl },
+      changed ? { agent: 'antigravity' } : undefined,
+    )
   }
 
   get(agent: AgentRuntimeId, id: string): StoredAgentProfile | undefined {
@@ -305,6 +328,7 @@ export class AgentProfileStore {
       if (value.version !== 1) throw new Error('version')
       const result = emptyFile()
       result.antigravityApiKey = field(value.antigravityApiKey, 2000)
+      result.antigravityBaseUrl = cleanBaseUrl(value.antigravityBaseUrl)
       for (const agent of AGENT_IDS) {
         const rows = value.profiles[agent]
         if (!Array.isArray(rows) || rows.length > 100) throw new Error('profiles')

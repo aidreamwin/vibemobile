@@ -22,10 +22,16 @@ export function findCli(override?: string): string | undefined {
   ].find(existsSync)
 }
 
-export async function connectCli(app: ClientApp, cwd: string, bin: string, apiKey?: string): Promise<ClientConnection> {
-  // A key entered for Google must use the CLI's official Gemini endpoint even
-  // when the runner's native CLI normally points at a custom endpoint.
-  const env = apiKey ? { ...process.env, GEMINI_API_KEY: apiKey, GOOGLE_GEMINI_BASE_URL: undefined } : process.env
+export async function connectCli(
+  app: ClientApp,
+  cwd: string,
+  bin: string,
+  apiKey?: string,
+  baseUrl?: string,
+): Promise<ClientConnection> {
+  const env = apiKey
+    ? { ...process.env, GEMINI_API_KEY: apiKey, GOOGLE_GEMINI_BASE_URL: baseUrl || undefined }
+    : process.env
   const child = spawn(bin, ['acp'], { cwd, env, windowsHide: true })
   child.stderr.resume()
   try {

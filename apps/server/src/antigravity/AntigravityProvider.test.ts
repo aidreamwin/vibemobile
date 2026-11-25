@@ -22,6 +22,8 @@ let connection: ClientConnection
 let events: AgentEvent[]
 let apiKey: string
 let launchKeys: (string | undefined)[]
+let baseUrl: string
+let launchUrls: (string | undefined)[]
 const configOptions = [
   {
     type: 'select',
@@ -38,6 +40,8 @@ const configOptions = [
 beforeEach(() => {
   apiKey = ''
   launchKeys = []
+  baseUrl = ''
+  launchUrls = []
   cwd = mkdtempSync(path.join(os.tmpdir(), 'vibe-agy-acp-'))
   agent = new AgentApp().onRequest('initialize', () => ({
     protocolVersion: PROTOCOL_VERSION,
@@ -54,8 +58,10 @@ beforeEach(() => {
     workspaceRoots: [cwd],
     stateDir: cwd,
     apiKey: () => apiKey,
-    connect: async (client, _cwd, _bin, key) => {
+    baseUrl: () => baseUrl,
+    connect: async (client, _cwd, _bin, key, url) => {
       launchKeys.push(key)
+      launchUrls.push(url)
       connection = client.connect(agent)
       return connection
     },
@@ -92,15 +98,19 @@ describe('Antigravity ACP session lifecycle', () => {
       return { sessions: [] }
     })
     apiKey = 'first-key'
+    baseUrl = 'https://gemini.example.test'
     const session = await provider.createSession({ cwd })
     await provider.stop()
     apiKey = 'next-key'
+    baseUrl = 'https://other.example.test'
     await expect(provider.resumeSession(session.id)).resolves.toMatchObject({ id: session.id })
     await expect(provider.probe()).resolves.toMatchObject({ authenticated: true })
     await provider.stop()
     apiKey = ''
+    baseUrl = ''
     await expect(provider.probe()).resolves.toMatchObject({ available: true, authenticated: false })
     expect(launchKeys).toEqual(['first-key', 'next-key', ''])
+    expect(launchUrls).toEqual(['https://gemini.example.test', 'https://other.example.test', ''])
     expect(methods).toEqual(['gemini-api-key', 'gemini-api-key'])
   })
 

@@ -180,16 +180,26 @@ describe('distributed Hub and two reverse runners', () => {
     for (const apiKey of ['first-runner-key', 'replacement-runner-key']) {
       const saved = await hub.inject({ method: 'PUT', url, headers, payload: { apiKey } })
       expect(saved.statusCode).toBe(200)
-      expect(saved.json()).toEqual({ hasApiKey: true })
-      expect((await hub.inject({ url, headers })).json()).toEqual({ hasApiKey: true })
+      expect(saved.json()).toEqual({ hasApiKey: true, baseUrl: null })
+      expect((await hub.inject({ url, headers })).json()).toEqual({ hasApiKey: true, baseUrl: null })
     }
+    const baseUrl = 'https://gemini.example.test'
+    const updated = await hub.inject({ method: 'PUT', url, headers, payload: { baseUrl } })
+    expect(updated.statusCode).toBe(200)
+    expect(updated.json()).toEqual({ hasApiKey: true, baseUrl })
     const other = await hub.inject({ url: '/r/r0/api/agent-profiles/antigravity/key', headers })
-    expect(other.json()).toEqual({ hasApiKey: false })
-    for (const payload of [{}, { apiKey: '  ' }, { apiKey: 123 }])
+    expect(other.json()).toEqual({ hasApiKey: false, baseUrl: null })
+    for (const payload of [
+      {},
+      { apiKey: '  ' },
+      { apiKey: 123 },
+      { baseUrl: 'ftp://example.test' },
+      { baseUrl: 'https://example.test?key=secret' },
+    ])
       expect((await hub.inject({ method: 'PUT', url, headers, payload })).statusCode).toBe(400)
-    expect((await hub.inject({ url, headers })).json()).toEqual({ hasApiKey: true })
+    expect((await hub.inject({ url, headers })).json()).toEqual({ hasApiKey: true, baseUrl })
     const cleared = await hub.inject({ method: 'PUT', url, headers, payload: { apiKey: null } })
-    expect(cleared.json()).toEqual({ hasApiKey: false })
+    expect(cleared.json()).toEqual({ hasApiKey: false, baseUrl: null })
   })
 
   it('keeps agent profiles on the selected runner across the authenticated tunnel', async () => {

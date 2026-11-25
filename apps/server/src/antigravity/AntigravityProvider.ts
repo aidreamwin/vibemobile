@@ -57,6 +57,7 @@ interface ProviderOptions {
   workspaceRoots: string[]
   stateDir?: string
   apiKey?: () => string
+  baseUrl?: () => string
   connect?: typeof connectCli
 }
 
@@ -128,7 +129,7 @@ export class AntigravityProvider implements AgentProvider {
     const cwd = this.opts.workspaceRoots[0]
     if (!cwd) throw new Error('Antigravity 需要至少一个工作区。')
     const apiKey = this.opts.apiKey?.()
-    const connection = await (this.opts.connect ?? connectCli)(app, cwd, this.opts.bin, apiKey)
+    const connection = await (this.opts.connect ?? connectCli)(app, cwd, this.opts.bin, apiKey, this.opts.baseUrl?.())
     try {
       const info = await connection.agent.request(
         'initialize',

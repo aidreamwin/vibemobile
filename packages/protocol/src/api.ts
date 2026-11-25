@@ -84,6 +84,12 @@ export interface AgentProfilesResponse {
 
 export interface AntigravityKeyStatus {
   hasApiKey: boolean
+  baseUrl: string | null
+}
+
+export interface AntigravityConnectionRequest {
+  apiKey?: string | null
+  baseUrl?: string
 }
 
 export interface NativeAgentProvider {

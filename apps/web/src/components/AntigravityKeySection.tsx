@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AntigravityKeyStatus } from '@vibemobile/protocol'
+import type { AntigravityConnectionRequest, AntigravityKeyStatus } from '@vibemobile/protocol'
 import { agentProfileErrorLabel } from '../lib/agentProfileErrors'
 import { api } from '../lib/api'
 import { Button } from './ui/button'
@@ -8,13 +8,16 @@ import { Input } from './ui/input'
 export default function AntigravityKeySection({ onSaved }: { onSaved: () => void }) {
   const [status, setStatus] = useState<AntigravityKeyStatus | null>(null)
   const [key, setKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     setError('')
     try {
-      setStatus(await api.antigravityKey())
+      const result = await api.antigravityKey()
+      setStatus(result)
+      setBaseUrl(result.baseUrl ?? '')
     } catch (err) {
       setError(agentProfileErrorLabel(err))
     }
@@ -24,12 +27,14 @@ export default function AntigravityKeySection({ onSaved }: { onSaved: () => void
     void load()
   }, [load])
 
-  async function save(value: string | null) {
+  async function save(value: AntigravityConnectionRequest) {
     if (busy || !status) return
     setBusy(true)
     setError('')
     try {
-      setStatus(await api.setAntigravityKey(value))
+      const result = await api.setAntigravityKey(value)
+      setStatus(result)
+      setBaseUrl(result.baseUrl ?? '')
       setKey('')
       onSaved()
     } catch (err) {
@@ -56,14 +61,33 @@ export default function AntigravityKeySection({ onSaved }: { onSaved: () => void
     )
   }
 
+  const changed = Boolean(key.trim()) || baseUrl.trim() !== (status.baseUrl ?? '')
+
   return (
     <form
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault()
-        if (key.trim()) void save(key.trim())
+        if (changed) void save({ baseUrl: baseUrl.trim(), ...(key.trim() ? { apiKey: key.trim() } : {}) })
       }}
     >
+      <label htmlFor="antigravity-base-url" className="text-sm font-medium">
+        Base URL
+      </label>
+      <Input
+        id="antigravity-base-url"
+        inputMode="url"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        maxLength={2048}
+        value={baseUrl}
+        onChange={(event) => setBaseUrl(event.target.value)}
+        disabled={busy}
+        placeholder="https://generativelanguage.googleapis.com"
+        className="h-12 rounded-xl font-mono"
+      />
+      <p className="text-xs text-muted-foreground">填写 Gemini 兼容接口地址，留空使用 Google 官方接口。</p>
       <label htmlFor="antigravity-key" className="text-sm font-medium">
         Gemini API Key
       </label>
@@ -77,7 +101,7 @@ export default function AntigravityKeySection({ onSaved }: { onSaved: () => void
         value={key}
         onChange={(event) => setKey(event.target.value)}
         disabled={busy}
-        placeholder={status.hasApiKey ? '输入新密钥以更换' : '输入 Google AI Studio 密钥'}
+        placeholder={status.hasApiKey ? '输入新密钥以更换' : '输入 Gemini API Key'}
         className="h-12 rounded-xl font-mono"
       />
       <p role="status" className="text-xs text-muted-foreground">
@@ -89,12 +113,18 @@ export default function AntigravityKeySection({ onSaved }: { onSaved: () => void
         </p>
       )}
       <div className="flex gap-2">
-        <Button type="submit" className="min-h-11" disabled={busy || !key.trim()}>
-          {busy ? '保存中…' : '保存密钥'}
+        <Button type="submit" className="min-h-11" disabled={busy || !changed}>
+          {busy ? '保存中…' : '保存配置'}
         </Button>
         {status.hasApiKey && (
-          <Button type="button" variant="ghost" className="min-h-11" disabled={busy} onClick={() => void save(null)}>
-            移除密钥
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            disabled={busy}
+            onClick={() => void save({ apiKey: null })}
+          >
+            恢复 CLI 登录
           </Button>
         )}
       </div>

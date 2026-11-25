@@ -145,6 +145,7 @@ const antigravity = agyBin
   ? new AntigravityProvider({
       bin: agyBin,
       apiKey: () => agentProfiles.antigravityApiKey,
+      baseUrl: () => agentProfiles.antigravityBaseUrl,
       workspaceRoots: config.workspaceRoots,
       stateDir: config.stateDir,
     })

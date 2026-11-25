@@ -3,6 +3,7 @@ import type {
   AgentProfileRequest,
   AgentProfilesResponse,
   AgentRuntimeId,
+  AntigravityConnectionRequest,
   AntigravityKeyStatus,
   ModelInfo,
 } from '@vibemobile/protocol'
@@ -48,11 +49,14 @@ export function registerAgentProfileRoutes(
   }
 
   app.get('/api/agent-profiles', auth, response)
-  const keyStatus = (): AntigravityKeyStatus => ({ hasApiKey: Boolean(store.antigravityApiKey) })
+  const keyStatus = (): AntigravityKeyStatus => ({
+    hasApiKey: Boolean(store.antigravityApiKey),
+    baseUrl: store.antigravityBaseUrl || null,
+  })
   app.get('/api/agent-profiles/antigravity/key', auth, keyStatus)
-  app.put<{ Body: { apiKey: string | null } }>('/api/agent-profiles/antigravity/key', auth, async (req, reply) => {
+  app.put<{ Body: AntigravityConnectionRequest }>('/api/agent-profiles/antigravity/key', auth, async (req, reply) => {
     try {
-      await store.setAntigravityApiKey(req.body?.apiKey)
+      await store.setAntigravityConnection(req.body)
       return keyStatus()
     } catch (err) {
       return failure(err, reply)

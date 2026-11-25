@@ -5,6 +5,7 @@ import type {
   AgentRuntimeId,
   AgentRuntimeStatus,
   AntigravityKeyStatus,
+  AntigravityConnectionRequest,
   CreateSessionOptions,
   CodexGlobalCatalog,
   CodexGlobalDocument,
@@ -125,10 +126,10 @@ export const api = {
   // ---- runner-local agent profiles ----
   agentProfiles: () => request<AgentProfilesResponse>('/api/agent-profiles'),
   antigravityKey: () => request<AntigravityKeyStatus>('/api/agent-profiles/antigravity/key'),
-  setAntigravityKey: (apiKey: string | null) =>
+  setAntigravityKey: (body: AntigravityConnectionRequest) =>
     request<AntigravityKeyStatus>('/api/agent-profiles/antigravity/key', {
       method: 'PUT',
-      body: JSON.stringify({ apiKey }),
+      body: JSON.stringify(body),
     }),
   codexGlobal: () => request<CodexGlobalCatalog>('/api/codex/global'),
   codexGlobalDocument: (id: string) => request<CodexGlobalDocument>(`/api/codex/global/document${qs({ id })}`),

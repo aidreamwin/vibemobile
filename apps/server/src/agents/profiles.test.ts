@@ -36,18 +36,29 @@ describe('runner agent profiles', () => {
     const apply = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
     const store = new AgentProfileStore(dir, { apply })
     expect(store.antigravityApiKey).toBe('')
-    await store.setAntigravityApiKey('first-key')
-    await store.setAntigravityApiKey('first-key')
+    expect(store.antigravityBaseUrl).toBe('')
+    await store.setAntigravityConnection({ apiKey: 'first-key' })
+    await store.setAntigravityConnection({ apiKey: 'first-key' })
     expect(apply).toHaveBeenCalledTimes(1)
     expect(new AgentProfileStore(dir).antigravityApiKey).toBe('first-key')
+    await store.setAntigravityConnection({ baseUrl: 'https://gemini.example.test/' })
+    expect(new AgentProfileStore(dir).antigravityBaseUrl).toBe('https://gemini.example.test')
     apply.mockRejectedValueOnce(new Error('cannot reconnect'))
-    await expect(store.setAntigravityApiKey('replacement')).rejects.toMatchObject({
+    await expect(
+      store.setAntigravityConnection({ apiKey: 'replacement', baseUrl: 'https://other.example.test' }),
+    ).rejects.toMatchObject({
       code: 'agent_profile_apply_failed',
     })
     expect(new AgentProfileStore(dir).antigravityApiKey).toBe('first-key')
+    expect(new AgentProfileStore(dir).antigravityBaseUrl).toBe('https://gemini.example.test')
     expect(JSON.stringify(store.response())).not.toContain('first-key')
-    await store.setAntigravityApiKey(null)
+    await store.setAntigravityConnection({ baseUrl: '' })
+    expect(new AgentProfileStore(dir).antigravityBaseUrl).toBe('')
+    expect(store.antigravityApiKey).toBe('first-key')
+    await store.setAntigravityConnection({ baseUrl: 'https://gemini.example.test' })
+    await store.setAntigravityConnection({ apiKey: null })
     expect(new AgentProfileStore(dir).antigravityApiKey).toBe('')
+    expect(new AgentProfileStore(dir).antigravityBaseUrl).toBe('')
   })
 
   it('persists profiles while masking keys in the response', async () => {
