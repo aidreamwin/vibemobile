@@ -549,25 +549,11 @@ export default function Sessions() {
           </div>
         )}
 
-        {/* Named, because with two providers "代理不可用" no longer says which
-            one to go fix.
-
-            An unauthenticated provider is listed here too, and that is the
-            point of this banner: a CLI with no credentials is still perfectly
-            `available` — it answers initialization and even lists models — so
-            it showed up green while every turn died. The model list is the tell
-            (`tokenSource: none` also reverts it to the CLI's built-in
-            catalogue), which is why the wording mentions it. Settings has the
-            same check with a longer explanation; this is the page people
-            actually sit on. */}
         {providers
-          .filter((p) => !p.available || p.authenticated === false)
+          .filter((p) => !p.available)
           .map((p) => (
             <div key={p.id} className="border-t border-border bg-warning/15 px-4 py-1.5 text-[11px] text-warning">
-              <span className="font-medium">{p.displayName}</span>
-              {p.available
-                ? ' · 未登录：请在服务器上为它配置凭据（模型列表可能也是 CLI 内置的）'
-                : ` · ${p.detail ?? '不可用'}`}
+              <span className="font-medium">{p.displayName}</span> · {p.detail ?? '不可用'}
             </div>
           ))}
       </header>
