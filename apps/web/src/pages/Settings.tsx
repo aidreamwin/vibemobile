@@ -1,6 +1,7 @@
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import AgentProfilesSection from '../components/AgentProfilesSection'
+import AntigravityKeySection from '../components/AntigravityKeySection'
 import CodexGlobalSection from '../components/CodexGlobalSection'
 import { useCallback, useEffect, useState } from 'react'
 import {
@@ -56,7 +57,6 @@ const LOGIN_COMMAND: Record<string, string> = {
   codex: 'codex login',
   claude: 'claude',
   opencode: 'opencode auth login',
-  antigravity: 'agy acp --login',
 }
 
 const LOGIN_FOLLOW_UP: Record<string, string> = {
@@ -82,7 +82,6 @@ type RunnerSheet =
   | { kind: 'delete'; runner: RunnerInfo }
 
 export default function Settings({ onLogout }: { onLogout: () => void }) {
-  const [providers, setProviders] = useState<ProviderStatus[]>([])
   const projects = useWorkspaceStore((state) => state.projects)
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoading = useWorkspaceStore((state) => state.loading)
@@ -111,13 +110,6 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     let cancelled = false
-    api
-      .providers()
-      .then((p) => {
-        if (cancelled) return
-        setProviders(p.data)
-      })
-      .catch(() => undefined)
     // Not cached or polled: the build stamps are read when the page opens, which is
     // the moment the question "is this the latest code?" is actually being asked.
     api
@@ -293,7 +285,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
 
       <div className="scroll-y min-h-0 flex-1 px-3.5 pb-8">
         <div className="mx-auto max-w-2xl">
-          <AgentsSection providers={providers} />
+          <AgentsSection />
 
           <SystemUpdateSection runnerName={runners.find((runner) => runner.id === runnerId)?.name} />
 
@@ -860,12 +852,20 @@ function UpdateRow({
  * release. Installing one is a background npm job on the executor, so this row
  * polls while `updating` is true instead of holding a request open.
  */
-function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
+function AgentsSection() {
+  const [providers, setProviders] = useState<ProviderStatus[]>([])
   const [agents, setAgents] = useState<AgentRuntimeStatus[]>([])
   const [latest, setLatest] = useState<Record<string, string | null | undefined>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<AgentRuntimeId | null>(null)
   const [checking, setChecking] = useState<AgentRuntimeId | null>(null)
+
+  const loadProviders = useCallback(() => {
+    void api
+      .providers()
+      .then((result) => setProviders(result.data))
+      .catch(() => undefined)
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -877,8 +877,9 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
   }, [])
 
   useEffect(() => {
+    loadProviders()
     void load()
-  }, [load])
+  }, [load, loadProviders])
 
   const updating = agents.some((agent) => agent.updating)
   useEffect(() => {
@@ -992,9 +993,10 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
             }
           >
             {(id === 'codex' || id === 'claude' || id === 'opencode') && <AgentProfilesSection agent={id} />}
+            {id === 'antigravity' && <AntigravityKeySection onSaved={loadProviders} />}
             {id === 'codex' && <CodexGlobalSection />}
             {agent?.error && <p className="text-destructive">{agent.error}</p>}
-            {provider?.available && provider.authenticated === false && (
+            {id !== 'antigravity' && provider?.available && provider.authenticated === false && (
               <p className="text-warning">
                 请在执行机器上运行 <code>{LOGIN_COMMAND[id] ?? id}</code>
                 {LOGIN_FOLLOW_UP[id] ? ` ${LOGIN_FOLLOW_UP[id]}` : ''}

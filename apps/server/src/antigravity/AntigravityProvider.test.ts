@@ -20,6 +20,8 @@ let agent: AgentApp
 let provider: AntigravityProvider
 let connection: ClientConnection
 let events: AgentEvent[]
+let apiKey: string
+let launchKeys: (string | undefined)[]
 const configOptions = [
   {
     type: 'select',
@@ -34,10 +36,13 @@ const configOptions = [
   },
 ] satisfies SessionConfigOption[]
 beforeEach(() => {
+  apiKey = ''
+  launchKeys = []
   cwd = mkdtempSync(path.join(os.tmpdir(), 'vibe-agy-acp-'))
   agent = new AgentApp().onRequest('initialize', () => ({
     protocolVersion: PROTOCOL_VERSION,
     agentInfo: { name: 'Antigravity ACP Server', version: '1.5.16' },
+    authMethods: [{ id: 'gemini-api-key', name: 'Gemini API key' }],
     agentCapabilities: {
       loadSession: true,
       sessionCapabilities: { list: {}, close: {} },
@@ -48,7 +53,9 @@ beforeEach(() => {
     bin: 'agy',
     workspaceRoots: [cwd],
     stateDir: cwd,
-    connect: async (client) => {
+    apiKey: () => apiKey,
+    connect: async (client, _cwd, _bin, key) => {
+      launchKeys.push(key)
       connection = client.connect(agent)
       return connection
     },
@@ -62,6 +69,41 @@ afterEach(async () => {
 })
 
 describe('Antigravity ACP session lifecycle', () => {
+  it('authenticates each managed connection before new or resumed sessions and restores CLI login on removal', async () => {
+    let authenticatedLaunch = 0
+    const methods: string[] = []
+    agent.onRequest('authenticate', ({ params }) => {
+      expect(params).toEqual({ methodId: 'gemini-api-key' })
+      authenticatedLaunch = launchKeys.length
+      methods.push(params.methodId)
+      return {}
+    })
+    agent.onRequest('session/new', () => {
+      expect(authenticatedLaunch).toBe(launchKeys.length)
+      return { sessionId: 'one' }
+    })
+    agent.onRequest('session/load', ({ params }) => {
+      expect(authenticatedLaunch).toBe(launchKeys.length)
+      expect(params.sessionId).toBe('one')
+      return {}
+    })
+    agent.onRequest('session/list', () => {
+      if (authenticatedLaunch !== launchKeys.length) throw new RequestError(-32000, 'Authentication required')
+      return { sessions: [] }
+    })
+    apiKey = 'first-key'
+    const session = await provider.createSession({ cwd })
+    await provider.stop()
+    apiKey = 'next-key'
+    await expect(provider.resumeSession(session.id)).resolves.toMatchObject({ id: session.id })
+    await expect(provider.probe()).resolves.toMatchObject({ authenticated: true })
+    await provider.stop()
+    apiKey = ''
+    await expect(provider.probe()).resolves.toMatchObject({ available: true, authenticated: false })
+    expect(launchKeys).toEqual(['first-key', 'next-key', ''])
+    expect(methods).toEqual(['gemini-api-key', 'gemini-api-key'])
+  })
+
   it('distinguishes an agent requiring login from an unusable CLI', async () => {
     agent.onRequest('session/list', () => {
       throw new RequestError(-32000, 'Authentication required')

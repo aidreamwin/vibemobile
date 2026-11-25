@@ -56,11 +56,12 @@ interface ProviderOptions {
   bin: string
   workspaceRoots: string[]
   stateDir?: string
-  connect?: (app: ClientApp) => Promise<ClientConnection>
+  apiKey?: () => string
+  connect?: typeof connectCli
 }
 
 const publicId = (nativeId: string) => `agy:${nativeId}`
-const loginHint = '请以运行 runner 的用户身份执行 agy acp --login，然后重试。'
+const loginHint = '请在设置的 Antigravity 页面保存 Gemini API Key，或在执行机上运行 agy acp --login。'
 const authRequired = (err: unknown) => err instanceof RequestError && err.code === -32000
 const clientError = (message: string, statusCode: number) => Object.assign(new Error(message), { statusCode })
 const selectOption = (options: SessionConfigOption[], category: string) =>
@@ -126,7 +127,8 @@ export class AntigravityProvider implements AgentProvider {
       })
     const cwd = this.opts.workspaceRoots[0]
     if (!cwd) throw new Error('Antigravity 需要至少一个工作区。')
-    const connection = await (this.opts.connect?.(app) ?? connectCli(app, cwd, this.opts.bin))
+    const apiKey = this.opts.apiKey?.()
+    const connection = await (this.opts.connect ?? connectCli)(app, cwd, this.opts.bin, apiKey)
     try {
       const info = await connection.agent.request(
         'initialize',
@@ -143,6 +145,15 @@ export class AntigravityProvider implements AgentProvider {
         !info.agentCapabilities.sessionCapabilities?.list
       )
         throw new Error('此 Antigravity CLI 不支持所需的 ACP 会话接口，请更新 agy。')
+      if (apiKey) {
+        if (!info.authMethods?.some((method) => method.id === 'gemini-api-key'))
+          throw new Error('此 Antigravity CLI 不支持 Gemini API Key 登录，请更新 agy。')
+        try {
+          await connection.agent.request('authenticate', { methodId: 'gemini-api-key' }, deadline())
+        } catch {
+          throw new Error('Antigravity 无法使用已保存的 Gemini API Key，请在设置中检查密钥。')
+        }
+      }
       this.#ready = { connection, info }
       void connection.closed.then(() => {
         if (this.#ready?.connection !== connection) return
@@ -162,6 +173,9 @@ export class AntigravityProvider implements AgentProvider {
 
   async start() {
     await this.#client()
+  }
+  get hasActiveTurn() {
+    return [...this.#opened.values()].some((session) => session.starting || session.history.live)
   }
   async stop() {
     const ready = this.#ready ?? (await this.#pending?.catch(() => undefined))

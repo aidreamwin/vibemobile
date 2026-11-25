@@ -31,10 +31,11 @@ import { registerTerminal } from './ws/terminal.js'
 
 const config = loadConfig()
 // Runner-local provider profiles are loaded before any agent child process is
-// created, so a selected profile is used by Codex, Claude and OpenCode from
-// their first probe/connection.
+// created, so each agent uses its configured credentials on the first probe.
 const agentProfiles = new AgentProfileStore(config.stateDir, {
   beforeApply: async (agent, profile) => {
+    if (agent === 'antigravity' && antigravity?.hasActiveTurn)
+      throw new AgentProfileError('antigravity_turn_running', 409)
     if (agent === 'codex' && config.codex.attachUrl) throw new AgentProfileError('agent_profile_external_service', 409)
     if (agent === 'opencode') {
       opencodeProfileEnv(profile, process.env.OPENCODE_CONFIG_CONTENT)
@@ -42,9 +43,17 @@ const agentProfiles = new AgentProfileStore(config.stateDir, {
     }
   },
   apply: async (agent) => {
-    probeCache.clear()
-    if (agent === 'codex') await codex.restartAppServer()
-    if (agent === 'opencode') await opencode.restartServer()
+    try {
+      if (agent === 'codex') await codex.restartAppServer()
+      if (agent === 'opencode') await opencode.restartServer()
+      if (agent === 'antigravity' && antigravity) {
+        await antigravity.stop()
+        // Removing a saved key must also work when the native CLI needs login.
+        if (agentProfiles.antigravityApiKey) await antigravity.start()
+      }
+    } finally {
+      probeCache.clear(agent)
+    }
   },
 })
 
@@ -132,13 +141,14 @@ const opencode = new OpencodeProvider({
 registry.register(opencode)
 
 const agyBin = findCli(config.antigravityBin)
-const antigravity =
-  agyBin &&
-  new AntigravityProvider({
-    bin: agyBin,
-    workspaceRoots: config.workspaceRoots,
-    stateDir: config.stateDir,
-  })
+const antigravity = agyBin
+  ? new AntigravityProvider({
+      bin: agyBin,
+      apiKey: () => agentProfiles.antigravityApiKey,
+      workspaceRoots: config.workspaceRoots,
+      stateDir: config.stateDir,
+    })
+  : undefined
 if (antigravity) registry.register(antigravity)
 
 codex.on('reconnected', async () => {

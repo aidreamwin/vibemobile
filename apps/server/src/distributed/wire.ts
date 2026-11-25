@@ -26,6 +26,7 @@ export function allowedPath(value: string, ws = false): boolean {
   if (value.length > 16_384 || /[\\#\r\n\0]/.test(value)) return false
   const pathname = value.split('?')[0]
   if (ws) return pathname === '/ws' || pathname === '/ws/terminal'
+  if (pathname === '/api/agent-profiles/antigravity/key') return true
   return (
     /^\/api\/(?:health|features|providers(?:\/[^/]+\/models)?|projects|sessions(?:\/[^/]+(?:\/(?:open|fork))?)?|files(?:\/(?:content|diff))?|images\/[^/]+|agents(?:\/[^/]+\/(?:update|check))?|codex\/global(?:\/(?:document|skills))?|agent-profiles(?:\/(?:codex|claude|opencode)(?:\/(?:profile-[a-f0-9]{16}|native)(?:\/activate|\/models)?|\/models)?)?|system\/update(?:\/check)?)$/.test(
       pathname,

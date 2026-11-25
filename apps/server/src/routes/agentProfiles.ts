@@ -1,5 +1,11 @@
 import type { FastifyInstance } from 'fastify'
-import type { AgentProfileRequest, AgentProfilesResponse, AgentRuntimeId, ModelInfo } from '@vibemobile/protocol'
+import type {
+  AgentProfileRequest,
+  AgentProfilesResponse,
+  AgentRuntimeId,
+  AntigravityKeyStatus,
+  ModelInfo,
+} from '@vibemobile/protocol'
 import type { Config } from '../config.js'
 import { AgentProfileError, type AgentProfileStore } from '../agents/profiles.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
@@ -42,6 +48,16 @@ export function registerAgentProfileRoutes(
   }
 
   app.get('/api/agent-profiles', auth, response)
+  const keyStatus = (): AntigravityKeyStatus => ({ hasApiKey: Boolean(store.antigravityApiKey) })
+  app.get('/api/agent-profiles/antigravity/key', auth, keyStatus)
+  app.put<{ Body: { apiKey: string | null } }>('/api/agent-profiles/antigravity/key', auth, async (req, reply) => {
+    try {
+      await store.setAntigravityApiKey(req.body?.apiKey)
+      return keyStatus()
+    } catch (err) {
+      return failure(err, reply)
+    }
+  })
   app.get<{ Params: { agent: string; id: string } }>(
     '/api/agent-profiles/:agent/:id/models',
     auth,

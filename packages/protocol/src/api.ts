@@ -82,6 +82,10 @@ export interface AgentProfilesResponse {
   native?: Record<AgentRuntimeId, NativeAgentProfile>
 }
 
+export interface AntigravityKeyStatus {
+  hasApiKey: boolean
+}
+
 export interface NativeAgentProvider {
   id: string
   name: string

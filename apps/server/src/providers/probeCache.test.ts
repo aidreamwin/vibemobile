@@ -121,4 +121,33 @@ describe('probeCache', () => {
     expect(codex.calls.count).toBe(1)
     expect(claude.calls.count).toBe(1)
   })
+
+  it('discards stale probes after a credential change and retains other providers', async () => {
+    const cache = createProbeCache()
+    let finish!: (value: ProviderProbe) => void
+    const { provider } = stub(
+      'antigravity',
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const other = stub('claude')
+    await cache.probe(other.provider)
+    const stale = cache.probe(provider)
+    await Promise.resolve()
+    const finishStale = finish
+    cache.clear(provider.id)
+    const fresh = cache.probe(provider)
+    await Promise.resolve()
+    const status = { id: provider.id, displayName: provider.displayName, available: true }
+    finishStale({ ...status, authenticated: false })
+    await stale
+    expect(cache.probe(provider)).toBe(fresh)
+    finish({ ...status, authenticated: true })
+    await fresh
+    expect((await cache.probe(provider)).authenticated).toBe(true)
+    await cache.probe(other.provider)
+    expect(other.calls.count).toBe(1)
+  })
 })

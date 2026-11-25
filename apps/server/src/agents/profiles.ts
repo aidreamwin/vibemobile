@@ -20,6 +20,7 @@ interface ProfileFile {
   active: Record<AgentRuntimeId, string | null>
   profiles: Record<AgentRuntimeId, StoredAgentProfile[]>
   nativeNames: Partial<Record<AgentRuntimeId, string>>
+  antigravityApiKey: string
 }
 
 export class AgentProfileError extends Error {
@@ -31,9 +32,11 @@ export class AgentProfileError extends Error {
   }
 }
 
+type ConfigurableAgent = AgentRuntimeId | 'antigravity'
+
 interface ProfileHooks {
-  beforeApply?: (agent: AgentRuntimeId, profile?: StoredAgentProfile) => void | Promise<void>
-  apply?: (agent: AgentRuntimeId) => void | Promise<void>
+  beforeApply?: (agent: ConfigurableAgent, profile?: StoredAgentProfile) => void | Promise<void>
+  apply?: (agent: ConfigurableAgent) => void | Promise<void>
 }
 
 function emptyFile(): ProfileFile {
@@ -42,6 +45,7 @@ function emptyFile(): ProfileFile {
     active: { codex: null, claude: null, opencode: null },
     profiles: { codex: [], claude: [], opencode: [] },
     nativeNames: {},
+    antigravityApiKey: '',
   }
 }
 
@@ -128,6 +132,17 @@ export class AgentProfileStore {
   current(agent: AgentRuntimeId): StoredAgentProfile | undefined {
     const profile = this.#data.profiles[agent].find((item) => item.id === this.#data.active[agent])
     return profile ? { ...profile } : undefined
+  }
+
+  get antigravityApiKey(): string {
+    return this.#data.antigravityApiKey
+  }
+
+  async setAntigravityApiKey(value: string | null): Promise<void> {
+    const key = value === null ? '' : field(value, 2000)
+    if (value !== null && !key) throw new AgentProfileError('invalid_antigravity_api_key')
+    const change = key !== this.antigravityApiKey ? { agent: 'antigravity' as const } : undefined
+    await this.#save({ ...this.#data, antigravityApiKey: key }, change)
   }
 
   get(agent: AgentRuntimeId, id: string): StoredAgentProfile | undefined {
@@ -237,29 +252,35 @@ export class AgentProfileStore {
     }
   }
 
-  async #commit(agent: AgentRuntimeId, next: ProfileFile): Promise<void> {
+  #commit(agent: AgentRuntimeId, next: ProfileFile): Promise<void> {
+    const profile = next.profiles[agent].find((item) => item.id === next.active[agent])
+    const changed = JSON.stringify(this.current(agent)) !== JSON.stringify(profile)
+    return this.#save(next, changed ? { agent, profile } : undefined)
+  }
+
+  async #save(next: ProfileFile, change?: { agent: ConfigurableAgent; profile?: StoredAgentProfile }): Promise<void> {
     if (this.#busy) throw new AgentProfileError('agent_profile_busy', 409)
     this.#busy = true
     const previous = this.#data
-    const active = (file: ProfileFile) => file.profiles[agent].find((item) => item.id === file.active[agent])
-    const changed = JSON.stringify(active(previous)) !== JSON.stringify(active(next))
     try {
-      const connection = active(next)
-      if (changed && agent === 'opencode' && connection && (!connection.baseUrl || !connection.model))
-        throw new AgentProfileError('agent_profile_opencode_required')
-      if (changed) await this.#hooks.beforeApply?.(agent, connection ? { ...connection } : undefined)
+      if (change) {
+        const { agent, profile } = change
+        if (agent === 'opencode' && profile && (!profile.baseUrl || !profile.model))
+          throw new AgentProfileError('agent_profile_opencode_required')
+        await this.#hooks.beforeApply?.(agent, profile ? { ...profile } : undefined)
+      }
       this.#persist(next)
       this.#data = next
-      if (changed) {
+      if (change) {
         try {
-          await this.#hooks.apply?.(agent)
+          await this.#hooks.apply?.(change.agent)
         } catch {
           // Never report a failed restart as an enabled profile. Restore the
           // durable selection and try to bring the previous service back.
           this.#persist(previous)
           this.#data = previous
           try {
-            await this.#hooks.apply?.(agent)
+            await this.#hooks.apply?.(change.agent)
           } catch {
             throw new AgentProfileError('agent_profile_restore_failed', 503)
           }
@@ -283,6 +304,7 @@ export class AgentProfileStore {
       const value = JSON.parse(raw) as ProfileFile
       if (value.version !== 1) throw new Error('version')
       const result = emptyFile()
+      result.antigravityApiKey = field(value.antigravityApiKey, 2000)
       for (const agent of AGENT_IDS) {
         const rows = value.profiles[agent]
         if (!Array.isArray(rows) || rows.length > 100) throw new Error('profiles')

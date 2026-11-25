@@ -173,6 +173,25 @@ afterAll(async () => {
 })
 
 describe('distributed Hub and two reverse runners', () => {
+  it('saves, rotates and removes the Gemini key only on the selected runner', async () => {
+    const url = '/r/r1/api/agent-profiles/antigravity/key'
+    const headers = { cookie }
+    for (const method of ['GET', 'PUT'] as const) expect((await hub.inject({ method, url })).statusCode).toBe(401)
+    for (const apiKey of ['first-runner-key', 'replacement-runner-key']) {
+      const saved = await hub.inject({ method: 'PUT', url, headers, payload: { apiKey } })
+      expect(saved.statusCode).toBe(200)
+      expect(saved.json()).toEqual({ hasApiKey: true })
+      expect((await hub.inject({ url, headers })).json()).toEqual({ hasApiKey: true })
+    }
+    const other = await hub.inject({ url: '/r/r0/api/agent-profiles/antigravity/key', headers })
+    expect(other.json()).toEqual({ hasApiKey: false })
+    for (const payload of [{}, { apiKey: '  ' }, { apiKey: 123 }])
+      expect((await hub.inject({ method: 'PUT', url, headers, payload })).statusCode).toBe(400)
+    expect((await hub.inject({ url, headers })).json()).toEqual({ hasApiKey: true })
+    const cleared = await hub.inject({ method: 'PUT', url, headers, payload: { apiKey: null } })
+    expect(cleared.json()).toEqual({ hasApiKey: false })
+  })
+
   it('keeps agent profiles on the selected runner across the authenticated tunnel', async () => {
     const created = await hub.inject({
       method: 'POST',

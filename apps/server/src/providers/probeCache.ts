@@ -33,7 +33,7 @@ export interface ProbeCacheOptions {
 export interface ProbeCache {
   probe(provider: AgentProvider, opts?: { force?: boolean }): Promise<ProviderProbe>
   probeAll(providers: AgentProvider[], opts?: { force?: boolean }): Promise<ProviderProbe[]>
-  clear(): void
+  clear(providerId?: string): void
 }
 
 export function createProbeCache(opts: ProbeCacheOptions = {}): ProbeCache {
@@ -68,8 +68,11 @@ export function createProbeCache(opts: ProbeCacheOptions = {}): ProbeCache {
         }),
       )
       .then((value) => {
-        results.set(provider.id, { at: now(), value })
-        inflight.delete(provider.id)
+        // A credential change may have invalidated this probe while it was running.
+        if (inflight.get(provider.id) === pending) {
+          results.set(provider.id, { at: now(), value })
+          inflight.delete(provider.id)
+        }
         return value
       })
 
@@ -80,7 +83,12 @@ export function createProbeCache(opts: ProbeCacheOptions = {}): ProbeCache {
   return {
     probe,
     probeAll: (providers, o) => Promise.all(providers.map((p) => probe(p, o))),
-    clear: () => {
+    clear: (providerId) => {
+      if (providerId !== undefined) {
+        results.delete(providerId)
+        inflight.delete(providerId)
+        return
+      }
       results.clear()
       inflight.clear()
     },

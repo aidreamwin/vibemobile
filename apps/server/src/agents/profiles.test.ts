@@ -23,6 +23,33 @@ afterEach(() => {
 })
 
 describe('runner agent profiles', () => {
+  it('keeps a Gemini key across restarts and restores it if replacing it fails', async () => {
+    const dir = temp()
+    fs.writeFileSync(
+      path.join(dir, 'agent-profiles.json'),
+      JSON.stringify({
+        version: 1,
+        profiles: { codex: [], claude: [], opencode: [] },
+        active: { codex: null, claude: null, opencode: null },
+      }),
+    )
+    const apply = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    const store = new AgentProfileStore(dir, { apply })
+    expect(store.antigravityApiKey).toBe('')
+    await store.setAntigravityApiKey('first-key')
+    await store.setAntigravityApiKey('first-key')
+    expect(apply).toHaveBeenCalledTimes(1)
+    expect(new AgentProfileStore(dir).antigravityApiKey).toBe('first-key')
+    apply.mockRejectedValueOnce(new Error('cannot reconnect'))
+    await expect(store.setAntigravityApiKey('replacement')).rejects.toMatchObject({
+      code: 'agent_profile_apply_failed',
+    })
+    expect(new AgentProfileStore(dir).antigravityApiKey).toBe('first-key')
+    expect(JSON.stringify(store.response())).not.toContain('first-key')
+    await store.setAntigravityApiKey(null)
+    expect(new AgentProfileStore(dir).antigravityApiKey).toBe('')
+  })
+
   it('persists profiles while masking keys in the response', async () => {
     const dir = temp()
     const store = new AgentProfileStore(dir)

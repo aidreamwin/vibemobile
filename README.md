@@ -89,9 +89,10 @@ VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台�
 
 要求 **Node.js 20+**（推荐 22），npm，以及至少一个已登录的代理 CLI。
 
-在手机上使用 **Antigravity CLI** 时，请在对应的 runner 上安装支持 ACP 的 `agy`，
-使用运行 runner 的账号执行 `agy acp --login`，然后启动或重启该 runner。服务启动时会在
-`PATH` 和官方安装位置查找 CLI，也可以通过 `ANTIGRAVITY_BIN` 指定可执行文件。
+在对应的 runner 上安装支持 ACP 的 **Antigravity CLI**（`agy`），然后启动或重启 runner。
+服务会在 `PATH` 和官方安装位置查找 CLI，也可以通过 `ANTIGRAVITY_BIN` 指定可执行文件。
+打开网页「设置 → 代理 → Antigravity」，填写 Google AI Studio 的 Gemini API Key，点击「保存密钥」即可使用。
+密钥保存在当前 runner。移除密钥后恢复执行机的 CLI 登录设置，Google 账号登录可使用 `agy acp --login`。
 在手机的「会话」中选择 Antigravity，可以新建对话，或打开该账号在允许的工作区内已有的 CLI 会话。
 模型和思考强度由会话返回，工具审批沿用 CLI 规则。置顶、归档和重命名保存在当前 runner。
 容器部署需让 CLI、工作目录和登录凭据在 runner 容器内可访问。[Google 安装说明](https://antigravity.google/docs/getting-started?tab=cli) · [ACP 接口](https://antigravity.google/docs/ide/extensions/acp)
