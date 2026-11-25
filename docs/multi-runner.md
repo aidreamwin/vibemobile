@@ -112,7 +112,7 @@ npm run start:runner
 | 变量 | 默认 / 说明 |
 |---|---|
 | `PORT` | Hub 5900 |
-| `VIBEMOBILE_RUNNER_MAX_BODY_MB` | Hub 和 runner 单次转发的数据上限，默认 15 MiB，可设为 1–64 的整数 |
+| `VIBEMOBILE_RUNNER_MAX_BODY_MB` | Hub 和 runner 单次转发的数据上限，默认 15 MiB，可设为 1–100 的整数 |
 | `VIBEMOBILE_RUNNER_PORT` | runner 私有 HTTP 5901 |
 | `CODEX_PORT` | runner Codex 6900；分布式入口忽略外部 `CODEX_WS_URL` |
 | `OPENCODE_PORT` | runner OpenCode 6920；attach 模式仍可用 `OPENCODE_ATTACH_URL` |

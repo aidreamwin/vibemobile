@@ -3,8 +3,8 @@ import { WebSocket, type RawData } from 'ws'
 export const PROTOCOL = 'vibemobile-runner-v1'
 const MIB = 1024 * 1024
 const configuredBodyMiB = Number(process.env.VIBEMOBILE_RUNNER_MAX_BODY_MB?.trim() || '15')
-if (!Number.isInteger(configuredBodyMiB) || configuredBodyMiB < 1 || configuredBodyMiB > 64) {
-  throw new Error('VIBEMOBILE_RUNNER_MAX_BODY_MB must be an integer from 1 to 64 (MiB)')
+if (!Number.isInteger(configuredBodyMiB) || configuredBodyMiB < 1 || configuredBodyMiB > 100) {
+  throw new Error('VIBEMOBILE_RUNNER_MAX_BODY_MB must be an integer from 1 to 100 (MiB)')
 }
 export const MAX_BODY = configuredBodyMiB * MIB
 export const MAX_FRAME = 4 * Math.ceil(MAX_BODY / 3) + MIB
