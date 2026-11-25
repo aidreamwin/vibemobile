@@ -156,6 +156,8 @@ export interface AgentProvider {
   createSession(opts: CreateSessionOptions): Promise<SessionSummary>
   /** Establish (or re-establish) a live subscription to a session. */
   resumeSession(sessionId: string): Promise<SessionSummary | null>
+  /** Refresh persisted history on an explicit page open, if the provider caches it. */
+  refreshSession?(sessionId: string): Promise<SessionSummary | null>
   /** Copy a session's history into a new session that can be controlled independently. */
   forkSession?(sessionId: string): Promise<SessionSummary>
   renameSession(sessionId: string, name: string): Promise<void>

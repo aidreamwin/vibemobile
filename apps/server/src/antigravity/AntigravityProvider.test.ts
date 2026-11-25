@@ -41,7 +41,7 @@ const configOptions = [
     ],
   },
 ] satisfies SessionConfigOption[]
-function mockAgent() {
+function mockAgent(canDelete = false) {
   return new AgentApp().onRequest('initialize', () => ({
     protocolVersion: PROTOCOL_VERSION,
     agentInfo: { name: 'Antigravity ACP Server', version: '1.5.16' },
@@ -51,7 +51,7 @@ function mockAgent() {
     ],
     agentCapabilities: {
       loadSession: true,
-      sessionCapabilities: { list: {}, close: {} },
+      sessionCapabilities: { list: {}, close: {}, ...(canDelete ? { delete: {} } : {}) },
       promptCapabilities: { image: true },
     },
   }))
@@ -169,7 +169,7 @@ describe('supplier catalogues larger than the ACP limit', () => {
     }
   })
 
-  it('selects entries 32, 33 and 100, reuses one worker per group and preserves the chat across a switch and restart', async () => {
+  it('selects entries 32, 33 and 100 and preserves the chat across a switch and restart', async () => {
     expect((await provider.listModels()).map((model) => model.id)).toEqual(models)
     expect(launchKeys).toHaveLength(0)
     const selections = [models[31], models[32], models[99], models[30]]
@@ -182,19 +182,19 @@ describe('supplier catalogues larger than the ACP limit', () => {
     for (const chat of chats) expect(prompts).toContainEqual({ sessionId: chat.id.slice(4), model: chat.model })
     await provider.startTurn(a.id, [{ type: 'text', text: 'second' }], { model: 'gemini-4-neon', effort: 'low' })
     await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
-    expect(launchKeys).toHaveLength(3)
+    expect(launchKeys).toHaveLength(4)
     expect(closed).toEqual([a.id.slice(4)])
     expect(prompts.at(-1)).toEqual({ sessionId: a.id.slice(4), model: models[99] })
     expect((await provider.getTranscript(a.id))?.turns).toHaveLength(2)
     await provider.stop()
     expect((await provider.resumeSession(a.id))?.model).toBe(models[99])
     expect((await provider.getTranscript(a.id))?.turns).toHaveLength(2)
-    expect(launchKeys).toHaveLength(4)
+    expect(launchKeys).toHaveLength(5)
   })
 
   it('recovers the previous selection after a failed switch and isolates simultaneous turns on different workers', async () => {
     const a = await provider.createSession({ cwd, model: models[31] })
-    const first = connection
+    const original = connection
     const b = await provider.createSession({ cwd, model: models[32] })
     failNextLoad = true
     await expect(provider.startTurn(a.id, [{ type: 'text', text: 'failed' }], { model: models[32] })).rejects.toThrow(
@@ -202,19 +202,21 @@ describe('supplier catalogues larger than the ACP limit', () => {
     )
     expect(prompts).toEqual([])
     await provider.startTurn(a.id, [{ type: 'text', text: 'hold' }])
+    const runningA = connection
     const { turnId } = await provider.startTurn(b.id, [{ type: 'text', text: 'hold' }])
     await vi.waitFor(() => {
       expect(prompts).toHaveLength(2)
       expect(prompts).toContainEqual({ sessionId: a.id.slice(4), model: models[31] })
       expect(prompts).toContainEqual({ sessionId: b.id.slice(4), model: models[32] })
     })
-    first.close()
+    runningA.close()
     await vi.waitFor(() =>
       expect(events).toContainEqual(
         expect.objectContaining({ kind: 'turn.completed', threadId: a.id, status: 'failed' }),
       ),
     )
     expect((await provider.getSession(b.id))?.status).toBe('working')
+    expect(original.signal.aborted).toBe(false)
     await provider.interrupt(b.id, turnId)
     await vi.waitFor(() =>
       expect(events).toContainEqual(
@@ -303,7 +305,7 @@ describe('Antigravity ACP session lifecycle', () => {
       ['default', false],
     ])
     expect((await provider.getSession(session.id))?.approvalPolicy).toBe('on-request')
-    expect(launchUnattended).toEqual([false, true, false, true])
+    expect(launchUnattended).toEqual([false, true, false, true, false])
   })
 
   it('applies supplier defaults, accepts the old model/effort pair, and restores the selected full ID', async () => {
@@ -381,9 +383,14 @@ describe('Antigravity ACP session lifecycle', () => {
     apiKey = ''
     baseUrl = ''
     await expect(provider.probe()).resolves.toMatchObject({ available: true, authenticated: false })
-    expect(launchKeys).toEqual(['first-key', 'next-key', undefined])
-    expect(launchUrls).toEqual(['https://gemini.example.test', 'https://other.example.test', undefined])
-    expect(methods).toEqual(['gemini-api-key', 'gemini-api-key'])
+    expect(launchKeys).toEqual(['first-key', 'next-key', 'next-key', undefined])
+    expect(launchUrls).toEqual([
+      'https://gemini.example.test',
+      'https://other.example.test',
+      'https://other.example.test',
+      undefined,
+    ])
+    expect(methods).toEqual(['gemini-api-key', 'gemini-api-key', 'gemini-api-key'])
   })
 
   it('distinguishes an agent requiring login from an unusable CLI', async () => {
@@ -577,5 +584,112 @@ describe('Antigravity ACP session lifecycle', () => {
     expect((await provider.getTranscript('agy:shared'))?.turns).toHaveLength(2)
     expect(loads).toBe(2)
     expect(events.some((e) => e.kind.startsWith('item.'))).toBe(false)
+  })
+
+  it('reopens a stale ACP snapshot in a new process without interrupting another active session', async () => {
+    const saved = [{ user: 'old question', assistant: 'old answer' }]
+    const now = vi.spyOn(Date, 'now')
+    let clock = 10_000
+    now.mockImplementation(() => clock)
+    let loads = 0
+    let finishOther: ((result: PromptResponse) => void) | undefined
+    nextAgent = () => {
+      const snapshot = saved.map((turn) => ({ ...turn }))
+      return mockAgent()
+        .onRequest('session/list', () => ({
+          sessions: [{ sessionId: 'shared', cwd, updatedAt: new Date(1000).toISOString() }],
+        }))
+        .onRequest('session/new', () => ({ sessionId: 'other' }))
+        .onRequest('session/close', () => ({}))
+        .onRequest('session/load', async ({ params, client }) => {
+          loads++
+          for (const turn of snapshot) {
+            for (const [sessionUpdate, text] of [
+              ['user_message_chunk', turn.user],
+              ['agent_message_chunk', turn.assistant],
+            ] as const)
+              await client.notify('session/update', {
+                sessionId: params.sessionId,
+                update: { sessionUpdate, content: { type: 'text', text } },
+              })
+          }
+          return {}
+        })
+        .onRequest('session/prompt', () => new Promise<PromptResponse>((resolve) => (finishOther = resolve)))
+    }
+    try {
+      const other = await provider.createSession({ cwd })
+      const sharedConnection = connection
+      const initial = await provider.getTranscript('agy:shared')
+      const oldConnection = connection
+      expect(initial?.turns).toHaveLength(1)
+      expect(initial?.turns[0]?.items.at(-1)).toMatchObject({ text: 'old answer' })
+      await provider.startTurn(other.id, [{ type: 'text', text: 'keep working' }])
+      await vi.waitFor(() => expect(finishOther).toBeDefined())
+
+      saved.push({ user: 'new question', assistant: 'new answer' })
+      clock += 500
+      await provider.refreshSession('agy:shared')
+      const latest = await provider.getTranscript('agy:shared')
+      expect(latest?.turns).toHaveLength(2)
+      expect(latest?.turns.at(-1)?.items.at(-1)).toMatchObject({ text: 'new answer' })
+      expect(loads).toBe(2)
+      await vi.waitFor(() => expect(oldConnection.signal.aborted).toBe(true))
+      expect(sharedConnection.signal.aborted).toBe(false)
+      expect((await provider.getSession(other.id))?.status).toBe('working')
+
+      saved.push({ user: 'third question', assistant: 'third answer' })
+      clock += 6_000
+      await provider.resumeSession('agy:shared')
+      expect((await provider.getTranscript('agy:shared'))?.turns.at(-1)?.items.at(-1)).toMatchObject({
+        text: 'third answer',
+      })
+      expect(loads).toBe(3)
+      finishOther?.({ stopReason: 'end_turn' })
+      await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('keeps a newly created empty session on its original process until it is persisted', async () => {
+    const now = vi.spyOn(Date, 'now')
+    let clock = 10_000
+    now.mockImplementation(() => clock)
+    const load = vi.fn(() => {
+      throw new RequestError(-32002, 'not persisted')
+    })
+    agent.onRequest('session/new', () => ({ sessionId: 'empty' }))
+    agent.onRequest('session/load', load)
+    try {
+      const session = await provider.createSession({ cwd })
+      const original = connection
+      clock += 6_000
+      await expect(provider.refreshSession(session.id)).resolves.toMatchObject({ id: session.id })
+      expect(connection).toBe(original)
+      expect(load).not.toHaveBeenCalled()
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('closes isolated ACP processes when sessions are pruned or deleted', async () => {
+    nextAgent = () =>
+      mockAgent(true)
+        .onRequest('session/list', () => ({
+          sessions: Array.from({ length: 7 }, (_, i) => ({ sessionId: String(i), cwd })),
+        }))
+        .onRequest('session/load', () => ({}))
+        .onRequest('session/close', () => ({}))
+        .onRequest('session/delete', () => ({}))
+    let oldest: ClientConnection | undefined
+    for (let i = 0; i < 7; i++) {
+      await provider.getTranscript(`agy:${i}`)
+      if (i === 0) oldest = connection
+    }
+    await vi.waitFor(() => expect(oldest?.signal.aborted).toBe(true))
+    const deleted = connection
+    await provider.deleteSession('agy:6')
+    await vi.waitFor(() => expect(deleted.signal.aborted).toBe(true))
   })
 })

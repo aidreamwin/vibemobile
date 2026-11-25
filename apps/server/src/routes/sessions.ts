@@ -300,7 +300,7 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
     const provider = await registry.forSession(req.params.id)
     if (!provider) return reply.code(503).send({ error: 'no provider available' })
     try {
-      const session = await provider.resumeSession(req.params.id)
+      const session = await (provider.refreshSession?.(req.params.id) ?? provider.resumeSession(req.params.id))
       if (!session) return reply.code(404).send({ error: 'session not found' })
       return session
     } catch (err) {

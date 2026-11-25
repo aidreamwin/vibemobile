@@ -137,6 +137,21 @@ it('offers a copy on provider mismatch while keeping the source transcript reada
   expect((await app.inject('/api/sessions/a-source')).json().session.id).toBe('a-source')
 })
 
+it('uses a provider history refresh on explicit open when available', async () => {
+  const provider = registry.require('alpha')
+  const resume = vi.spyOn(provider, 'resumeSession')
+  const refresh = vi.fn(async (id: string) => row(id))
+  provider.refreshSession = refresh
+  try {
+    const response = await app.inject({ method: 'POST', url: '/api/sessions/a-source/open' })
+    expect(response.statusCode).toBe(200)
+    expect(refresh).toHaveBeenCalledWith('a-source')
+    expect(resume).not.toHaveBeenCalled()
+  } finally {
+    delete provider.refreshSession
+  }
+})
+
 // Registered once, at import time: see the note at the top. `alpha` is first, so
 // it is also `registry.default` — the same accident of registration order that
 // makes a bare `/api/sessions` mean "Codex only" in production.
