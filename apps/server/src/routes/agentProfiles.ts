@@ -8,7 +8,7 @@ import type {
   ModelInfo,
 } from '@vibemobile/protocol'
 import type { Config } from '../config.js'
-import { AgentProfileError, type AgentProfileStore } from '../agents/profiles.js'
+import { AgentProfileError, isAgentProfileId, type AgentProfileStore } from '../agents/profiles.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
 import { requireAuth } from './guards.js'
 import type { NativeAgentConfigStore } from '../agents/nativeConfig.js'
@@ -24,20 +24,40 @@ export function registerAgentProfileRoutes(
   const auth = { preHandler: requireAuth(config) }
   const response = (): AgentProfilesResponse => {
     const result = { ...store.response(), limitations: limitations() }
-    return nativeStore
-      ? {
-          ...result,
-          native: Object.fromEntries(
-            AGENT_IDS.map((agent) => [
-              agent,
-              {
-                ...nativeStore.read(agent, result.active[agent] === null),
-                ...(store.nativeName(agent) ? { name: store.nativeName(agent) } : {}),
-              },
-            ]),
-          ) as NonNullable<AgentProfilesResponse['native']>,
-        }
-      : result
+    return {
+      ...result,
+      native: {
+        ...(nativeStore
+          ? Object.fromEntries(
+              AGENT_IDS.map((agent) => [
+                agent,
+                {
+                  ...nativeStore.read(agent, result.active[agent] === null),
+                  ...(store.nativeName(agent) ? { name: store.nativeName(agent) } : {}),
+                },
+              ]),
+            )
+          : {}),
+        antigravity: {
+          id: 'native',
+          name: '执行机现有配置',
+          baseUrl: null,
+          model: null,
+          models: [],
+          hasApiKey: false,
+          active: result.active.antigravity === null,
+          updatedAt: 0,
+          sourcePath: '',
+          exists: true,
+          revision: '',
+          providerId: null,
+          providers: [],
+          modelAliases: {},
+          keyEditable: false,
+          keySource: null,
+        },
+      },
+    }
   }
   app.addHook('onSend', async (req, reply) => {
     if (req.url.startsWith('/api/agent-profiles')) reply.header('cache-control', 'no-store')
@@ -101,7 +121,7 @@ export function registerAgentProfileRoutes(
     auth,
     async (req, reply) => {
       const agent = req.params.agent
-      if (!isAgentRuntimeId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
+      if (!isAgentProfileId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
       try {
         const result = await run(() => store.create(agent, req.body))
         return reply.code(201).send(result)
@@ -115,10 +135,11 @@ export function registerAgentProfileRoutes(
     auth,
     async (req, reply) => {
       const agent = req.params.agent
-      if (!isAgentRuntimeId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
+      if (!isAgentProfileId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
       try {
         if (req.params.id === 'native') {
-          if (!nativeStore) return reply.code(404).send({ error: 'agent_profile_not_found' })
+          if (!nativeStore || !isAgentRuntimeId(agent))
+            return reply.code(404).send({ error: 'agent_profile_not_found' })
           return await run(async () => {
             const { name, ...nativeInput } = req.body
             await store.editNative(agent, () => nativeStore.update(agent, nativeInput), !limitations()?.[agent])
@@ -136,7 +157,7 @@ export function registerAgentProfileRoutes(
     auth,
     async (req, reply) => {
       const agent = req.params.agent
-      if (!isAgentRuntimeId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
+      if (!isAgentProfileId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
       try {
         return await run(() => store.activate(agent, req.params.id === 'native' ? null : req.params.id))
       } catch (err) {
@@ -146,7 +167,7 @@ export function registerAgentProfileRoutes(
   )
   app.delete<{ Params: { agent: string; id: string } }>('/api/agent-profiles/:agent/:id', auth, async (req, reply) => {
     const agent = req.params.agent
-    if (!isAgentRuntimeId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
+    if (!isAgentProfileId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
     try {
       return await run(() => store.remove(agent, req.params.id))
     } catch (err) {
@@ -155,7 +176,10 @@ export function registerAgentProfileRoutes(
   })
 }
 
-async function fetchProfileModels(agent: AgentRuntimeId, profile: { baseUrl: string; apiKey: string }): Promise<ModelInfo[]> {
+async function fetchProfileModels(
+  agent: AgentRuntimeId,
+  profile: { baseUrl: string; apiKey: string },
+): Promise<ModelInfo[]> {
   if (!profile.baseUrl) throw new AgentProfileError('agent_profile_models_unavailable', 502)
   const base = profile.baseUrl.replace(/\/+$/, '')
   const paths = base.endsWith('/v1') ? [`${base}/models`] : [`${base}/models`, `${base}/v1/models`]
@@ -193,16 +217,20 @@ function normalizeModels(payload: unknown): ModelInfo[] {
   const rows = Array.isArray(payload)
     ? payload
     : payload && typeof payload === 'object'
-      ? (payload as { data?: unknown; models?: unknown }).data ?? (payload as { models?: unknown }).models
+      ? ((payload as { data?: unknown; models?: unknown }).data ?? (payload as { models?: unknown }).models)
       : []
   if (!Array.isArray(rows)) throw new AgentProfileError('agent_profile_models_unavailable', 502)
   const seen = new Set<string>()
   return rows.flatMap((row): ModelInfo[] => {
     const value = typeof row === 'string' ? row : row && typeof row === 'object' ? row : null
-    const id = typeof value === 'string' ? value : String((value as any)?.id ?? (value as any)?.model ?? (value as any)?.slug ?? '').trim()
+    const id =
+      typeof value === 'string'
+        ? value
+        : String((value as any)?.id ?? (value as any)?.model ?? (value as any)?.slug ?? '').trim()
     if (!id || seen.has(id)) return []
     seen.add(id)
-    const displayName = typeof value === 'string' ? id : String((value as any)?.displayName ?? (value as any)?.name ?? id).trim() || id
+    const displayName =
+      typeof value === 'string' ? id : String((value as any)?.displayName ?? (value as any)?.name ?? id).trim() || id
     const contextWindow = typeof value === 'string' ? undefined : contextWindowOf(value as Record<string, unknown>)
     return [{ id, displayName, ...(contextWindow ? { contextWindow } : {}) }]
   })
@@ -210,7 +238,8 @@ function normalizeModels(payload: unknown): ModelInfo[] {
 
 /** Providers use several names for the same model limit. Keep the wire DTO stable. */
 function contextWindowOf(value: Record<string, unknown>): number | undefined {
-  const nested = value.limits && typeof value.limits === 'object' ? (value.limits as Record<string, unknown>) : undefined
+  const nested =
+    value.limits && typeof value.limits === 'object' ? (value.limits as Record<string, unknown>) : undefined
   const candidates = [
     value.contextWindow,
     value.context_window,
@@ -221,9 +250,13 @@ function contextWindowOf(value: Record<string, unknown>): number | undefined {
     nested?.contextWindow,
     nested?.context_length,
   ]
-  const result = candidates.find((candidate) => typeof candidate === 'number' || (typeof candidate === 'string' && /^\d+$/.test(candidate)))
+  const result = candidates.find(
+    (candidate) => typeof candidate === 'number' || (typeof candidate === 'string' && /^\d+$/.test(candidate)),
+  )
   const number = typeof result === 'string' ? Number(result) : result
-  return typeof number === 'number' && Number.isSafeInteger(number) && number > 0 && number <= 10_000_000 ? number : undefined
+  return typeof number === 'number' && Number.isSafeInteger(number) && number > 0 && number <= 10_000_000
+    ? number
+    : undefined
 }
 
 function failure(error: unknown, reply: import('fastify').FastifyReply) {

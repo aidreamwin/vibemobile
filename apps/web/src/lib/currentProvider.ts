@@ -5,12 +5,12 @@ export function currentProvider(
   agent: ProviderId | undefined,
   profiles: AgentProfilesResponse,
 ): { name: string; id?: string } | null {
-  if (agent !== 'codex' && agent !== 'claude' && agent !== 'opencode') return null
+  if (agent !== 'codex' && agent !== 'claude' && agent !== 'opencode' && agent !== 'antigravity') return null
   // An attached external service owns its configuration; local files cannot describe it.
   if (profiles.limitations?.[agent]) return null
   const activeId = profiles.active[agent]
   if (activeId !== null) {
-    const profile = profiles.data[agent].find((item) => item.id === activeId)
+    const profile = profiles.data[agent]?.find((item) => item.id === activeId)
     return profile ? { name: profile.name } : null
   }
   const native = profiles.native?.[agent]

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type {
   AgentProfileRequest,
+  AgentProfileId,
   AgentRuntimeId,
   AgentProfilesResponse,
   AntigravityConnectionRequest,
@@ -22,11 +23,9 @@ export interface StoredAgentProfile {
 
 interface ProfileFile {
   version: 1
-  active: Record<AgentRuntimeId, string | null>
-  profiles: Record<AgentRuntimeId, StoredAgentProfile[]>
+  active: Record<AgentProfileId, string | null>
+  profiles: Record<AgentProfileId, StoredAgentProfile[]>
   nativeNames: Partial<Record<AgentRuntimeId, string>>
-  antigravityApiKey: string
-  antigravityBaseUrl: string
 }
 
 export class AgentProfileError extends Error {
@@ -38,21 +37,23 @@ export class AgentProfileError extends Error {
   }
 }
 
-type ConfigurableAgent = AgentRuntimeId | 'antigravity'
+const PROFILE_IDS = [...AGENT_IDS, 'antigravity'] as const
+
+export function isAgentProfileId(value: string): value is AgentProfileId {
+  return PROFILE_IDS.some((id) => id === value)
+}
 
 interface ProfileHooks {
-  beforeApply?: (agent: ConfigurableAgent, profile?: StoredAgentProfile) => void | Promise<void>
-  apply?: (agent: ConfigurableAgent) => void | Promise<void>
+  beforeApply?: (agent: AgentProfileId, profile?: StoredAgentProfile) => void | Promise<void>
+  apply?: (agent: AgentProfileId) => void | Promise<void>
 }
 
 function emptyFile(): ProfileFile {
   return {
     version: 1,
-    active: { codex: null, claude: null, opencode: null },
-    profiles: { codex: [], claude: [], opencode: [] },
+    active: { codex: null, claude: null, opencode: null, antigravity: null },
+    profiles: { codex: [], claude: [], opencode: [], antigravity: [] },
     nativeNames: {},
-    antigravityApiKey: '',
-    antigravityBaseUrl: '',
   }
 }
 
@@ -110,11 +111,7 @@ export function cleanProfile(
     Object.keys(contextWindows).length > 100 ||
     Object.entries(contextWindows).some(
       ([key, value]) =>
-        !key.trim() ||
-        key.length > 200 ||
-        !Number.isSafeInteger(value) ||
-        value <= 0 ||
-        value > 10_000_000,
+        !key.trim() || key.length > 200 || !Number.isSafeInteger(value) || value <= 0 || value > 10_000_000,
     )
   )
     throw new AgentProfileError('invalid_agent_profile_value')
@@ -141,17 +138,17 @@ export class AgentProfileStore {
     this.#data = this.#read()
   }
 
-  current(agent: AgentRuntimeId): StoredAgentProfile | undefined {
+  current(agent: AgentProfileId): StoredAgentProfile | undefined {
     const profile = this.#data.profiles[agent].find((item) => item.id === this.#data.active[agent])
     return profile ? { ...profile } : undefined
   }
 
   get antigravityApiKey(): string {
-    return this.#data.antigravityApiKey
+    return this.current('antigravity')?.apiKey ?? ''
   }
 
   get antigravityBaseUrl(): string {
-    return this.#data.antigravityBaseUrl
+    return this.current('antigravity')?.baseUrl ?? ''
   }
 
   async setAntigravityConnection(input: AntigravityConnectionRequest): Promise<void> {
@@ -161,14 +158,28 @@ export class AgentProfileStore {
     if (input.apiKey !== null && !key) throw new AgentProfileError('invalid_antigravity_api_key')
     const baseUrl =
       input.apiKey === null ? '' : cleanBaseUrl(input.baseUrl === undefined ? this.antigravityBaseUrl : input.baseUrl)
-    const changed = key !== this.antigravityApiKey || baseUrl !== this.antigravityBaseUrl
-    await this.#save(
-      { ...this.#data, antigravityApiKey: key, antigravityBaseUrl: baseUrl },
-      changed ? { agent: 'antigravity' } : undefined,
-    )
+    if (key === this.antigravityApiKey && baseUrl === this.antigravityBaseUrl) return
+    const next = structuredClone(this.#data)
+    const current = next.profiles.antigravity.find((item) => item.id === next.active.antigravity)
+    if (!key) {
+      next.active.antigravity = null
+      next.profiles.antigravity = next.profiles.antigravity.filter((item) => item.id !== current?.id)
+    } else if (current) {
+      Object.assign(current, { apiKey: key, baseUrl, updatedAt: Date.now() })
+    } else {
+      if (next.profiles.antigravity.length >= 100) throw new AgentProfileError('agent_profile_limit', 409)
+      const id = `profile-${crypto.randomBytes(8).toString('hex')}`
+      next.profiles.antigravity.push({
+        id,
+        ...cleanProfile({ name: 'Gemini API', apiKey: key, baseUrl }),
+        updatedAt: Date.now(),
+      })
+      next.active.antigravity = id
+    }
+    await this.#commit('antigravity', next)
   }
 
-  get(agent: AgentRuntimeId, id: string): StoredAgentProfile | undefined {
+  get(agent: AgentProfileId, id: string): StoredAgentProfile | undefined {
     const profile = this.#data.profiles[agent].find((item) => item.id === id)
     return profile
       ? { ...profile, models: [...profile.models], modelContextWindows: { ...(profile.modelContextWindows ?? {}) } }
@@ -177,7 +188,7 @@ export class AgentProfileStore {
 
   response(): AgentProfilesResponse {
     const data = Object.fromEntries(
-      AGENT_IDS.map((agent) => [
+      PROFILE_IDS.map((agent) => [
         agent,
         this.#data.profiles[agent].map((profile) => ({
           id: profile.id,
@@ -211,7 +222,7 @@ export class AgentProfileStore {
     this.#data = next
   }
 
-  async create(agent: AgentRuntimeId, input: AgentProfileRequest): Promise<void> {
+  async create(agent: AgentProfileId, input: AgentProfileRequest): Promise<void> {
     const next = structuredClone(this.#data)
     if (next.profiles[agent].length >= 100) throw new AgentProfileError('agent_profile_limit', 409)
     next.profiles[agent].push({
@@ -222,7 +233,7 @@ export class AgentProfileStore {
     await this.#commit(agent, next)
   }
 
-  async update(agent: AgentRuntimeId, id: string, input: Partial<AgentProfileRequest>): Promise<void> {
+  async update(agent: AgentProfileId, id: string, input: Partial<AgentProfileRequest>): Promise<void> {
     const next = structuredClone(this.#data)
     const profile = next.profiles[agent].find((item) => item.id === id)
     if (!profile) throw new AgentProfileError('agent_profile_not_found', 404)
@@ -232,7 +243,7 @@ export class AgentProfileStore {
     await this.#commit(agent, next)
   }
 
-  async remove(agent: AgentRuntimeId, id: string): Promise<void> {
+  async remove(agent: AgentProfileId, id: string): Promise<void> {
     const next = structuredClone(this.#data)
     if (!next.profiles[agent].some((item) => item.id === id))
       throw new AgentProfileError('agent_profile_not_found', 404)
@@ -241,7 +252,7 @@ export class AgentProfileStore {
     await this.#commit(agent, next)
   }
 
-  async activate(agent: AgentRuntimeId, id: string | null): Promise<void> {
+  async activate(agent: AgentProfileId, id: string | null): Promise<void> {
     const next = structuredClone(this.#data)
     if (id !== null && !next.profiles[agent].some((item) => item.id === id))
       throw new AgentProfileError('agent_profile_not_found', 404)
@@ -275,13 +286,13 @@ export class AgentProfileStore {
     }
   }
 
-  #commit(agent: AgentRuntimeId, next: ProfileFile): Promise<void> {
+  #commit(agent: AgentProfileId, next: ProfileFile): Promise<void> {
     const profile = next.profiles[agent].find((item) => item.id === next.active[agent])
     const changed = JSON.stringify(this.current(agent)) !== JSON.stringify(profile)
     return this.#save(next, changed ? { agent, profile } : undefined)
   }
 
-  async #save(next: ProfileFile, change?: { agent: ConfigurableAgent; profile?: StoredAgentProfile }): Promise<void> {
+  async #save(next: ProfileFile, change?: { agent: AgentProfileId; profile?: StoredAgentProfile }): Promise<void> {
     if (this.#busy) throw new AgentProfileError('agent_profile_busy', 409)
     this.#busy = true
     const previous = this.#data
@@ -290,6 +301,8 @@ export class AgentProfileStore {
         const { agent, profile } = change
         if (agent === 'opencode' && profile && (!profile.baseUrl || !profile.model))
           throw new AgentProfileError('agent_profile_opencode_required')
+        if (agent === 'antigravity' && profile && !profile.apiKey)
+          throw new AgentProfileError('invalid_antigravity_api_key')
         await this.#hooks.beforeApply?.(agent, profile ? { ...profile } : undefined)
       }
       this.#persist(next)
@@ -324,13 +337,24 @@ export class AgentProfileStore {
       throw new AgentProfileError('agent_profile_store_unreadable', 500)
     }
     try {
-      const value = JSON.parse(raw) as ProfileFile
+      const value = JSON.parse(raw) as ProfileFile & { antigravityApiKey?: string; antigravityBaseUrl?: string }
       if (value.version !== 1) throw new Error('version')
       const result = emptyFile()
-      result.antigravityApiKey = field(value.antigravityApiKey, 2000)
-      result.antigravityBaseUrl = cleanBaseUrl(value.antigravityBaseUrl)
-      for (const agent of AGENT_IDS) {
+      for (const agent of PROFILE_IDS) {
         const rows = value.profiles[agent]
+        if (agent === 'antigravity' && rows === undefined && value.active[agent] === undefined) {
+          const apiKey = field(value.antigravityApiKey, 2000)
+          if (apiKey) {
+            const id = 'profile-0000000000000000'
+            result.profiles[agent].push({
+              id,
+              ...cleanProfile({ name: 'Gemini API', apiKey, baseUrl: value.antigravityBaseUrl }),
+              updatedAt: 0,
+            })
+            result.active[agent] = id
+          }
+          continue
+        }
         if (!Array.isArray(rows) || rows.length > 100) throw new Error('profiles')
         const ids = new Set<string>()
         result.profiles[agent] = rows.map((item) => {
@@ -339,7 +363,11 @@ export class AgentProfileStore {
           ids.add(item.id)
           return {
             id: item.id,
-            ...cleanProfile({ ...item, models: item.models ?? [], modelContextWindows: item.modelContextWindows ?? {} }),
+            ...cleanProfile({
+              ...item,
+              models: item.models ?? [],
+              modelContextWindows: item.modelContextWindows ?? {},
+            }),
             updatedAt: item.updatedAt,
           }
         })

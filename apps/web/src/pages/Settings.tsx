@@ -1,7 +1,6 @@
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import AgentProfilesSection from '../components/AgentProfilesSection'
-import AntigravityKeySection from '../components/AntigravityKeySection'
 import CodexGlobalSection from '../components/CodexGlobalSection'
 import { useCallback, useEffect, useState } from 'react'
 import {
@@ -992,8 +991,9 @@ function AgentsSection() {
               ))
             }
           >
-            {(id === 'codex' || id === 'claude' || id === 'opencode') && <AgentProfilesSection agent={id} />}
-            {id === 'antigravity' && <AntigravityKeySection onSaved={loadProviders} />}
+            {(id === 'codex' || id === 'claude' || id === 'opencode' || id === 'antigravity') && (
+              <AgentProfilesSection agent={id} onChanged={loadProviders} />
+            )}
             {id === 'codex' && <CodexGlobalSection />}
             {agent?.error && <p className="text-destructive">{agent.error}</p>}
             {id !== 'antigravity' && provider?.available && provider.authenticated === false && (

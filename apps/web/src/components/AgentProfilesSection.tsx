@@ -15,7 +15,7 @@ import {
 import type {
   AgentProfile,
   AgentProfilesResponse,
-  AgentRuntimeId,
+  AgentProfileId,
   ModelInfo,
   NativeAgentProfile,
 } from '@vibemobile/protocol'
@@ -26,21 +26,27 @@ import Sheet from './Sheet'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
-const AGENT_NAMES: Record<AgentRuntimeId, string> = { codex: 'Codex', claude: 'Claude', opencode: 'OpenCode' }
+const AGENT_NAMES: Record<AgentProfileId, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  opencode: 'OpenCode',
+  antigravity: 'Antigravity',
+}
 
 function isNative(profile?: AgentProfile): profile is NativeAgentProfile {
   return Boolean(profile && 'sourcePath' in profile)
 }
 
 type Panel =
+  | { kind: 'native-login' }
   | { kind: 'edit'; profile?: AgentProfile }
   | { kind: 'menu'; profile: AgentProfile }
   | { kind: 'delete'; profile: AgentProfile }
   | { kind: 'activate'; profile?: AgentProfile }
 
 const EMPTY_DATA: AgentProfilesResponse = {
-  data: { codex: [], claude: [], opencode: [] },
-  active: { codex: null, claude: null, opencode: null },
+  data: { codex: [], claude: [], opencode: [], antigravity: [] },
+  active: { codex: null, claude: null, opencode: null, antigravity: null },
 }
 
 function editorSnapshot(
@@ -65,7 +71,13 @@ function editorSnapshot(
   ])
 }
 
-export default function AgentProfilesSection({ agent: selected }: { agent: AgentRuntimeId }) {
+export default function AgentProfilesSection({
+  agent: selected,
+  onChanged,
+}: {
+  agent: AgentProfileId
+  onChanged?: () => void
+}) {
   const [data, setData] = useState<AgentProfilesResponse>(EMPTY_DATA)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -92,7 +104,12 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await api.agentProfiles())
+      const result = await api.agentProfiles()
+      if (selected === 'antigravity' && !Array.isArray(result.data.antigravity)) {
+        setLoaded(false)
+        throw new Error('请更新当前执行机以使用 Antigravity 供应商配置。')
+      }
+      setData(result)
       setLoaded(true)
       setError(null)
     } catch (err) {
@@ -100,14 +117,14 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selected])
 
   useEffect(() => {
     void load()
   }, [load])
 
   const agentName = AGENT_NAMES[selected]
-  const profiles = data.data[selected]
+  const profiles = data.data[selected] ?? []
   const limitation = data.limitations?.[selected]
   const native = data.native?.[selected]
   const nativeEditor = panel?.kind === 'edit' && isNative(panel.profile) ? panel.profile : undefined
@@ -166,6 +183,7 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
     setError(null)
     try {
       setData(await run())
+      onChanged?.()
       if (close) setPanel(null)
     } catch (err) {
       setError(agentProfileErrorLabel(err))
@@ -240,7 +258,7 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
                 <HardDrive aria-hidden="true" strokeWidth={1.5} className="size-5 shrink-0 text-muted-foreground" />
                 <button
                   type="button"
-                  onClick={() => edit(native)}
+                  onClick={() => (selected === 'antigravity' ? setPanel({ kind: 'native-login' }) : edit(native))}
                   disabled={busy || Boolean(native.error)}
                   className="min-h-11 min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
                   aria-label={`编辑 ${native.name}`}
@@ -341,6 +359,16 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
         )}
       </div>
 
+      {panel?.kind === 'native-login' && (
+        <Sheet title="Antigravity 配置" onClose={() => setPanel(null)}>
+          <div className="space-y-3 px-4 pt-3 pb-5 text-sm text-muted-foreground">
+            <p>使用执行机原有的 Antigravity CLI 登录及连接设置。</p>
+            <p>
+              Google 账号登录请在执行机运行 <code>agy acp --login</code>。
+            </p>
+          </div>
+        </Sheet>
+      )}
       {panel?.kind === 'edit' && (
         <Sheet
           title={nativeEditor ? `${agentName} 配置` : `${panel.profile ? '编辑' : '添加'} ${agentName} 供应商`}
@@ -360,7 +388,9 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
                     ? '保存后需在外部服务中重新加载配置。'
                     : selected === 'claude'
                       ? '新配置从下一回合生效。'
-                      : '保存将重启服务，中断正在进行的回合。'}
+                      : selected === 'antigravity'
+                        ? '当前回合结束后可以保存，新配置会重新连接 CLI。'
+                        : '保存将重启服务，中断正在进行的回合。'}
                 </p>
               )}
               <Button
@@ -430,33 +460,42 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
                   />
                 </div>
               )}
-              <label htmlFor="agent-profile-model" className="block space-y-2 text-xs text-muted-foreground">
-                <span>默认模型</span>
-                <Input
-                  value={model}
-                  id="agent-profile-model"
-                  onChange={(event) => setModel(event.target.value)}
-                  placeholder="留空使用默认模型"
-                  list={selectedProvider ? 'agent-native-models' : undefined}
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  className="h-12 rounded-xl font-mono text-base md:text-base"
-                />
-              </label>
+              {selected !== 'antigravity' && (
+                <label htmlFor="agent-profile-model" className="block space-y-2 text-xs text-muted-foreground">
+                  <span>默认模型</span>
+                  <Input
+                    value={model}
+                    id="agent-profile-model"
+                    onChange={(event) => setModel(event.target.value)}
+                    placeholder="留空使用默认模型"
+                    list={selectedProvider ? 'agent-native-models' : undefined}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="h-12 rounded-xl font-mono text-base md:text-base"
+                  />
+                </label>
+              )}
               <label htmlFor="agent-profile-base-url" className="block space-y-2 text-xs text-muted-foreground">
                 <span>接口地址</span>
                 <Input
                   value={baseUrl}
                   id="agent-profile-base-url"
                   onChange={(event) => setBaseUrl(event.target.value)}
-                  placeholder={selected === 'claude' ? 'https://api.anthropic.com' : 'https://api.example.com/v1'}
+                  placeholder={
+                    selected === 'antigravity'
+                      ? 'https://generativelanguage.googleapis.com'
+                      : selected === 'claude'
+                        ? 'https://api.anthropic.com'
+                        : 'https://api.example.com/v1'
+                  }
                   inputMode="url"
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
                   className="h-12 rounded-xl font-mono text-base md:text-base"
                 />
+                {selected === 'antigravity' && <span>留空使用 Google 官方 Gemini 接口</span>}
               </label>
               <div className="space-y-2">
                 <div className="flex min-h-6 items-center justify-between gap-2">
@@ -538,7 +577,7 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
                   </>
                 )}
               </div>
-              {(!nativeEditor || selected === 'opencode') && (
+              {selected !== 'antigravity' && (!nativeEditor || selected === 'opencode') && (
                 <details className="group rounded-xl border border-border/70">
                   <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-3 text-sm [&::-webkit-details-marker]:hidden">
                     <span className="flex-1">模型管理</span>
@@ -664,7 +703,9 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
                         ? '支持 OpenAI Chat Completions 兼容接口，启用前需填写接口地址和模型名称。'
                         : selected === 'codex'
                           ? '支持 OpenAI Responses 兼容接口。'
-                          : '使用此供应商连接 Claude。'}
+                          : selected === 'antigravity'
+                            ? '支持 Gemini 兼容接口，地址留空使用 Google 官方接口。模型由 Antigravity CLI 提供。'
+                            : '使用此供应商连接 Claude。'}
                     </p>
                   )}
                   {nativeEditor?.keySource && providerId === nativeEditor.providerId && (
@@ -811,7 +852,9 @@ export default function AgentProfilesSection({ agent: selected }: { agent: Agent
             <p className="text-xs text-warning">
               {selected === 'claude'
                 ? '当前回合继续使用原配置，新配置从下一回合生效。'
-                : '切换会重启 Agent 服务，正在进行的回合会中断。'}
+                : selected === 'antigravity'
+                  ? '当前回合结束后可以切换，切换时会重新连接 CLI。'
+                  : '切换会重启 Agent 服务，正在进行的回合会中断。'}
             </p>
             {error && (
               <p role="alert" className="text-xs text-destructive">

@@ -22,8 +22,8 @@ function fixture(): AgentProfilesResponse {
     keySource: null,
   }
   return {
-    data: { codex: [], claude: [], opencode: [] },
-    active: { codex: null, claude: null, opencode: null },
+    data: { codex: [], claude: [], opencode: [], antigravity: [] },
+    active: { codex: null, claude: null, opencode: null, antigravity: null },
     native: { codex: native, claude: { ...native, providerId: null }, opencode: { ...native } },
   }
 }
@@ -32,7 +32,7 @@ describe('current provider', () => {
   it('uses the active managed profile rather than the native configuration', () => {
     const profiles = fixture()
     profiles.active.codex = 'managed'
-    profiles.data.codex = [{ ...profiles.native!.codex, id: 'managed', name: 'Managed API' }]
+    profiles.data.codex = [{ ...profiles.native!.codex!, id: 'managed', name: 'Managed API' }]
     expect(currentProvider('codex', profiles)).toEqual({ name: 'Managed API' })
     profiles.active.codex = 'missing'
     expect(currentProvider('codex', profiles)).toBeNull()
@@ -41,16 +41,16 @@ describe('current provider', () => {
   it('shows a native provider name and key, including built-in providers', () => {
     const profiles = fixture()
     expect(currentProvider('codex', profiles)).toEqual({ name: 'Custom API', id: 'custom' })
-    profiles.native!.codex.providerId = 'openai'
+    profiles.native!.codex!.providerId = 'openai'
     expect(currentProvider('codex', profiles)).toEqual({ name: 'openai' })
     expect(currentProvider('opencode', profiles)).toEqual({ name: 'Custom API', id: 'custom' })
   })
 
   it('shows only the host for a native endpoint without a provider key', () => {
     const profiles = fixture()
-    profiles.native!.claude.baseUrl = 'https://user:secret@api.example.com/v1?key=secret'
+    profiles.native!.claude!.baseUrl = 'https://user:secret@api.example.com/v1?key=secret'
     expect(currentProvider('claude', profiles)).toEqual({ name: 'api.example.com' })
-    profiles.native!.claude.baseUrl = 'invalid'
+    profiles.native!.claude!.baseUrl = 'invalid'
     expect(currentProvider('claude', profiles)).toBeNull()
   })
 
@@ -58,7 +58,7 @@ describe('current provider', () => {
     const profiles = fixture()
     expect(currentProvider('other', profiles)).toBeNull()
     expect(currentProvider(undefined, profiles)).toBeNull()
-    profiles.native!.codex.error = 'agent_native_unreadable'
+    profiles.native!.codex!.error = 'agent_native_unreadable'
     expect(currentProvider('codex', profiles)).toBeNull()
     profiles.limitations = { opencode: 'External service' }
     expect(currentProvider('opencode', profiles)).toBeNull()

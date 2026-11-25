@@ -173,6 +173,37 @@ afterAll(async () => {
 })
 
 describe('distributed Hub and two reverse runners', () => {
+  it('manages named Antigravity suppliers through the same runner profile routes', async () => {
+    const url = '/r/r1/api/agent-profiles/antigravity'
+    const headers = { cookie }
+    const created = await hub.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {
+        name: 'Gemini gateway',
+        apiKey: 'managed-test-secret',
+        baseUrl: 'https://gemini.example.test',
+      },
+    })
+    expect(created.statusCode).toBe(201)
+    const id = created.json().data.antigravity[0].id
+    expect(created.body).not.toContain('managed-test-secret')
+    const enabled = await hub.inject({ method: 'POST', url: `${url}/${id}/activate`, headers })
+    expect(enabled.json().active.antigravity).toBe(id)
+    const edited = await hub.inject({
+      method: 'PATCH',
+      url: `${url}/${id}`,
+      headers,
+      payload: { name: 'Updated Gemini' },
+    })
+    expect(edited.json().data.antigravity[0]).toMatchObject({ name: 'Updated Gemini', hasApiKey: true, active: true })
+    const restored = await hub.inject({ method: 'POST', url: `${url}/native/activate`, headers })
+    expect(restored.json().active.antigravity).toBeNull()
+    const removed = await hub.inject({ method: 'DELETE', url: `${url}/${id}`, headers })
+    expect(removed.json().data.antigravity).toEqual([])
+  })
+
   it('saves, rotates and removes the Gemini key only on the selected runner', async () => {
     const url = '/r/r1/api/agent-profiles/antigravity/key'
     const headers = { cookie }

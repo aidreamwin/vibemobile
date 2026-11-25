@@ -1,11 +1,10 @@
 import type {
   AgentsResponse,
   AgentProfileRequest,
+  AgentProfileId,
   AgentProfilesResponse,
   AgentRuntimeId,
   AgentRuntimeStatus,
-  AntigravityKeyStatus,
-  AntigravityConnectionRequest,
   CreateSessionOptions,
   CodexGlobalCatalog,
   CodexGlobalDocument,
@@ -125,37 +124,31 @@ export const api = {
 
   // ---- runner-local agent profiles ----
   agentProfiles: () => request<AgentProfilesResponse>('/api/agent-profiles'),
-  antigravityKey: () => request<AntigravityKeyStatus>('/api/agent-profiles/antigravity/key'),
-  setAntigravityKey: (body: AntigravityConnectionRequest) =>
-    request<AntigravityKeyStatus>('/api/agent-profiles/antigravity/key', {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    }),
   codexGlobal: () => request<CodexGlobalCatalog>('/api/codex/global'),
   codexGlobalDocument: (id: string) => request<CodexGlobalDocument>(`/api/codex/global/document${qs({ id })}`),
   saveCodexGlobalDocument: (body: { id: string; text: string; revision: string }) =>
     request<CodexGlobalDocument>('/api/codex/global/document', { method: 'PUT', body: JSON.stringify(body) }),
   createCodexGlobalSkill: (body: { name: string; text: string }) =>
     request<CodexGlobalDocument>('/api/codex/global/skills', { method: 'POST', body: JSON.stringify(body) }),
-  fetchAgentProfileModels: (agent: AgentRuntimeId, id: string) =>
+  fetchAgentProfileModels: (agent: AgentProfileId, id: string) =>
     request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}/models`),
-  fetchUnsavedAgentProfileModels: (agent: AgentRuntimeId, body: { baseUrl: string; apiKey?: string }) =>
+  fetchUnsavedAgentProfileModels: (agent: AgentProfileId, body: { baseUrl: string; apiKey?: string }) =>
     request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/models`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  createAgentProfile: (agent: AgentRuntimeId, body: AgentProfileRequest) =>
+  createAgentProfile: (agent: AgentProfileId, body: AgentProfileRequest) =>
     request<AgentProfilesResponse>(`/api/agent-profiles/${agent}`, { method: 'POST', body: JSON.stringify(body) }),
-  updateAgentProfile: (agent: AgentRuntimeId, id: string, body: Partial<AgentProfileRequest>) =>
+  updateAgentProfile: (agent: AgentProfileId, id: string, body: Partial<AgentProfileRequest>) =>
     request<AgentProfilesResponse>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
-  activateAgentProfile: (agent: AgentRuntimeId, id: string) =>
+  activateAgentProfile: (agent: AgentProfileId, id: string) =>
     request<AgentProfilesResponse>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}/activate`, {
       method: 'POST',
     }),
-  deleteAgentProfile: (agent: AgentRuntimeId, id: string) =>
+  deleteAgentProfile: (agent: AgentProfileId, id: string) =>
     request<AgentProfilesResponse>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // ---- app update ----

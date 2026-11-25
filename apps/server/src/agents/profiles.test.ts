@@ -23,6 +23,33 @@ afterEach(() => {
 })
 
 describe('runner agent profiles', () => {
+  it('migrates an existing Antigravity connection into an active named profile', async () => {
+    const dir = temp()
+    fs.writeFileSync(
+      path.join(dir, 'agent-profiles.json'),
+      JSON.stringify({
+        version: 1,
+        profiles: { codex: [], claude: [], opencode: [] },
+        active: { codex: null, claude: null, opencode: null },
+        antigravityApiKey: 'old-secret',
+        antigravityBaseUrl: 'https://gemini.example.test',
+      }),
+    )
+    const store = new AgentProfileStore(dir)
+    const migrated = store.response().data.antigravity[0]
+    expect(migrated).toMatchObject({ active: true, hasApiKey: true, baseUrl: 'https://gemini.example.test' })
+    expect(store.response().active.antigravity).toBe(migrated.id)
+    expect(JSON.stringify(store.response())).not.toContain('old-secret')
+    await store.create('antigravity', { name: 'Second', apiKey: 'second-secret' })
+    const second = store.response().data.antigravity[1]
+    await store.activate('antigravity', second.id)
+    expect(new AgentProfileStore(dir).antigravityApiKey).toBe('second-secret')
+    await store.activate('antigravity', null)
+    expect(store.antigravityApiKey).toBe('')
+    await store.activate('antigravity', migrated.id)
+    expect(store.antigravityApiKey).toBe('old-secret')
+  })
+
   it('keeps a Gemini key across restarts and restores it if replacing it fails', async () => {
     const dir = temp()
     fs.writeFileSync(
@@ -87,7 +114,11 @@ describe('runner agent profiles', () => {
     expect(JSON.stringify(store.response())).not.toContain('secret')
     await store.activate('codex', profile.id)
     const restored = new AgentProfileStore(dir)
-    expect(restored.current('codex')).toMatchObject({ id: profile.id, apiKey: 'secret', modelContextWindows: { 'model-a': 200000 } })
+    expect(restored.current('codex')).toMatchObject({
+      id: profile.id,
+      apiKey: 'secret',
+      modelContextWindows: { 'model-a': 200000 },
+    })
   })
 
   it('preserves a key when editing other fields and supports clearing it', async () => {

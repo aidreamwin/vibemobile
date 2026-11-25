@@ -34,6 +34,7 @@ export interface ProviderStatus {
  * installed but not active is listed in `installed`, not in `active`.
  */
 export type AgentRuntimeId = 'codex' | 'claude' | 'opencode'
+export type AgentProfileId = AgentRuntimeId | 'antigravity'
 
 export interface AgentRuntimeStatus {
   id: AgentRuntimeId
@@ -75,11 +76,11 @@ export interface AgentProfile {
 }
 
 export interface AgentProfilesResponse {
-  data: Record<AgentRuntimeId, AgentProfile[]>
-  active: Record<AgentRuntimeId, string | null>
+  data: Record<AgentProfileId, AgentProfile[]>
+  active: Record<AgentProfileId, string | null>
   /** Attached services keep their own configuration and cannot apply profiles. */
-  limitations?: Partial<Record<AgentRuntimeId, string>>
-  native?: Record<AgentRuntimeId, NativeAgentProfile>
+  limitations?: Partial<Record<AgentProfileId, string>>
+  native?: Partial<Record<AgentProfileId, NativeAgentProfile>>
 }
 
 export interface AntigravityKeyStatus {
