@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events'
 import path from 'node:path'
 import type {
   AgentEvent,
+  AgentItem,
   AgentInput,
   ApprovalDecision,
   ModelInfo,
@@ -57,7 +58,7 @@ import {
   type ListSessionsOptions,
 } from '../providers/types.js'
 import { readGitInfo } from '../providers/git.js'
-import { pageTurnsByItems } from '../providers/page.js'
+import { codexItemPage, turnTime, type HistoryTurn } from './itemPage.js'
 import { SessionPrefsStore } from '../providers/sessionPrefs.js'
 import { capImages, MAX_PER_MESSAGE, ImageStore } from '../images/store.js'
 
@@ -901,67 +902,39 @@ export class CodexProvider extends EventEmitter {
     }
   }
 
-  /**
-   * A page budgeted by rendered items instead of turn count.
-   *
-   * `thread/turns/list` only takes a turn limit, so this probes with one turn
-   * and doubles the request until the budget is met. A session whose newest
-   * turn already has enough cards costs one RPC and transfers one turn; the
-   * pathological case (one item per turn) is about seven local calls, each
-   * milliseconds, and is still cheaper than returning sixty turns of a file
-   * whose turns are huge.
-   */
   async #transcriptByItems(
     session: SessionSummary,
     threadId: string,
-    targetItems: number,
-    cursor: string | undefined,
+    limit: number,
+    cursor?: string,
   ): Promise<Transcript> {
-    let res: any
-    let newest: TranscriptTurn[] = []
-    let fetchLimit = 1
     try {
-      for (;;) {
-        ;({ res, turns: newest } = await this.#listTurns(threadId, fetchLimit, cursor))
-        const items = newest.reduce((n, turn) => n + turn.items.length, 0)
-        // Each turn normally carries at least one item, so once the request
-        // size reaches the item budget there is nothing older worth fetching.
-        if (items >= targetItems || newest.length < fetchLimit || fetchLimit >= targetItems) break
-        fetchLimit = Math.min(fetchLimit * 2, targetItems)
-      }
+      const page = await codexItemPage(
+        (method, params) => this.#client.request(method, params),
+        threadId,
+        limit,
+        cursor,
+        (item) => normalizeItem(item, this.#imageOptions()),
+        (turn) => this.#diagnostics(threadId, turn),
+      )
+      return { session, ...page }
     } catch (err) {
       if (isUnmaterializedThreadError(err)) return { session, turns: [], nextCursor: null }
       throw err
     }
+  }
 
-    const ordered = [...newest].reverse()
-    const { start, end } = pageTurnsByItems(ordered, targetItems, 0)
-    const kept = end - start
-    let page = ordered.slice(start, end)
-    let pageRes = res
-
-    // The doubling probe may have fetched turns this page does not return.
-    // `nextCursor` names the turn after the LAST turn of its request, so
-    // spending the probe's cursor would silently skip them. Ask for exactly
-    // the turns being returned; that response's cursor is the one the next
-    // page can use.
-    if (kept > 0 && kept < newest.length) {
-      try {
-        ;({ res: pageRes, turns: newest } = await this.#listTurns(threadId, kept, cursor))
-      } catch (err) {
-        if (isUnmaterializedThreadError(err)) return { session, turns: [], nextCursor: null }
-        throw err
-      }
-      page = [...newest].slice(0, kept).reverse()
+  #diagnostics(threadId: string, turn: HistoryTurn): AgentItem[] {
+    const retry = this.#retryHistory.get(threadId, turn.id)
+    const items: AgentItem[] = retry ? [retry] : []
+    if (turn.status === 'failed' || turn.error) {
+      items.push({
+        kind: 'error',
+        id: `turn-error:${turn.id}`,
+        message: turn.error?.message || '代理执行失败，未返回具体原因。',
+      })
     }
-
-    const nextCursor = cursor && page.length === 0 ? null : (pageRes?.nextCursor ?? null)
-    return {
-      session,
-      turns: page,
-      nextCursor,
-      ...(nextCursor ? { hasMore: true } : {}),
-    }
+    return items
   }
 
   /** One descending page of turns, mapped, still newest-first. */
@@ -980,25 +953,12 @@ export class CodexProvider extends EventEmitter {
     const turns: TranscriptTurn[] = (res?.data ?? []).map((turn: any) => ({
       id: turn.id,
       status: turn.status,
-      // A fresh options object per item: the per-message image cap is per
-      // message. Re-`put`ting what a live event already stored returns the same
-      // token (content-addressed), so replay and live agree, and a store that
-      // was cleared rebuilds itself as soon as any transcript is read.
       items: [
-        ...(turn.items ?? []).map((item: any) => normalizeItem(item, this.#imageOptions())),
-        ...(this.#retryHistory.get(threadId, turn.id) ? [this.#retryHistory.get(threadId, turn.id)!] : []),
-        ...(turn.status === 'failed' || turn.error
-          ? [
-              {
-                kind: 'error' as const,
-                id: `turn-error:${turn.id}`,
-                message: turn.error?.message || '代理执行失败，未返回具体原因。',
-              },
-            ]
-          : []),
+        ...(turn.items ?? []).map((item: unknown) => normalizeItem(item, this.#imageOptions())),
+        ...this.#diagnostics(threadId, turn),
       ],
-      startedAt: turn.startedAt ? toMillis(turn.startedAt) : null,
-      completedAt: turn.completedAt ? toMillis(turn.completedAt) : null,
+      startedAt: turnTime(turn.startedAt),
+      completedAt: turnTime(turn.completedAt),
       durationMs: turn.durationMs ?? null,
     }))
     return { res, turns }

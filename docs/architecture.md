@@ -106,9 +106,11 @@ OpenCode 侧：`client.ts`（HTTP+SSE）、`server.ts`（attach/spawn）、`tran
 ## 转写与分页
 
 - `packages/protocol/src/events.ts` 的 `AgentEvent` 是前后端唯一契约。
-- `?items=` 表示「大约多少个渲染条目」，`?limit=` 表示轮数；两者共用一个游标。
-- 分页切在整轮边界；只要还有更旧的轮就绝不返回空页。
-- Codex 的游标来自 app-server；Claude 的游标是自铸的 `c:<跳过的轮数>`；
+- `?items=` 按渲染条目取页，`?limit=` 显式按整轮取页。客户端按原查询模式原样传回 `nextCursor`。
+- Codex 聊天首屏、上翻与重连默认每页最多 60 条。长轮使用 `thread/items/list` 从末尾向前分页；
+  不支持原生条目分页的旧存储在 runner 本地切页。条目 JSON 总量以 512 KiB 为软预算，单个更大的条目独占一页。
+  连续页可能含相同的 turn ID；`hasEarlierItems` 表示该轮还有更早的条目。
+- Claude 的游标是自铸的 `c:<跳过的轮数>`；
   OpenCode 是 `oc:<跳过的轮数>`——API 的游标是消息级的，按轮数自铸才能保证
   每页切在整轮边界。
 - Claude 的转写读取会跨压缩边界分段，每段独立排序，边界作为可见的

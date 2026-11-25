@@ -426,7 +426,7 @@ export function mergeTurnTimes(threadId: string, turns: { id: string; completedA
  * Put an older page at the head of the transcript, after the user scrolled up
  * far enough to ask for it.
  *
- * Deduplicated by id: pages are cut at turn boundaries, but the Claude cursor
+ * Deduplicated by id: Codex can continue inside a turn, and the Claude cursor
  * counts from the newest end, so a turn that starts while the user is paging
  * shifts every later page by one and can overlap. Keeping the copy already on
  * screen is right — it may carry live text a re-read would not have.
@@ -499,9 +499,14 @@ export function resyncTranscript(
   threadId: string,
   items: AgentItem[],
   live?: { turnId: string | null; turnStatus: TurnStatus | null },
+  // No overlap after a long disconnect: restart the history window at the new
+  // page so its cursor can reach the gap. Keep events that arrived during the read.
+  obsolete?: ReadonlySet<string>,
 ): void {
   const snapshot = new Map(items.map((item) => [itemKey(item), item]))
-  const merged = workingItems.map((item) => snapshot.get(itemKey(item)) ?? item)
+  const merged = obsolete
+    ? [...items, ...workingItems.filter((item) => !obsolete.has(itemKey(item)) && !snapshot.has(itemKey(item)))]
+    : workingItems.map((item) => snapshot.get(itemKey(item)) ?? item)
   const present = new Set(merged.map(itemKey))
   for (const item of items) if (!present.has(itemKey(item))) merged.push(item)
   workingItems = merged

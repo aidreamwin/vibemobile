@@ -198,6 +198,14 @@ describe('resyncTranscript', () => {
     expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2'])
   })
 
+  it('can restart a disjoint history window without dropping newly arrived live items', () => {
+    loadTranscript(THREAD, [message('old', 'before disconnect'), message('live', 'during read')])
+    resyncTranscript(THREAD, [message('new', 'snapshot')], undefined, new Set(['old']))
+    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['new', 'live'])
+    prependTranscriptItems(THREAD, [message('old', 'reachable by paging again')])
+    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['old', 'new', 'live'])
+  })
+
   it('keeps an item the snapshot does not know about yet', () => {
     // Live events issued after the snapshot was cut are the tail of the turn;
     // dropping them would truncate what the user is watching.

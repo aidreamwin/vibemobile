@@ -354,6 +354,8 @@ export interface TranscriptTurn {
   id: string
   status: TurnStatus
   items: AgentItem[]
+  /** Earlier items in this same turn are reachable through the page's nextCursor. */
+  hasEarlierItems?: boolean
   startedAt?: number | null
   completedAt?: number | null
   durationMs?: number | null
@@ -366,12 +368,11 @@ export interface Transcript {
    * Opaque cursor for loading the next (older) page, passed back verbatim as
    * the `cursor` query parameter of `GET /api/sessions/:id`.
    *
-   * Provider-specific on purpose: Codex hands back the app-server's own
-   * cursor, Claude a synthetic one, and neither is interpreted by the route.
+   * May point inside a turn; clients must never parse it.
    */
   nextCursor?: string | null
   /**
-   * The page was cut short — older turns exist and are not here.
+   * Older history exists, possibly within the first returned turn.
    *
    * Separate from `nextCursor`, and not merely "is there a cursor": a provider
    * with no paging of its own can say "there is more" without being able to

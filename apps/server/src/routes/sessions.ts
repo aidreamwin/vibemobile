@@ -229,13 +229,15 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
     // Floored as well as capped: a fractional limit would reach the app-server
     // RPC and the tail reader's prompt arithmetic as-is.
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 200) : 60
-    // An approximate page size in rendered items. Turns vary by two orders
-    // of magnitude, so a fixed turn count makes pages wildly uneven; the
-    // provider still cuts on turn boundaries. 500 is a sanity cap, not a
-    // reading limit.
+    // Old web clients omit items when reconnecting. Keep those snapshots
+    // bounded too, without changing the explicit turn-limit API.
     const requestedItems = Number(req.query.items)
     const targetItems =
-      Number.isFinite(requestedItems) && requestedItems > 0 ? Math.min(Math.floor(requestedItems), 500) : undefined
+      Number.isFinite(requestedItems) && requestedItems >= 1
+        ? Math.min(Math.floor(requestedItems), 500)
+        : provider.id === 'codex' && req.query.limit === undefined
+          ? 60
+          : undefined
     const transcript = await provider.getTranscript(req.params.id, {
       // 60 when the caller does not choose: a session that ran all day is
       // exactly the one worth reopening, and everything older is reachable

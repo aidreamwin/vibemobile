@@ -277,6 +277,14 @@ describe('GET /api/sessions/:id (a transcript page)', () => {
     expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60, cursor: 'c:80' })
   })
 
+  it('bounds Codex reconnects from older clients that omit items', async () => {
+    vi.spyOn(registry, 'forSession').mockResolvedValue(stub('codex', 'c', false))
+    await app.inject('/api/sessions/c1')
+    expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60 })
+    await app.inject('/api/sessions/c1?limit=2')
+    expect(transcripts.at(-1)).toEqual({ limit: 2 })
+  })
+
   it('clamps and floors the item budget', async () => {
     await app.inject({ method: 'GET', url: '/api/sessions/a1?items=100000' })
     expect(transcripts.at(-1)?.targetItems).toBe(500)

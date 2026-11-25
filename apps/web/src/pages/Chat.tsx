@@ -1,7 +1,7 @@
 import { RetryBanner } from '../components/RetryBanner'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { AgentInput, AgentItem, ModelInfo, SessionSummary, TranscriptTurn } from '@vibemobile/protocol'
+import type { AgentInput, AgentItem, ModelInfo, SessionSummary } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { socket } from '../lib/ws'
 import { loadTranscript, mergeTurnTimes, prependTranscriptItems, resyncTranscript, useChatStore } from '../lib/store'
@@ -13,6 +13,7 @@ import {
   type ExportMode,
 } from '../lib/exportMarkdown'
 import { indexTurns } from '../lib/turnIndex'
+import { exportTurns } from '../lib/transcriptPages'
 import { useDocumentTitle } from '../lib/title'
 import { Button } from '../components/ui/button'
 import ChatHeader from '../components/ChatHeader'
@@ -27,55 +28,11 @@ import { retryInput } from '../lib/retry'
 import { runnerPath } from '../lib/runner'
 import type { FileRef } from '../lib/fileLink'
 
-/**
- * How many rendered items a transcript page asks for.
- *
- * Not a turn count: one turn can be a single message or several hundred tool
- * cards, so twenty turns is sometimes one screen and sometimes thousands of
- * items. The server cuts on whole turns, so the page may be larger than this.
- */
 const PAGE_ITEMS = 60
 
-/** What the export sheet was opened for; the mode is chosen inside it. */
-type ExportChoice = { kind: 'session' } | { kind: 'turn'; items: AgentItem[]; label: string }
-
-/**
- * Every turn in the session, for the Markdown export.
- *
- * Pages are walked newest→oldest (the direction the cursor supports) and
- * concatenated oldest→newest. Items are deduplicated by id because a Claude
- * cursor counts from the newest end and can overlap when a turn starts while
- * the pages are being fetched; a boundary turn that overlaps is folded into
- * the previous one when the ids agree.
- */
-async function fetchAllTurns(threadId: string): Promise<TranscriptTurn[]> {
-  const pages: TranscriptTurn[][] = []
-  let page = await api.session(threadId, { items: PAGE_ITEMS })
-  pages.unshift(page.turns)
-  let cursor = page.nextCursor ?? null
-  let hasMore = page.hasMore === true
-  // A provider with a misbehaving cursor must not turn an export into a loop.
-  for (let guard = 0; hasMore && cursor && guard < 100; guard++) {
-    page = await api.session(threadId, { items: PAGE_ITEMS, cursor })
-    pages.unshift(page.turns)
-    cursor = page.nextCursor ?? null
-    hasMore = page.hasMore === true
-  }
-
-  const seen = new Set<string>()
-  const turns: TranscriptTurn[] = []
-  for (const group of pages) {
-    for (const turn of group) {
-      const fresh = turn.items.filter((item) => !seen.has(item.id))
-      if (fresh.length === 0) continue
-      for (const item of fresh) seen.add(item.id)
-      const last = turns.at(-1)
-      if (last && last.id === turn.id) last.items.push(...fresh)
-      else turns.push({ ...turn, items: fresh })
-    }
-  }
-  return turns
-}
+type ExportChoice =
+  | { kind: 'session' }
+  | { kind: 'turn'; id: string; items: AgentItem[]; label: string; cursor?: string }
 
 export default function Chat() {
   const { threadId } = useParams<{ threadId: string }>()
@@ -153,6 +110,7 @@ export default function Chat() {
   const loadingOlderRef = useRef(false)
   const hasOlderRef = useRef(false)
   const olderCursorRef = useRef<string | null>(null)
+  const partialTurn = useRef<string | null>(null)
   /**
    * A failed page is NOT retried by scrolling.
    *
@@ -198,6 +156,7 @@ export default function Chat() {
     setOlderCursor(null)
     hasOlderRef.current = false
     olderCursorRef.current = null
+    partialTurn.current = null
     olderErrorRef.current = false
     setOlderError(null)
     setLoadingOlder(false)
@@ -236,6 +195,7 @@ export default function Chat() {
         // that cannot page answers `hasMore` with no cursor, and the UI says
         // so rather than fetching in circles.
         olderCursorRef.current = transcript.hasMore === true ? (transcript.nextCursor ?? null) : null
+        partialTurn.current = transcript.turns[0]?.hasEarlierItems ? transcript.turns[0].id : null
         setHasOlder(hasOlderRef.current)
         setOlderCursor(olderCursorRef.current)
         setSession(transcript.session)
@@ -340,18 +300,25 @@ export default function Chat() {
       // fetched the same snapshot, and racing it would only duplicate the GET.
       if (!reconnected || loadedThread.current !== threadId) return
 
+      const before = new Set(useChatStore.getState().items.map((item) => item.id))
       void api
-        .session(threadId)
+        .session(threadId, { items: PAGE_ITEMS })
         .then((transcript) => {
           if (cancelled) return
           const items: AgentItem[] = transcript.turns.flatMap((turn) => turn.items)
           const open = [...transcript.turns].reverse().find((turn) => turn.status === 'inProgress')
+          const gap = transcript.hasMore && before.size > 0 && !items.some((item) => before.has(item.id))
           indexTurns(threadId, transcript.turns)
           mergeTurnTimes(threadId, transcript.turns)
-          resyncTranscript(threadId, items, {
-            turnId: open?.id ?? null,
-            turnStatus: open ? 'inProgress' : (transcript.turns.at(-1)?.status ?? null),
-          })
+          resyncTranscript(
+            threadId,
+            items,
+            {
+              turnId: open?.id ?? null,
+              turnStatus: open ? 'inProgress' : (transcript.turns.at(-1)?.status ?? null),
+            },
+            gap ? before : undefined,
+          )
           useChatStore.setState({ status: transcript.session.status })
           setSession(transcript.session)
 
@@ -360,9 +327,10 @@ export default function Chat() {
           // reachable for the first time. Only adopted when there is no cursor
           // yet: replacing a deeper one with the newest page's would re-fetch
           // pages already on screen after every reconnect.
-          if (!olderCursorRef.current) {
+          if (gap || !olderCursorRef.current) {
             hasOlderRef.current = transcript.hasMore === true
             olderCursorRef.current = transcript.hasMore === true ? (transcript.nextCursor ?? null) : null
+            partialTurn.current = transcript.turns[0]?.hasEarlierItems ? transcript.turns[0].id : null
             setHasOlder(hasOlderRef.current)
             setOlderCursor(olderCursorRef.current)
           }
@@ -397,7 +365,7 @@ export default function Chat() {
       // The response can land after the user opened another conversation;
       // `prependTranscriptItems` also checks, but everything else here would
       // write the old session's cursor into the new one.
-      if (useChatStore.getState().threadId !== threadId) return
+      if (useChatStore.getState().threadId !== threadId || olderCursorRef.current !== cursor) return
 
       // Measured at the last moment before the DOM grows, not when the request
       // was sent: a slow page must not undo the scrolling the reader did while
@@ -420,6 +388,7 @@ export default function Chat() {
       // progress; keeping it would let the auto-fill effect ask again forever.
       // A page of pure duplicates is fine as long as the cursor advanced.
       olderCursorRef.current = added === 0 && nextCursor === cursor ? null : nextCursor
+      partialTurn.current = transcript.turns[0]?.hasEarlierItems ? transcript.turns[0].id : null
       setHasOlder(hasOlderRef.current)
       setOlderCursor(olderCursorRef.current)
     } catch (err) {
@@ -614,14 +583,20 @@ export default function Chat() {
   }, [session, exporting])
 
   const requestTurnExport = useCallback(
-    (_turnId: string, turnItems: AgentItem[]) => {
+    (id: string, turnItems: AgentItem[]) => {
       if (!session || turnItems.length === 0) return
       const firstUser = turnItems.find((item) => item.kind === 'message' && item.role === 'user')
       const label =
         firstUser?.kind === 'message' && firstUser.text.trim()
           ? firstUser.text.trim().split('\n')[0].slice(0, 60)
           : '本轮'
-      setExportChoice({ kind: 'turn', items: turnItems, label })
+      setExportChoice({
+        kind: 'turn',
+        id,
+        items: turnItems,
+        label,
+        cursor: partialTurn.current === id ? (olderCursorRef.current ?? undefined) : undefined,
+      })
     },
     [session],
   )
@@ -635,17 +610,26 @@ export default function Chat() {
         return
       }
       setExportChoice(null)
-      if (choice.kind === 'turn') {
-        downloadMarkdown(
-          markdownFilename(session.title, mode === 'conversation' ? 'turn-对话' : 'turn-完整'),
-          turnMarkdown(session, choice.items, choice.label, streams, mode),
-        )
-        return
-      }
       if (!threadId || exporting) return
       setExporting(true)
       try {
-        const turns = await fetchAllTurns(threadId)
+        const read = (cursor?: string) => api.session(threadId, { items: PAGE_ITEMS, cursor })
+        if (choice.kind === 'turn') {
+          const items = choice.cursor
+            ? (
+                await exportTurns(read, {
+                  visible: { id: choice.id, items: choice.items, status: 'completed' },
+                  olderCursor: choice.cursor,
+                })
+              )[0].items
+            : choice.items
+          downloadMarkdown(
+            markdownFilename(session.title, mode === 'conversation' ? 'turn-对话' : 'turn-完整'),
+            turnMarkdown(session, items, choice.label, streams, mode),
+          )
+          return
+        }
+        const turns = await exportTurns(read)
         downloadMarkdown(
           markdownFilename(session.title, mode === 'conversation' ? '对话' : '完整'),
           sessionMarkdown(session, turns, mode),
