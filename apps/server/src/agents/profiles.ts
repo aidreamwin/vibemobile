@@ -84,12 +84,19 @@ function cleanBaseUrl(value: unknown): string {
   return baseUrl.replace(/\/+$/, '')
 }
 
+export function cleanProfileConnection(input: Pick<AgentProfileRequest, 'baseUrl' | 'apiKey'>) {
+  return {
+    baseUrl: cleanBaseUrl(input?.baseUrl),
+    apiKey: field(input?.apiKey, 2000),
+  }
+}
+
 export function cleanProfile(
   input: AgentProfileRequest,
 ): Pick<StoredAgentProfile, 'name' | 'baseUrl' | 'apiKey' | 'model' | 'models' | 'modelContextWindows'> {
   const name = field(input?.name, 100)
   if (!name) throw new AgentProfileError('invalid_agent_profile_name')
-  const baseUrl = cleanBaseUrl(input?.baseUrl)
+  const connection = cleanProfileConnection(input)
   const models = input.models ?? []
   if (
     !Array.isArray(models) ||
@@ -117,8 +124,7 @@ export function cleanProfile(
     throw new AgentProfileError('invalid_agent_profile_value')
   return {
     name,
-    baseUrl,
-    apiKey: field(input?.apiKey, 2000),
+    ...connection,
     model: field(input?.model, 200),
     models: [...new Set(models.map((value) => value.trim()))],
     modelContextWindows: Object.fromEntries(Object.entries(contextWindows)),
@@ -288,7 +294,13 @@ export class AgentProfileStore {
 
   #commit(agent: AgentProfileId, next: ProfileFile): Promise<void> {
     const profile = next.profiles[agent].find((item) => item.id === next.active[agent])
-    const changed = JSON.stringify(this.current(agent)) !== JSON.stringify(profile)
+    const current = this.current(agent)
+    // Antigravity's model catalogue is metadata for the settings editor.
+    // Only a connection change requires restarting its ACP process.
+    const changed =
+      agent === 'antigravity'
+        ? current?.id !== profile?.id || current?.baseUrl !== profile?.baseUrl || current?.apiKey !== profile?.apiKey
+        : JSON.stringify(current) !== JSON.stringify(profile)
     return this.#save(next, changed ? { agent, profile } : undefined)
   }
 

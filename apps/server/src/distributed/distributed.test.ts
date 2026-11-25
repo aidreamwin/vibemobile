@@ -446,6 +446,8 @@ describe('distributed Hub and two reverse runners', () => {
       '/api/codex/global',
       '/api/codex/global/document?id=test',
       '/api/codex/global/skills',
+      '/api/agent-profiles/antigravity/models',
+      '/api/agent-profiles/antigravity/profile-0123456789abcdef/models',
       '/api/system/update',
       '/api/system/update/check',
     ]) {

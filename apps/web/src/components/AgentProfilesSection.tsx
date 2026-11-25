@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Check,
   ChevronRight,
@@ -96,6 +96,7 @@ export default function AgentProfilesSection({
   const [modelContextWindows, setModelContextWindows] = useState<Record<string, number>>({})
   const [newModel, setNewModel] = useState('')
   const [fetchingModels, setFetchingModels] = useState(false)
+  const modelFetchId = useRef(0)
   const [modelFetchError, setModelFetchError] = useState<string | null>(null)
   const [editingKey, setEditingKey] = useState(false)
   const [confirmClearKey, setConfirmClearKey] = useState(false)
@@ -132,6 +133,10 @@ export default function AgentProfilesSection({
   const savedKey =
     nativeEditor && selectedProvider ? selectedProvider.hasApiKey : panel?.kind === 'edit' && panel.profile?.hasApiKey
   const keyEditable = !nativeEditor || nativeEditor.providerId !== providerId || nativeEditor.keyEditable
+  const canFetchModels =
+    selected === 'antigravity'
+      ? Boolean(baseUrl.trim() || apiKey.trim() || (savedKey && !clearKey))
+      : Boolean((panel?.kind === 'edit' && panel.profile) || baseUrl.trim())
   const changed = Boolean(
     panel?.kind === 'edit' &&
       (!panel.profile ||
@@ -140,8 +145,12 @@ export default function AgentProfilesSection({
         editorSnapshot(name, baseUrl, model, providerId, modelAliases, providerModels, modelContextWindows) !==
           initialValues),
   )
+  const connectionChanged =
+    panel?.kind === 'edit' && (baseUrl.trim() !== (panel.profile?.baseUrl ?? '') || clearKey || Boolean(apiKey.trim()))
 
   function edit(profile?: AgentProfile) {
+    modelFetchId.current++
+    setFetchingModels(false)
     const aliases = isNative(profile) ? { ...profile.modelAliases } : {}
     const models = isNative(profile)
       ? profile.providerId
@@ -194,13 +203,19 @@ export default function AgentProfilesSection({
 
   async function fetchModels() {
     if (fetchingModels || busy || panel?.kind !== 'edit' || isNative(panel.profile)) return
-    if (!panel.profile && !baseUrl.trim()) return
+    if (!canFetchModels) return
+    const fetchId = ++modelFetchId.current
     setFetchingModels(true)
     setModelFetchError(null)
     try {
+      const draft = {
+        baseUrl: baseUrl.trim(),
+        ...(clearKey ? { apiKey: '' } : apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      }
       const result = panel.profile
-        ? await api.fetchAgentProfileModels(selected, panel.profile.id)
-        : await api.fetchUnsavedAgentProfileModels(selected, { baseUrl: baseUrl.trim(), ...(apiKey ? { apiKey } : {}) })
+        ? await api.fetchAgentProfileModels(selected, panel.profile.id, connectionChanged ? draft : undefined)
+        : await api.fetchUnsavedAgentProfileModels(selected, draft)
+      if (fetchId !== modelFetchId.current) return
       const fetched = result.data.map((item) => item.id).filter(Boolean)
       const fetchedContextWindows = Object.fromEntries(
         result.data
@@ -209,16 +224,17 @@ export default function AgentProfilesSection({
       )
       setProviderModels((current) => [...new Set([...current, ...fetched])].slice(0, 100))
       setModelContextWindows((current) => ({ ...current, ...fetchedContextWindows }))
-      if (!model.trim() && fetched.length === 1) setModel(fetched[0])
+      if (selected !== 'antigravity' && !model.trim() && fetched.length === 1) setModel(fetched[0])
     } catch (err) {
-      setModelFetchError(agentProfileErrorLabel(err))
+      if (fetchId === modelFetchId.current) setModelFetchError(agentProfileErrorLabel(err))
     } finally {
-      setFetchingModels(false)
+      if (fetchId === modelFetchId.current) setFetchingModels(false)
     }
   }
 
   function save() {
-    if (busy || !changed || panel?.kind !== 'edit' || (!nativeEditor && !name.trim())) return
+    if (busy || fetchingModels || !changed || panel?.kind !== 'edit' || (!nativeEditor && !name.trim())) return
+    const models = [...new Set([...providerModels, ...(model.trim() ? [model.trim()] : [])])]
     const body = {
       name: name.trim(),
       baseUrl: baseUrl.trim(),
@@ -232,8 +248,10 @@ export default function AgentProfilesSection({
             ...(selected === 'opencode' ? { models: providerModels } : {}),
           }
         : {
-            models: [...new Set([...providerModels, ...(model.trim() ? [model.trim()] : [])])],
-            modelContextWindows,
+            models,
+            modelContextWindows: Object.fromEntries(
+              Object.entries(modelContextWindows).filter(([id]) => models.includes(id)),
+            ),
           }),
     }
     void action(() =>
@@ -382,7 +400,7 @@ export default function AgentProfilesSection({
                   {error}
                 </p>
               )}
-              {panel.profile?.active && changed && (
+              {panel.profile?.active && changed && (selected !== 'antigravity' || connectionChanged) && (
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {nativeEditor && limitation
                     ? '保存后需在外部服务中重新加载配置。'
@@ -397,7 +415,11 @@ export default function AgentProfilesSection({
                 type="submit"
                 form="agent-profile-editor"
                 disabled={
-                  busy || !changed || !name.trim() || Boolean(!nativeEditor && panel.profile?.active && limitation)
+                  busy ||
+                  fetchingModels ||
+                  !changed ||
+                  !name.trim() ||
+                  Boolean(!nativeEditor && panel.profile?.active && limitation)
                 }
                 className="h-12 w-full rounded-xl text-sm"
               >
@@ -422,7 +444,7 @@ export default function AgentProfilesSection({
             }}
             className="px-4 pt-3 pb-5"
           >
-            <fieldset disabled={busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
+            <fieldset disabled={busy || fetchingModels} className="m-0 min-w-0 space-y-5 border-0 p-0">
               <label htmlFor="agent-profile-name" className="block space-y-2 text-xs text-muted-foreground">
                 <span>
                   配置名称 <span className="text-destructive">*</span>
@@ -577,7 +599,7 @@ export default function AgentProfilesSection({
                   </>
                 )}
               </div>
-              {selected !== 'antigravity' && (!nativeEditor || selected === 'opencode') && (
+              {(!nativeEditor || selected === 'opencode') && (
                 <details className="group rounded-xl border border-border/70">
                   <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-3 text-sm [&::-webkit-details-marker]:hidden">
                     <span className="flex-1">模型管理</span>
@@ -589,13 +611,17 @@ export default function AgentProfilesSection({
                       <div className="flex items-center gap-2 rounded-xl bg-secondary/40 p-2">
                         <Download className="size-4 shrink-0 text-primary" />
                         <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-                          {panel.profile ? '从供应商同步可用模型' : '填写接口地址后即可获取模型列表'}
+                          {selected === 'antigravity' && !canFetchModels
+                            ? '填写接口地址或 API Key 后获取模型列表'
+                            : panel.profile
+                              ? '从供应商同步可用模型'
+                              : '获取供应商的可用模型列表'}
                         </span>
                         <Button
                           type="button"
                           variant="secondary"
                           className="h-10 shrink-0 rounded-lg px-3 text-xs"
-                          disabled={(!panel.profile && !baseUrl.trim()) || fetchingModels || busy}
+                          disabled={!canFetchModels || fetchingModels || busy}
                           onClick={() => void fetchModels()}
                         >
                           {fetchingModels ? <LoaderCircle className="size-4 animate-spin" /> : '获取模型列表'}
@@ -603,25 +629,35 @@ export default function AgentProfilesSection({
                       </div>
                     )}
                     {modelFetchError && <p className="text-xs text-destructive">{modelFetchError}</p>}
-                    <p className="text-xs text-muted-foreground">点选模型设为默认，最多添加 100 个。</p>
+                    <p className="text-xs text-muted-foreground">
+                      {selected === 'antigravity'
+                        ? '供应商提供的模型 ID，最多保存 100 个。会话可选模型由 Antigravity CLI 决定。'
+                        : '点选模型设为默认，最多添加 100 个。'}
+                    </p>
                     {providerModels.length > 0 ? (
                       <div className="divide-y divide-border/60">
                         {providerModels.map((value) => (
                           <div key={value} className="flex min-w-0 items-center gap-1">
-                            <button
-                              type="button"
-                              className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
-                              onClick={() => setModel(value)}
-                              aria-label={`设为默认模型 ${value}`}
-                              aria-pressed={model === value}
-                            >
-                              <span
-                                className={`min-w-0 flex-1 break-all font-mono text-sm ${model === value ? 'text-primary' : 'text-foreground/80'}`}
-                              >
+                            {selected === 'antigravity' ? (
+                              <span className="min-w-0 flex-1 break-all py-3 font-mono text-sm text-foreground/80">
                                 {value}
                               </span>
-                              {model === value && <Check className="size-4 shrink-0 text-primary" />}
-                            </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
+                                onClick={() => setModel(value)}
+                                aria-label={`设为默认模型 ${value}`}
+                                aria-pressed={model === value}
+                              >
+                                <span
+                                  className={`min-w-0 flex-1 break-all font-mono text-sm ${model === value ? 'text-primary' : 'text-foreground/80'}`}
+                                >
+                                  {value}
+                                </span>
+                                {model === value && <Check className="size-4 shrink-0 text-primary" />}
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="tap size-11 shrink-0 rounded-lg text-muted-foreground hover:text-destructive"
@@ -637,7 +673,7 @@ export default function AgentProfilesSection({
                         ))}
                       </div>
                     ) : (
-                      <p className="py-3 text-center text-xs text-muted-foreground">暂无模型，添加一个开始使用。</p>
+                      <p className="py-3 text-center text-xs text-muted-foreground">暂无模型，获取列表或手动添加。</p>
                     )}
                     <div className="flex gap-2">
                       <Input
@@ -655,7 +691,7 @@ export default function AgentProfilesSection({
                           const value = newModel.trim()
                           if (value && !providerModels.includes(value) && providerModels.length < 100) {
                             setProviderModels((current) => [...current, value])
-                            setModel(value)
+                            if (selected !== 'antigravity') setModel(value)
                             setNewModel('')
                           }
                         }}
@@ -671,7 +707,7 @@ export default function AgentProfilesSection({
                           const value = newModel.trim()
                           if (!value || providerModels.includes(value) || providerModels.length >= 100) return
                           setProviderModels((current) => [...current, value])
-                          setModel(value)
+                          if (selected !== 'antigravity') setModel(value)
                           setNewModel('')
                         }}
                         aria-label="添加模型"
@@ -704,7 +740,7 @@ export default function AgentProfilesSection({
                         : selected === 'codex'
                           ? '支持 OpenAI Responses 兼容接口。'
                           : selected === 'antigravity'
-                            ? '支持 Gemini 兼容接口，地址留空使用 Google 官方接口。模型由 Antigravity CLI 提供。'
+                            ? '支持 Gemini 兼容接口，地址留空使用 Google 官方接口。'
                             : '使用此供应商连接 Claude。'}
                     </p>
                   )}

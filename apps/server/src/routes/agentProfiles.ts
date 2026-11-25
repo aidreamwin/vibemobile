@@ -1,14 +1,19 @@
 import type { FastifyInstance } from 'fastify'
 import type {
   AgentProfileRequest,
+  AgentProfileId,
   AgentProfilesResponse,
-  AgentRuntimeId,
   AntigravityConnectionRequest,
   AntigravityKeyStatus,
   ModelInfo,
 } from '@vibemobile/protocol'
 import type { Config } from '../config.js'
-import { AgentProfileError, isAgentProfileId, type AgentProfileStore } from '../agents/profiles.js'
+import {
+  AgentProfileError,
+  cleanProfileConnection,
+  isAgentProfileId,
+  type AgentProfileStore,
+} from '../agents/profiles.js'
 import { isAgentRuntimeId } from '../agents/manifest.js'
 import { requireAuth } from './guards.js'
 import type { NativeAgentConfigStore } from '../agents/nativeConfig.js'
@@ -82,35 +87,35 @@ export function registerAgentProfileRoutes(
       return failure(err, reply)
     }
   })
-  app.get<{ Params: { agent: string; id: string } }>(
-    '/api/agent-profiles/:agent/:id/models',
-    auth,
-    async (req, reply) => {
+  type ModelConnection = Pick<AgentProfileRequest, 'baseUrl' | 'apiKey'>
+  app.route<{ Params: { agent: string; id: string }; Body: ModelConnection }>({
+    method: ['GET', 'POST'],
+    url: '/api/agent-profiles/:agent/:id/models',
+    ...auth,
+    handler: async (req, reply) => {
       const agent = req.params.agent
-      if (!isAgentRuntimeId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
+      if (!isAgentProfileId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
       if (req.params.id === 'native') return reply.code(400).send({ error: 'agent_profile_models_unavailable' })
       const profile = store.get(agent, req.params.id)
       if (!profile) return reply.code(404).send({ error: 'agent_profile_not_found' })
       try {
-        return { data: await fetchProfileModels(agent, profile) }
+        const connection = req.method === 'POST' ? cleanProfileConnection({ ...profile, ...req.body }) : profile
+        return { data: await fetchProfileModels(agent, connection) }
       } catch (err) {
         return failure(err, reply)
       }
     },
-  )
-  app.post<{ Params: { agent: string }; Body: { baseUrl?: string; apiKey?: string } }>(
+  })
+  app.post<{ Params: { agent: string }; Body: ModelConnection }>(
     '/api/agent-profiles/:agent/models',
     auth,
     async (req, reply) => {
       const agent = req.params.agent
-      if (!isAgentRuntimeId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
-      const baseUrl = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl.trim().replace(/\/+$/, '') : ''
-      const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey : ''
+      if (!isAgentProfileId(agent)) return reply.code(404).send({ error: 'unknown_agent' })
       try {
-        const url = new URL(baseUrl)
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search)
-          throw new AgentProfileError('invalid_agent_profile_url')
-        return { data: await fetchProfileModels(agent, { baseUrl, apiKey }) }
+        const connection = cleanProfileConnection(req.body)
+        if (agent !== 'antigravity' && !connection.baseUrl) throw new AgentProfileError('invalid_agent_profile_url')
+        return { data: await fetchProfileModels(agent, connection) }
       } catch (err) {
         return failure(err, reply)
       }
@@ -177,9 +182,10 @@ export function registerAgentProfileRoutes(
 }
 
 async function fetchProfileModels(
-  agent: AgentRuntimeId,
+  agent: AgentProfileId,
   profile: { baseUrl: string; apiKey: string },
 ): Promise<ModelInfo[]> {
+  if (agent === 'antigravity') return fetchGeminiModels(profile)
   if (!profile.baseUrl) throw new AgentProfileError('agent_profile_models_unavailable', 502)
   const base = profile.baseUrl.replace(/\/+$/, '')
   const paths = base.endsWith('/v1') ? [`${base}/models`] : [`${base}/models`, `${base}/v1/models`]
@@ -213,7 +219,40 @@ async function fetchProfileModels(
   throw new AgentProfileError(lastStatus ? 'agent_profile_models_unavailable' : 'agent_profile_models_timeout', 502)
 }
 
-function normalizeModels(payload: unknown): ModelInfo[] {
+async function fetchGeminiModels(profile: { baseUrl: string; apiKey: string }): Promise<ModelInfo[]> {
+  const base = profile.baseUrl || 'https://generativelanguage.googleapis.com'
+  const url = new URL(`${base}${/\/v1(?:beta)?$/.test(base) ? '' : '/v1beta'}/models`)
+  const headers: Record<string, string> = { accept: 'application/json' }
+  if (profile.apiKey) headers['x-goog-api-key'] = profile.apiKey
+  const models = new Map<string, ModelInfo>()
+  const seenTokens = new Set<string>()
+  const signal = AbortSignal.timeout(12_000)
+  let pageToken: string | undefined
+  try {
+    do {
+      if (pageToken) {
+        if (seenTokens.has(pageToken)) throw new AgentProfileError('agent_profile_models_unavailable', 502)
+        seenTokens.add(pageToken)
+        url.searchParams.set('pageToken', pageToken)
+      }
+      const res = await fetch(url.toString(), { headers, signal, redirect: 'error' })
+      if (!res.ok) throw new AgentProfileError('agent_profile_models_unavailable', 502)
+      const payload: unknown = await res.json()
+      for (const model of normalizeModels(payload, true)) {
+        if (!models.has(model.id)) models.set(model.id, model)
+      }
+      const next = (payload as { nextPageToken?: unknown } | null)?.nextPageToken
+      pageToken = typeof next === 'string' ? next : undefined
+    } while (pageToken && models.size < 100)
+    return [...models.values()].slice(0, 100)
+  } catch (err) {
+    if (err instanceof AgentProfileError) throw err
+    if (signal.aborted) throw new AgentProfileError('agent_profile_models_timeout', 504)
+    throw new AgentProfileError('agent_profile_models_unavailable', 502)
+  }
+}
+
+function normalizeModels(payload: unknown, gemini = false): ModelInfo[] {
   const rows = Array.isArray(payload)
     ? payload
     : payload && typeof payload === 'object'
@@ -222,22 +261,26 @@ function normalizeModels(payload: unknown): ModelInfo[] {
   if (!Array.isArray(rows)) throw new AgentProfileError('agent_profile_models_unavailable', 502)
   const seen = new Set<string>()
   return rows.flatMap((row): ModelInfo[] => {
-    const value = typeof row === 'string' ? row : row && typeof row === 'object' ? row : null
-    const id =
-      typeof value === 'string'
-        ? value
-        : String((value as any)?.id ?? (value as any)?.model ?? (value as any)?.slug ?? '').trim()
+    const value = row && typeof row === 'object' ? (row as Record<string, unknown>) : undefined
+    if (gemini && Array.isArray(value?.supportedGenerationMethods)) {
+      const methods = value.supportedGenerationMethods
+      if (!methods.includes('generateContent') && !methods.includes('streamGenerateContent')) return []
+    }
+    const rawId =
+      typeof row === 'string'
+        ? row
+        : String(value?.id ?? value?.model ?? value?.slug ?? (gemini ? value?.name : undefined) ?? '').trim()
+    const id = gemini ? rawId.replace(/^models\//, '') : rawId
     if (!id || seen.has(id)) return []
     seen.add(id)
-    const displayName =
-      typeof value === 'string' ? id : String((value as any)?.displayName ?? (value as any)?.name ?? id).trim() || id
-    const contextWindow = typeof value === 'string' ? undefined : contextWindowOf(value as Record<string, unknown>)
+    const displayName = String(value?.displayName ?? (gemini ? id : value?.name) ?? id).trim() || id
+    const contextWindow = value ? contextWindowOf(value, gemini) : undefined
     return [{ id, displayName, ...(contextWindow ? { contextWindow } : {}) }]
   })
 }
 
 /** Providers use several names for the same model limit. Keep the wire DTO stable. */
-function contextWindowOf(value: Record<string, unknown>): number | undefined {
+function contextWindowOf(value: Record<string, unknown>, gemini = false): number | undefined {
   const nested =
     value.limits && typeof value.limits === 'object' ? (value.limits as Record<string, unknown>) : undefined
   const candidates = [
@@ -249,6 +292,7 @@ function contextWindowOf(value: Record<string, unknown>): number | undefined {
     nested?.context,
     nested?.contextWindow,
     nested?.context_length,
+    ...(gemini ? [value.inputTokenLimit] : []),
   ]
   const result = candidates.find(
     (candidate) => typeof candidate === 'number' || (typeof candidate === 'string' && /^\d+$/.test(candidate)),

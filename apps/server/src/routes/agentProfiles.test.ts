@@ -30,6 +30,7 @@ async function build(authDisabled = true) {
 }
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(apps.splice(0).map((app) => app.close()))
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
@@ -126,8 +127,8 @@ describe('runner profile API', () => {
             data: [{ id: 'model-a', name: 'Model A', context_length: 200000 }, { model: 'model-b' }, { id: 'model-a' }],
           }),
           {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
+            status: 200,
+            headers: { 'content-type': 'application/json' },
           },
         ),
     )
@@ -158,6 +159,89 @@ describe('runner profile API', () => {
       ],
     })
     expect(unsaved.body).not.toContain('temporary-key')
-    vi.unstubAllGlobals()
+  })
+
+  it('lists and paginates Gemini models from a saved Antigravity supplier', async () => {
+    const app = await build()
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/agent-profiles/antigravity',
+      payload: { name: 'Gemini', baseUrl: 'https://gateway.example.test/antigravity', apiKey: 'saved-key' },
+    })
+    const id = created.json<AgentProfilesResponse>().data.antigravity[0]?.id
+    expect(id).toBeDefined()
+    const url = `/api/agent-profiles/antigravity/${id}/models`
+    const firstPage = {
+      models: [
+        {
+          name: 'models/gemini-4-neon-low',
+          displayName: 'Gemini 4 Neon Low',
+          inputTokenLimit: 1000000,
+          supportedGenerationMethods: ['generateContent'],
+        },
+        { name: 'models/embedding-only', supportedGenerationMethods: ['embedContent'] },
+      ],
+      nextPageToken: 'page two',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(firstPage))
+      .mockResolvedValueOnce(
+        Response.json({
+          models: [
+            { name: 'models/gemini-4-neon-low' },
+            { name: 'models/gemini-4-neon-high', supportedGenerationMethods: ['streamGenerateContent'] },
+          ],
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const listed = await app.inject(url)
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json()).toEqual({
+      data: [
+        { id: 'gemini-4-neon-low', displayName: 'Gemini 4 Neon Low', contextWindow: 1000000 },
+        { id: 'gemini-4-neon-high', displayName: 'gemini-4-neon-high' },
+      ],
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://gateway.example.test/antigravity/v1beta/models',
+      expect.objectContaining({ headers: { accept: 'application/json', 'x-goog-api-key': 'saved-key' } }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://gateway.example.test/antigravity/v1beta/models?pageToken=page+two',
+      expect.objectContaining({ headers: { accept: 'application/json', 'x-goog-api-key': 'saved-key' } }),
+    )
+    expect(listed.body).not.toContain('saved-key')
+    expect(listed.headers['cache-control']).toBe('no-store')
+
+    // Editing the connection uses the draft URL and retains an omitted saved key.
+    fetchMock.mockResolvedValueOnce(Response.json({ models: [] }))
+    const draft = await app.inject({ method: 'POST', url, payload: { baseUrl: 'https://other.example.test/v1beta/' } })
+    expect(draft.json()).toEqual({ data: [] })
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'https://other.example.test/v1beta/models',
+      expect.objectContaining({ headers: { accept: 'application/json', 'x-goog-api-key': 'saved-key' } }),
+    )
+    const stored = (await app.inject('/api/agent-profiles')).json<AgentProfilesResponse>().data.antigravity[0]
+    expect(stored.baseUrl).toBe('https://gateway.example.test/antigravity')
+    expect(stored.models).toEqual([])
+  })
+
+  it('fetches unsaved Antigravity models from Google when the address is empty', async () => {
+    const app = await build()
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ models: [{ name: 'models/gemini-3.8-flash' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url = '/api/agent-profiles/antigravity/models'
+    const listed = await app.inject({ method: 'POST', url, payload: { baseUrl: '', apiKey: 'new-key' } })
+    expect(listed.json()).toEqual({ data: [{ id: 'gemini-3.8-flash', displayName: 'gemini-3.8-flash' }] })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://generativelanguage.googleapis.com/v1beta/models',
+      expect.objectContaining({ headers: { accept: 'application/json', 'x-goog-api-key': 'new-key' } }),
+    )
+    const invalid = await app.inject({ method: 'POST', url, payload: { baseUrl: 'https://example.test?key=secret' } })
+    expect(invalid.json()).toEqual({ error: 'invalid_agent_profile_url' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

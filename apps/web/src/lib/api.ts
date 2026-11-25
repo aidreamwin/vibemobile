@@ -130,8 +130,15 @@ export const api = {
     request<CodexGlobalDocument>('/api/codex/global/document', { method: 'PUT', body: JSON.stringify(body) }),
   createCodexGlobalSkill: (body: { name: string; text: string }) =>
     request<CodexGlobalDocument>('/api/codex/global/skills', { method: 'POST', body: JSON.stringify(body) }),
-  fetchAgentProfileModels: (agent: AgentProfileId, id: string) =>
-    request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/${encodeURIComponent(id)}/models`),
+  fetchAgentProfileModels: (
+    agent: AgentProfileId,
+    id: string,
+    draft?: Pick<AgentProfileRequest, 'baseUrl' | 'apiKey'>,
+  ) =>
+    request<{ data: ModelInfo[] }>(
+      `/api/agent-profiles/${agent}/${encodeURIComponent(id)}/models`,
+      draft ? { method: 'POST', body: JSON.stringify(draft) } : undefined,
+    ),
   fetchUnsavedAgentProfileModels: (agent: AgentProfileId, body: { baseUrl: string; apiKey?: string }) =>
     request<{ data: ModelInfo[] }>(`/api/agent-profiles/${agent}/models`, {
       method: 'POST',
