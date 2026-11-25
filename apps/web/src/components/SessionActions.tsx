@@ -133,9 +133,11 @@ export default function SessionActions({
           <Action disabled={busy} onClick={togglePin}>
             {pinned ? '取消置顶' : '置顶（排在最前）'}
           </Action>
-          <Action variant="destructive" disabled={busy} onClick={() => setMode('confirmDelete')}>
-            删除会话
-          </Action>
+          {session.canDelete !== false && (
+            <Action variant="destructive" disabled={busy} onClick={() => setMode('confirmDelete')}>
+              删除会话
+            </Action>
+          )}
           <Action disabled={busy} onClick={onClose}>
             取消
           </Action>

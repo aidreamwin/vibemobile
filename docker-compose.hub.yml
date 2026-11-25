@@ -14,6 +14,7 @@ services:
       VIBEMOBILE_STATE_DIR: /app/.multi-runner/hub
       VIBEMOBILE_RUNNER_MAX_BODY_MB: ${VIBEMOBILE_RUNNER_MAX_BODY_MB:-15}
       VIBEMOBILE_ROOTS: /app/workspace
+      ANTIGRAVITY_BIN: ${ANTIGRAVITY_BIN:-}
       # Empty means "generate one on first start and print it in the log", the
       # same behaviour as the standalone server.
       VIBEMOBILE_PIN: ${VIBEMOBILE_PIN:-}

@@ -70,6 +70,8 @@ import path from 'node:path'
 import type { ApprovalPolicy, SandboxMode } from '@vibemobile/protocol'
 
 export interface SessionPrefs {
+  /** A runner-local title override for agents with no rename operation. */
+  title?: string
   model?: string
   /** Last context window observed for that model, so a reopened session can render it. */
   contextWindow?: number
@@ -158,6 +160,7 @@ export class SessionPrefsStore {
   set(
     sessionId: string,
     patch: {
+      title?: string
       model?: string
       contextWindow?: number
       contextModel?: string
@@ -170,6 +173,7 @@ export class SessionPrefsStore {
     },
   ): void {
     const next: Partial<SessionPrefs> = {}
+    if (patch.title !== undefined) next.title = patch.title
     if (patch.model !== undefined) next.model = patch.model
     if (patch.contextWindow !== undefined) next.contextWindow = patch.contextWindow
     if (patch.contextModel !== undefined) next.contextModel = patch.contextModel

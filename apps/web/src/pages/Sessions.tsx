@@ -1,4 +1,4 @@
-import { Bot, Code2, MessagesSquare, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
+import { Bot, Code2, MessagesSquare, Orbit, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -29,6 +29,7 @@ const FILTER_ICON: Record<ProviderFilter, { icon: LucideIcon; tone: string }> = 
   codex: { icon: Code2, tone: 'text-sky-400' },
   claude: { icon: Sparkles, tone: 'text-amber-400' },
   opencode: { icon: Terminal, tone: 'text-violet-400' },
+  antigravity: { icon: Orbit, tone: 'text-emerald-400' },
 }
 
 const FILTER_STORAGE_KEY = 'vibemobile.sessionProviderFilter'

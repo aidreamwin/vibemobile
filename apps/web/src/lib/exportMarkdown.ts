@@ -12,6 +12,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
   opencode: 'OpenCode',
+  antigravity: 'Antigravity',
 }
 
 const STATUS: Record<string, string> = {

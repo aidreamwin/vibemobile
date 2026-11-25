@@ -56,6 +56,7 @@ const LOGIN_COMMAND: Record<string, string> = {
   codex: 'codex login',
   claude: 'claude',
   opencode: 'opencode auth login',
+  antigravity: 'agy acp --login',
 }
 
 const LOGIN_FOLLOW_UP: Record<string, string> = {
@@ -915,10 +916,8 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
     }
   }
 
-  const byId = new Map(agents.map((agent) => [agent.id, agent]))
-  const ids: AgentRuntimeId[] = agents.length
-    ? agents.map((agent) => agent.id)
-    : providers.map((provider) => provider.id as AgentRuntimeId)
+  const byId = new Map<string, AgentRuntimeStatus>(agents.map((agent) => [agent.id, agent]))
+  const ids = [...new Set([...byId.keys(), ...providers.map((provider) => provider.id)])]
 
   return (
     <Section title="代理">
@@ -955,7 +954,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                     variant="ghost"
                     className="tap size-11 text-primary"
                     disabled={busy === id}
-                    onClick={() => void update(id)}
+                    onClick={() => void update(agent.id)}
                     aria-label={`升级到 ${newer}`}
                   >
                     <ArrowUpCircle className="size-4" />
@@ -969,7 +968,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                     variant="ghost"
                     className="tap size-11"
                     disabled={checking === id}
-                    onClick={() => void check(id)}
+                    onClick={() => void check(agent.id)}
                     aria-label="检查更新"
                   >
                     <RefreshCw className={checking === id ? 'size-4 animate-spin' : 'size-4'} />
@@ -983,7 +982,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                     variant="ghost"
                     className="tap size-11 text-primary"
                     disabled={busy === id}
-                    onClick={() => void update(id)}
+                    onClick={() => void update(agent.id)}
                     aria-label={agent.active ? '更新' : '安装'}
                   >
                     <ArrowUpCircle className="size-4" />
@@ -992,7 +991,7 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
               ))
             }
           >
-            <AgentProfilesSection agent={id} />
+            {(id === 'codex' || id === 'claude' || id === 'opencode') && <AgentProfilesSection agent={id} />}
             {id === 'codex' && <CodexGlobalSection />}
             {agent?.error && <p className="text-destructive">{agent.error}</p>}
             {provider?.available && provider.authenticated === false && (
@@ -1035,13 +1034,15 @@ function AgentsSection({ providers }: { providers: ProviderStatus[] }) {
                   </Detail>
                 )}
                 {agent?.installed?.length ? <Detail label="已安装">{agent.installed.join('、')}</Detail> : null}
-                <p>
-                  {id === 'codex'
-                    ? '更新在当前执行机进行，完成后会重启 Codex，并中断正在进行的对话。'
-                    : id === 'claude'
-                      ? '更新在当前执行机进行，下一次对话时生效。'
-                      : '更新在当前执行机进行，重启时会中断正在进行的对话；连接外部服务时，下次启动生效。'}
-                </p>
+                {agent && (
+                  <p>
+                    {id === 'codex'
+                      ? '更新在当前执行机进行，完成后会重启 Codex，并中断正在进行的对话。'
+                      : id === 'claude'
+                        ? '更新在当前执行机进行，下一次对话时生效。'
+                        : '更新在当前执行机进行，重启时会中断正在进行的对话；连接外部服务时，下次启动生效。'}
+                  </p>
+                )}
               </div>
             </details>
           </InfoRow>

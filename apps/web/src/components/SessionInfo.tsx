@@ -20,6 +20,11 @@ export default function SessionInfo({
   const [loadingProvider, setLoadingProvider] = useState(false)
   useEffect(() => {
     if (!open) return
+    if (provider === 'antigravity') {
+      setSupplier({ name: 'Antigravity CLI' })
+      setLoadingProvider(false)
+      return
+    }
     let active = true
     setSupplier(null)
     setLoadingProvider(true)
@@ -58,7 +63,9 @@ export default function SessionInfo({
         ? 'Codex'
         : provider === 'opencode'
           ? 'OpenCode'
-          : (provider ?? '未知')
+          : provider === 'antigravity'
+            ? 'Antigravity'
+            : (provider ?? '未知')
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>

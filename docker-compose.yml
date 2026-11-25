@@ -22,6 +22,7 @@ services:
       - OPENCODE_ATTACH_URL=${OPENCODE_ATTACH_URL:-}
       - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:-}
       - OPENCODE_PORT=${OPENCODE_PORT:-6820}
+      - ANTIGRAVITY_BIN=${ANTIGRAVITY_BIN:-}
     volumes:
       # 持久化 vibemobile 的登录 PIN 和 JWT 密钥
       - vibemobile-data:/app/data

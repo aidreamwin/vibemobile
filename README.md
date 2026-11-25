@@ -67,8 +67,7 @@ VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台�
 
 ## 功能
 
-- **三个代理后端**：Codex（app-server JSON-RPC）、Claude Code（Agent SDK）和
-  OpenCode（HTTP + SSE；优先接入用户自己的后台 service），前端只消费归一化事件。
+- **代理后端**支持 Codex、Claude Code、OpenCode，以及执行机上安装的 Google Antigravity CLI（ACP）。
 - **流式输出**：逐 token 增量、推理过程、工具调用、计划（todo）和用量。
 - **审批**：命令 / 文件修改 / 权限请求以弹窗呈现；Claude 的
   `AskUserQuestion` 渲染成完整表单。
@@ -89,6 +88,13 @@ VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台�
 </p>
 
 要求 **Node.js 20+**（推荐 22），npm，以及至少一个已登录的代理 CLI。
+
+在手机上使用 **Antigravity CLI** 时，请在对应的 runner 上安装支持 ACP 的 `agy`，
+使用运行 runner 的账号执行 `agy acp --login`，然后启动或重启该 runner。服务启动时会在
+`PATH` 和官方安装位置查找 CLI，也可以通过 `ANTIGRAVITY_BIN` 指定可执行文件。
+在手机的「会话」中选择 Antigravity，可以新建对话，或打开该账号在允许的工作区内已有的 CLI 会话。
+模型和思考强度由会话返回，工具审批沿用 CLI 规则。置顶、归档和重命名保存在当前 runner。
+容器部署需让 CLI、工作目录和登录凭据在 runner 容器内可访问。[Google 安装说明](https://antigravity.google/docs/getting-started?tab=cli) · [ACP 接口](https://antigravity.google/docs/ide/extensions/acp)
 
 ### 生产
 
@@ -171,7 +177,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 VibeMobile is an AI-native, mobile-first control plane for coding agents. It
 separates the developer's mobile control surface from the code and execution
 environment running on a computer or server. It supports **Codex**, **Claude
-Code**, and **OpenCode** with streaming output, approval sheets, file diffs, a
+Code**, **OpenCode**, and **Google Antigravity CLI** with streaming output, approval sheets, file diffs, a
 persistent terminal, and image input.
 
 The Node backend is not optional: `codex app-server` rejects WebSocket upgrades
@@ -205,6 +211,7 @@ expose it directly to the internet. See [SECURITY.md](SECURITY.md) and the
    React PWA      PIN → JWT       Fastify      JSON-RPC 客户端    （由后端 spawn 托管）
                                     ├── Claude Agent SDK（每回合一个子进程）
                                     ├── opencode HTTP + SSE（attach 或私有 serve）
+                                    ├── Antigravity CLI（agy acp，标准输入输出）
                                     └── node-pty（终端直连）
 ```
 

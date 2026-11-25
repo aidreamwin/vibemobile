@@ -70,6 +70,7 @@ const OPENCODE_CARDS: PermissionCard[] = ['ask', 'unattended']
  * (it is a required field) — a property of that page, not of this type.
  */
 export function permissionCardsFor(provider: ProviderId | undefined): PermissionCard[] {
+  if (provider === 'antigravity') return ['ask']
   if (provider === 'claude') return PERMISSION_CARDS
   if (provider === 'opencode') return OPENCODE_CARDS
   return CODEX_CARDS
@@ -77,7 +78,7 @@ export function permissionCardsFor(provider: ProviderId | undefined): Permission
 
 /** Providers whose composer offers the one-card permission ladder. */
 export function usesPermissionCards(provider: ProviderId | undefined): boolean {
-  return provider === 'claude' || provider === 'opencode'
+  return provider === 'claude' || provider === 'opencode' || provider === 'antigravity'
 }
 
 /**

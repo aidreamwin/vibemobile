@@ -16,6 +16,7 @@ services:
       VIBEMOBILE_RUNNER_MAX_BODY_MB: ${VIBEMOBILE_RUNNER_MAX_BODY_MB:-15}
       VIBEMOBILE_ROOTS: /app/workspace
       VIBEMOBILE_SHELL: /bin/bash
+      ANTIGRAVITY_BIN: ${ANTIGRAVITY_BIN:-}
     volumes:
       - runner-data:/app/.multi-runner
       - ${HOST_WORKSPACE_DIR:-.}:/app/workspace

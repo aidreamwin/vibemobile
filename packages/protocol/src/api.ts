@@ -279,6 +279,8 @@ export interface HealthResponse {
 export interface SessionSummary {
   id: string
   provider: ProviderId
+  /** False when the provider cannot delete its native conversation history. */
+  canDelete?: boolean
   title: string
   preview: string
   cwd: string

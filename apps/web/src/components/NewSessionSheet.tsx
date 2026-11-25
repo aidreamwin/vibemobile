@@ -157,8 +157,8 @@ export default function NewSessionSheet({
                   selected={provider === p.id}
                   onClick={() => onProviderChange?.(p.id)}
                   label={p.displayName}
-                  hint={p.available ? '可用' : (p.detail ?? '不可用')}
-                  danger={!p.available}
+                  hint={p.available ? (p.authenticated === false ? '未登录' : '可用') : (p.detail ?? '不可用')}
+                  danger={!p.available || p.authenticated === false}
                 />
               ))}
             </div>

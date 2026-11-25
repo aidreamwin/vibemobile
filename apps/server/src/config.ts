@@ -27,6 +27,7 @@ export interface Config {
    */
   sessionVersion: number
   workspaceRoots: string[]
+  antigravityBin?: string
   codex: {
     /** Attach to an already-running app-server instead of spawning one. */
     attachUrl?: string
@@ -314,6 +315,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     sessionTtlMs: Number(env('VIBEMOBILE_SESSION_TTL_MS') ?? 7 * 24 * 60 * 60 * 1000),
     sessionVersion: state.sessionVersion ?? 0,
     workspaceRoots,
+    antigravityBin: env('ANTIGRAVITY_BIN'),
     codex: {
       attachUrl: env('CODEX_WS_URL'),
       port: Number(env('CODEX_PORT') ?? 8788),

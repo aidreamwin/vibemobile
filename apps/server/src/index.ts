@@ -11,6 +11,8 @@ import { probeCache } from './providers/probeCache.js'
 import { CodexProvider } from './codex/CodexProvider.js'
 import { ClaudeProvider } from './claude/ClaudeProvider.js'
 import { OpencodeProvider } from './opencode/OpencodeProvider.js'
+import { AntigravityProvider } from './antigravity/AntigravityProvider.js'
+import { findCli } from './antigravity/connection.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerSessionRoutes } from './routes/sessions.js'
 import { registerFileRoutes } from './routes/files.js'
@@ -129,6 +131,16 @@ const opencode = new OpencodeProvider({
 })
 registry.register(opencode)
 
+const agyBin = findCli(config.antigravityBin)
+const antigravity =
+  agyBin &&
+  new AntigravityProvider({
+    bin: agyBin,
+    workspaceRoots: config.workspaceRoots,
+    stateDir: config.stateDir,
+  })
+if (antigravity) registry.register(antigravity)
+
 codex.on('reconnected', async () => {
   app.log.warn('app-server reconnected; re-subscribing known threads')
   await codex.resubscribeAll?.().catch((err) => app.log.error({ err }, 'resubscribe failed'))
@@ -138,7 +150,7 @@ claude.on('error', (err: Error) => app.log.error({ err }, 'claude provider error
 opencode.on('error', (err: Error) => app.log.error({ err }, 'opencode provider error'))
 
 app.addHook('onClose', async () => {
-  await Promise.allSettled([codex.stop(), claude.stop(), opencode.stop()])
+  await Promise.allSettled(registry.list().map((provider) => provider.stop()))
 })
 
 // ------------------------------------------------------------------ routes
