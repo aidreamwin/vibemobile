@@ -118,7 +118,7 @@ function itemsMarkdown(items: AgentItem[], streams: Record<string, Stream> = {},
       }
 
       case 'fileChange': {
-        out.push('### 文件改动', '')
+        out.push(`### ${item.label ?? '文件改动'}`, '')
         for (const change of item.changes) {
           const action = change.kind === 'add' ? '新增' : change.kind === 'delete' ? '删除' : '修改'
           const moved = change.movePath ? ` → \`${change.movePath}\`` : ''
@@ -141,6 +141,7 @@ function itemsMarkdown(items: AgentItem[], streams: Record<string, Stream> = {},
         out.push('### 网络搜索', '', `查询：${item.query}`, '')
         if (item.action) appendJson(out, '动作', item.action)
         if (item.results?.length) appendJson(out, '结果', item.results)
+        if (item.output?.trim()) out.push(...fenced(item.output.trimEnd(), 'text'), '')
         out.push(statusLine(item.status), '')
         break
       }
@@ -177,7 +178,7 @@ function itemsMarkdown(items: AgentItem[], streams: Record<string, Stream> = {},
         break
 
       case 'tool': {
-        out.push(`### 工具：${item.title || item.name}`, '')
+        out.push(`### ${item.label ?? '工具'}：${item.title || item.name}`, '')
         if (item.subagentType) out.push(`子代理：${item.subagentType}`, '')
         appendJson(out, '输入', item.input)
         if (item.output?.trim()) out.push('输出：', '', ...fenced(item.output.trimEnd(), 'text'), '')

@@ -162,7 +162,7 @@ export function registerHub(app: FastifyInstance, config: Config): void {
     socket.on('close', () => clients.delete(client))
     socket.on('error', () => clients.delete(client))
 
-    send(client, { type: 'hello', subscribed: [] })
+    send(client, { type: 'hello', subscribed: [], pendingApprovalIds: [...approvals.pending.keys()] })
 
     // Replay anything still blocked on a human. Without this, reloading the
     // page mid-approval loses the sheet: the turn is still suspended inside

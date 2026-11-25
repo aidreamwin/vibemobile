@@ -129,7 +129,7 @@ export type AgentItem =
       exitCode?: number | null
       durationMs?: number | null
     }
-  | { kind: 'fileChange'; id: string; status: ItemStatus; changes: FileChange[] }
+  | { kind: 'fileChange'; id: string; status: ItemStatus; changes: FileChange[]; label?: string }
   | {
       kind: 'mcpTool'
       id: string
@@ -167,6 +167,8 @@ export type AgentItem =
        * search tool did the work — the field is for standalone web search.
        */
       results?: unknown[]
+      /** Text returned by providers that supply a search report. */
+      output?: string
     }
   /**
    * The conversation was compacted: older turns were replaced by a summary.
@@ -210,6 +212,8 @@ export type AgentItem =
       id: string
       /** Raw tool name as the provider calls it, e.g. `Task`. */
       name: string
+      /** Short action for the card header, e.g. 读取文件. */
+      label?: string
       /** Human-facing one-liner; falls back to `name` when the provider has none. */
       title: string
       status: ItemStatus

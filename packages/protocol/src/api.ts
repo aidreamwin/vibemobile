@@ -581,7 +581,7 @@ export type ClientRequest = ClientMessage & { clientRequestId?: string }
 // -------------------------------------------------------- ws: server -> client
 
 export type ServerMessage =
-  | { type: 'hello'; subscribed: string[] }
+  | { type: 'hello'; subscribed: string[]; pendingApprovalIds?: string[] }
   | { type: 'event'; event: AgentEvent }
   | { type: 'ack'; requestId: string; ok: true; data?: unknown }
   | { type: 'nack'; requestId: string; ok: false; error: string }

@@ -1,13 +1,5 @@
 import { create } from 'zustand'
-import type {
-  AgentEvent,
-  AgentItem,
-  ApprovalRequest,
-  PlanStep,
-  SessionStatus,
-  TurnStatus,
-  Usage,
-} from '@vibemobile/protocol'
+import type { AgentEvent, AgentItem, PlanStep, SessionStatus, TurnStatus, Usage } from '@vibemobile/protocol'
 import { indexItemTurn } from './turnIndex'
 
 export interface Stream {
@@ -39,7 +31,6 @@ interface ChatState {
   retryNotice: Extract<AgentEvent, { kind: 'error' }> | null
   plan: PlanStep[]
   diff: string
-  approvals: ApprovalRequest[]
   /**
    * The newest usage report for this session, or null before one arrives.
    *
@@ -69,7 +60,6 @@ interface ChatState {
 
   reset: (threadId: string) => void
   applyEvent: (event: AgentEvent) => void
-  dismissApproval: (requestId: string) => void
 }
 
 // ---------------------------------------------------------------- buffers
@@ -183,7 +173,6 @@ export const useChatStore = create<ChatState>((set, get) => {
     retryNotice: null,
     plan: [],
     diff: '',
-    approvals: [],
     usage: null,
     commands: [],
     turnTimes: {},
@@ -209,7 +198,6 @@ export const useChatStore = create<ChatState>((set, get) => {
         retryNotice: null,
         plan: [],
         diff: '',
-        approvals: [],
         usage: null,
         commands: [],
         turnTimes: {},
@@ -218,19 +206,6 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     applyEvent(event) {
-      if (event.kind === 'approval.requested') {
-        const current = get().approvals
-        if (!current.some((a) => a.requestId === event.approval.requestId)) {
-          set({ approvals: [...current, event.approval] })
-        }
-        return
-      }
-
-      if (event.kind === 'approval.resolved') {
-        set({ approvals: get().approvals.filter((a) => a.requestId !== event.requestId) })
-        return
-      }
-
       // Ignore events for a thread we are not showing.
       const currentThread = get().threadId
       if (currentThread && 'threadId' in event && event.threadId && event.threadId !== currentThread) {
@@ -279,16 +254,9 @@ export const useChatStore = create<ChatState>((set, get) => {
             retryNotice: null,
             turnId: event.turnId,
             turnStatus: event.status,
-            // A turn that is over cannot still be blocking on a human, so any
-            // sheet naming it is stale by definition. This is the second line
-            // of defence: the server broadcasts `approval.resolved` when it
-            // abandons a request, but that broadcast can be missed by a socket
-            // that was down — and a sheet is not dismissable, so leaving one on
-            // screen blocks the composer until the user reloads.
             ...(event.status === 'inProgress'
               ? {}
               : {
-                  approvals: state.approvals.filter((a) => a.turnId !== event.turnId),
                   // The backend's own end time when it reports one (Codex), the
                   // moment this screen learned the turn was over otherwise. A
                   // later transcript read replaces it with the backend's value
@@ -349,10 +317,6 @@ export const useChatStore = create<ChatState>((set, get) => {
           return
       }
     },
-
-    dismissApproval(requestId) {
-      set({ approvals: get().approvals.filter((a) => a.requestId !== requestId) })
-    },
   }
 })
 
@@ -382,7 +346,6 @@ export function loadTranscript(
     streams: {},
     plan: [],
     diff: '',
-    approvals: [],
     // Cleared, not kept: nothing in a transcript carries usage (Codex's thread
     // record has no token counts and Claude has no thread record at all), so
     // after a reload the chip is empty until the next `usage.updated`. Showing
@@ -475,9 +438,7 @@ function hasContent(item: AgentItem): boolean {
  * subscriptions and the providers replay *live* status, but an item that
  * finished while the phone was away was only ever carried by the delta stream,
  * which is gone — the transcript is the only place it survives. So the snapshot
- * is needed. What it must not do is start over: `loadTranscript` clears the
- * delta buffers and the whole store, which on a reconnect would blank the
- * in-flight turn's text and every approval sheet, and flash the loading screen
+ * is needed. A fresh load would discard the in-flight text and delta buffers
  * on a phone that merely locked its screen.
  *
  * The two halves of the merge:

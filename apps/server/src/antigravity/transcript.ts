@@ -2,6 +2,7 @@ import type { ContentBlock, SessionUpdate, ToolCallUpdate } from '@agentclientpr
 import type { AgentEvent, AgentInput, AgentItem, TranscriptTurn, TurnStatus } from '@vibemobile/protocol'
 import { capImages, type ImageStore } from '../images/store.js'
 import { PAGE_ITEM_BYTES } from '../providers/page.js'
+import { mergeToolCall, toolItem } from './tools.js'
 
 export function promptBlocks(input: AgentInput[], supportsImage: boolean): ContentBlock[] {
   return capImages(input).map((part) => {
@@ -12,28 +13,14 @@ export function promptBlocks(input: AgentInput[], supportsImage: boolean): Conte
   })
 }
 
-type ToolItem = Extract<AgentItem, { kind: 'tool' }>
-
 export const toolItemId = (turnId: string, callId: string) => `${turnId}:tool:${callId}`
-
-function toolOutput(update: ToolCallUpdate): string | undefined {
-  const parts = update.content?.flatMap((block) => {
-    if (block.type === 'content' && block.content.type === 'text') return [block.content.text]
-    if (block.type === 'diff') return [`${block.path}\n${block.newText}`]
-    return []
-  })
-  if (parts?.length) return parts.join('\n')
-  if (update.rawOutput != null)
-    return typeof update.rawOutput === 'string' ? update.rawOutput : JSON.stringify(update.rawOutput)
-  return undefined
-}
 
 /** ACP replays the same update stream on load. Only an active prompt publishes it to the hub. */
 export class AgyTranscript {
   readonly turns: TranscriptTurn[] = []
   live = false
   #lastMessage: { type: string; native?: string | null; item: AgentItem } | undefined
-  #tools = new Map<string, ToolItem>()
+  #tools = new Map<string, { index: number; call: ToolCallUpdate }>()
 
   constructor(
     readonly threadId: string,
@@ -49,7 +36,6 @@ export class AgyTranscript {
     this.finish('completed')
     const id = `${this.threadId}:turn:${this.turns.length}`
     this.turns.push({ id, items: [], status: 'inProgress', ...(this.live ? { startedAt: Date.now() } : {}) })
-    this.#tools.clear()
     if (this.live) this.emit({ kind: 'turn.started', threadId: this.threadId, turnId: id })
     return id
   }
@@ -132,24 +118,13 @@ export class AgyTranscript {
     if (type !== 'tool_call' && type !== 'tool_call_update') return
     if (!this.turn) this.begin()
     this.#endMessage()
+    const turn = this.#currentTurn()
     const existing = this.#tools.get(update.toolCallId)
-    const item: ToolItem = existing ?? {
-      kind: 'tool',
-      id: toolItemId(this.#currentTurn().id, update.toolCallId),
-      name: update.kind ?? 'tool',
-      title: '',
-      status: 'running',
-    }
-    item.title = update.title ?? (item.title || item.name)
-    item.name = update.name ?? update.kind ?? item.name
-    if (update.status)
-      item.status = update.status === 'completed' ? 'done' : update.status === 'failed' ? 'failed' : 'running'
-    if (update.rawInput != null) item.input = update.rawInput
-    item.output = toolOutput(update) ?? item.output
-    if (!existing) {
-      this.#currentTurn().items.push(item)
-      this.#tools.set(update.toolCallId, item)
-    }
+    const call = mergeToolCall(existing?.call, update)
+    const item = toolItem(toolItemId(turn.id, call.toolCallId), call)
+    const index = existing?.index ?? turn.items.length
+    turn.items[index] = item
+    this.#tools.set(call.toolCallId, { index, call })
     this.#item(item.status !== 'running' ? 'item.completed' : existing ? 'item.updated' : 'item.started', item)
   }
 
@@ -158,12 +133,14 @@ export class AgyTranscript {
     if (turn?.status !== 'inProgress') return
     this.#endMessage()
     if (status === 'interrupted' || status === 'failed') {
-      for (const tool of this.#tools.values()) {
-        if (tool.status !== 'running') continue
+      for (const { index } of this.#tools.values()) {
+        const tool = turn.items[index]
+        if (!('status' in tool) || tool.status !== 'running') continue
         tool.status = status === 'interrupted' ? 'declined' : 'failed'
         this.#item('item.completed', tool)
       }
     }
+    this.#tools.clear()
     if (error) {
       const item: AgentItem = { kind: 'error', id: this.#id(), message: error }
       turn.items.push(item)

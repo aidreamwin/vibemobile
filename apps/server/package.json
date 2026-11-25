@@ -1,6 +1,6 @@
 {
   "name": "@vibemobile/server",
-  "version": "0.1.57",
+  "version": "0.1.58",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -26,6 +26,7 @@
     "@vibemobile/protocol": "*",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/headless": "^5.5.0",
+    "diff": "^9.0.0",
     "fastify": "^5.2.1",
     "jsonc-parser": "^3.3.1",
     "jsonwebtoken": "^9.0.2",

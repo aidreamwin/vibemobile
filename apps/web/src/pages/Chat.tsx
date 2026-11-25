@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import type { AgentInput, AgentItem, ModelInfo, SessionSummary } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { socket } from '../lib/ws'
+import { useApprovalStore } from '../lib/approvals'
 import { loadTranscript, mergeTurnTimes, prependTranscriptItems, resyncTranscript, useChatStore } from '../lib/store'
 import {
   downloadMarkdown,
@@ -91,7 +92,7 @@ export default function Chat() {
   const retryNotice = useChatStore((s) => s.retryNotice)
   const plan = useChatStore((s) => s.plan)
   const diff = useChatStore((s) => s.diff)
-  const approvals = useChatStore((s) => s.approvals)
+  const approvals = useApprovalStore((s) => s.pending)
   const usage = useChatStore((s) => s.usage)
   const commands = useChatStore((s) => s.commands)
   const turnTimes = useChatStore((s) => s.turnTimes)
@@ -281,8 +282,8 @@ export default function Chat() {
 
   // A phone loses this socket constantly — screen lock, app switch, WiFi
   // handoff — and everything the agent produced while it was down is gone: the
-  // delta stream is not replayed, and the replayed `subscribe` only restores
-  // live status (the running turn, the pending approval, the stop button). So a
+  // delta stream is not replayed. Reconnecting restores pending approvals
+  // and re-subscribes to future events. So a
   // phone that locked mid-turn comes back to a transcript frozen at the moment
   // it locked, with the rest of the answer missing and nothing on screen to say
   // so. Re-reading the transcript on reconnect is what closes that gap.
@@ -296,6 +297,8 @@ export default function Chat() {
     let previous = socket.state
 
     const unsubscribe = socket.onState((state) => {
+      // Reconnects go through connecting between closed and open.
+      if (state === 'connecting') return
       const reconnected = state === 'open' && previous === 'closed'
       previous = state
       // Nothing to merge into before the first load has run; that load already

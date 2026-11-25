@@ -1,10 +1,10 @@
 import { memo, useState } from 'react'
-import type { AgentItem, FileChange, ItemStatus } from '@vibemobile/protocol'
+import type { AgentItem, ItemStatus } from '@vibemobile/protocol'
 import Markdown, { type MarkdownProps } from './Markdown'
 import DiffView from './DiffView'
 import ImageViewer from './ImageViewer'
 import { imageUrl } from '../lib/api'
-import { formatClock, formatTokens } from '../lib/format'
+import { formatClock, formatTokens, shortPath } from '../lib/format'
 import CopyButton from './CopyButton'
 
 const statusDot: Record<ItemStatus, string> = {
@@ -42,6 +42,7 @@ function Collapsible({
     <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="tap flex w-full items-center justify-between gap-2.5 px-3.5 py-2.5 text-left active:bg-secondary"
       >
@@ -192,7 +193,7 @@ const ItemCard = memo(function ItemCard({
           subtitle={[
             // Status first: the command itself is long enough to be truncated,
             // and the exit code is the part worth keeping visible.
-            item.status === 'done' && item.exitCode !== null
+            item.status !== 'running' && item.exitCode != null
               ? `exit ${item.exitCode}${item.durationMs ? ` · ${(item.durationMs / 1000).toFixed(1)}s` : ''}`
               : item.cwd,
             item.command,
@@ -201,22 +202,29 @@ const ItemCard = memo(function ItemCard({
             .join(' · ')}
           status={item.status}
         >
+          {item.command && (
+            <pre className="border-b border-border px-3 py-2 font-mono text-[12px] whitespace-pre-wrap break-words">
+              {item.command}
+            </pre>
+          )}
           <Pre text={item.output} />
         </Collapsible>
       )
 
-    case 'fileChange':
+    case 'fileChange': {
+      const paths = item.changes.map((change) => (item.label ? shortPath(change.path) : change.path))
       return (
         <Collapsible
-          title="修改"
+          title={item.label ?? '修改'}
           // Same reason as the command card: the paths are long, the count is
           // the short fact that should survive truncation.
-          subtitle={`${item.changes.length} 个文件 · ${item.changes.map((c: FileChange) => c.path).join(', ') || '文件变更'}`}
+          subtitle={`${paths.length} 个文件 · ${paths.join(', ') || '文件变更'}`}
           status={item.status}
         >
           <DiffView changes={item.changes} />
         </Collapsible>
       )
+    }
 
     case 'mcpTool':
       return (
@@ -264,6 +272,8 @@ const ItemCard = memo(function ItemCard({
                 </div>
               ))}
             </div>
+          ) : item.output ? (
+            <Pre text={item.output} />
           ) : (
             // Deliberately the sentence that was here before. `results` is
             // opaque JSON at the boundary and this machine's recorded sessions
@@ -354,14 +364,15 @@ const ItemCard = memo(function ItemCard({
       if (item.output) sections.push(`输出\n${item.output}`)
       if (item.error) sections.push(`错误\n${item.error}`)
       const subtitle = [
-        item.title && item.title !== item.name ? `${item.title} · ${item.name}` : item.name,
+        item.title && item.title !== item.name && item.title !== item.label ? item.title : null,
+        item.label ? null : item.name,
         item.subagentType ? `子代理 ${item.subagentType}` : null,
         item.childCount ? `${item.childCount} 次子调用` : null,
       ]
         .filter(Boolean)
         .join(' · ')
       return (
-        <Collapsible title="工具" subtitle={subtitle} status={item.status}>
+        <Collapsible title={item.label ?? '工具'} subtitle={subtitle} status={item.status}>
           <Pre text={sections.join('\n\n')} />
         </Collapsible>
       )

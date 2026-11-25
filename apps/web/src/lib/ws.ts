@@ -8,6 +8,7 @@ import type {
   ServerMessage,
 } from '@vibemobile/protocol'
 import { runnerPath } from './runner'
+import { receiveApprovals } from './approvals'
 
 export type ConnectionState = 'connecting' | 'open' | 'closed'
 
@@ -101,6 +102,7 @@ class AgentSocket {
         return
       }
 
+      receiveApprovals(msg)
       switch (msg.type) {
         case 'event':
           for (const listener of this.#eventListeners) listener(msg.event)

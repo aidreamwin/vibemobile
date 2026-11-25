@@ -7,7 +7,7 @@
  * screen, which is hard to notice and easy to reintroduce, so it is pinned here.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { AgentEvent, AgentItem, ApprovalRequest } from '@vibemobile/protocol'
+import type { AgentEvent, AgentItem } from '@vibemobile/protocol'
 
 // The store flushes deltas on `requestAnimationFrame` when it is available and
 // otherwise on `window.setTimeout`. A plain Node process has no rAF, so it takes
@@ -147,42 +147,6 @@ describe('streamed deltas vs the authoritative completed item', () => {
   })
 })
 
-const approval = (requestId: string, turnId: string): ApprovalRequest => ({
-  requestId,
-  threadId: THREAD,
-  turnId,
-  itemId: `item-${requestId}`,
-  type: 'command',
-  title: 'Approve command',
-  availableDecisions: ['accept', 'decline'],
-})
-
-/**
- * An approval sheet is NOT dismissable — a stray tap cannot close it — so one
- * that outlives its turn blocks the composer until the page is reloaded. The
- * server broadcasts `approval.resolved` when it abandons a request, but that
- * broadcast can be missed by a socket that was down; this is the client's own
- * backstop.
- */
-describe('approvals do not outlive their turn', () => {
-  it('drops the sheet for a turn that has finished', () => {
-    apply({ kind: 'approval.requested', approval: approval('a1', TURN) })
-    apply({ kind: 'approval.requested', approval: approval('a2', 'turn-2') })
-    expect(useChatStore.getState().approvals.map((a) => a.requestId)).toEqual(['a1', 'a2'])
-
-    apply({ kind: 'turn.completed', threadId: THREAD, turnId: TURN, status: 'completed' })
-
-    // Only the finished turn's sheet — the other turn is untouched.
-    expect(useChatStore.getState().approvals.map((a) => a.requestId)).toEqual(['a2'])
-  })
-
-  it('keeps the sheet while the turn is still running', () => {
-    apply({ kind: 'approval.requested', approval: approval('a1', TURN) })
-    apply({ kind: 'turn.completed', threadId: THREAD, turnId: TURN, status: 'inProgress' })
-    expect(useChatStore.getState().approvals.map((a) => a.requestId)).toEqual(['a1'])
-  })
-})
-
 /**
  * Reconnect catch-up. The socket replays subscriptions and live status, but an
  * item that finished while the phone was away only ever existed in the delta
@@ -231,13 +195,6 @@ describe('resyncTranscript', () => {
     resyncTranscript(THREAD, [message('m1', 'a stale prefix and the rest')])
     expect(useChatStore.getState().streams.m1).toBeUndefined()
     expect(itemAt('m1')).toMatchObject({ text: 'a stale prefix and the rest' })
-  })
-
-  it('does not blank the transcript or the sheets it is merging into', () => {
-    loadTranscript(THREAD, [message('m1', 'first')])
-    apply({ kind: 'approval.requested', approval: approval('a1', TURN) })
-    resyncTranscript(THREAD, [message('m1', 'first')])
-    expect(useChatStore.getState().approvals.map((a) => a.requestId)).toEqual(['a1'])
   })
 
   it('keeps older pages above the snapshot instead of moving them to the tail', () => {
