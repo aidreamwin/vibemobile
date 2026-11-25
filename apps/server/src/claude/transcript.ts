@@ -9,15 +9,6 @@ import { retryDetails } from './retry.js'
 /** First backward read; doubles until it holds enough turns. */
 const TAIL_WINDOW_START = 512 * 1024
 
-/**
- * How deep the synthetic older-page cursor may point, in turns.
- *
- * Ten times the route's per-request ceiling and far beyond any session this
- * app has seen; it exists to keep a hostile `c:999…` from turning the skip
- * count (and therefore the tail reader's window) into Infinity.
- */
-export const MAX_CURSOR_SKIP = 10_000
-
 /** Same shape the SDK uses for session ids. */
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -215,7 +206,7 @@ export function orderTranscript(entries: any[]): any[] {
   for (const message of chain) {
     ordered.push(message)
     const inserted = insertAfter.get(message.uuid)
-    if (inserted) ordered.push(...inserted)
+    if (inserted) for (const entry of inserted) ordered.push(entry)
   }
   return ordered
 }
@@ -350,7 +341,7 @@ export async function readTranscriptMessages(
         // A chain that cannot be reconstructed inside the window must not
         // blank the transcript; fall back to the entries themselves.
         const visible = ordered.length > 0 ? ordered.filter(isTranscriptMessage) : segment.filter(isTranscriptMessage)
-        messages.push(...visible)
+        for (const entry of visible) messages.push(entry)
       }
 
       let prompts = 0
@@ -488,6 +479,11 @@ function timestampOf(value: unknown): number | null {
   return Number.isFinite(ms) ? ms : null
 }
 
+function frameItemId(kind: 'text' | 'reasoning', uuid: string, ordinal: number): string {
+  const id = `claude:${kind}:${uuid}`
+  return ordinal === 0 ? id : `${id}:${ordinal}`
+}
+
 export function buildTurns(
   messages: any[],
   opts: { sliceAt?: string | null; images?: ImageStore } = {},
@@ -499,9 +495,9 @@ export function buildTurns(
   /** Dividers that arrived before any turn was open. */
   let pendingCompaction: AgentItem[] = []
 
-  const startTurn = (at: number | null = null): TranscriptTurn => {
+  const startTurn = (uuid: string, at: number | null): TranscriptTurn => {
     const turn: TranscriptTurn = {
-      id: `claude:turn:${turns.length}`,
+      id: `claude:turn:${uuid}`,
       status: 'completed',
       items: [],
       ...(at !== null ? { startedAt: at, completedAt: at } : {}),
@@ -542,7 +538,7 @@ export function buildTurns(
 
     const retry = retryDetails(message)
     if (retry) {
-      if (!current) current = startTurn(at)
+      if (!current) current = startTurn(message.uuid, at)
       else if (at !== null) current.completedAt = at
       const previous = current.items.find((item) => item.kind === 'retry')
       if (previous?.kind === 'retry') previous.attempts.push(retry)
@@ -561,7 +557,7 @@ export function buildTurns(
     // message too and carries neither, so this still excludes them.
     const isPrompt = message.type === 'user' && content.some((c: any) => c.type === 'text' || c.type === 'image')
     if (isPrompt) {
-      current = startTurn(at)
+      current = startTurn(message.uuid, at)
       const text = content
         .filter((c: any) => c.type === 'text')
         .map((c: any) => c.text)
@@ -581,7 +577,7 @@ export function buildTurns(
       continue
     }
 
-    if (!current) current = startTurn(at)
+    if (!current) current = startTurn(message.uuid, at)
     // Every frame that reaches here is something this turn did, so its
     // timestamp is the end of the turn's activity so far. The next prompt
     // starts a new turn and never retroactively stretches this one.
@@ -600,14 +596,21 @@ export function buildTurns(
       continue
     }
 
+    let textParts = 0
+    let thoughtParts = 0
     for (const part of content) {
-      // `message.uuid` identifies the frame, and each frame holds exactly one
-      // block, so it is unique per card — unlike a position that is always 0.
+      // Most stored frames have one block. Repeated blocks still need distinct
+      // item IDs both for older-page anchors and for the client's merge.
       const id = String(message.uuid)
 
       if (part?.type === 'text' && message.type === 'assistant') {
         if (!part.text) continue
-        current.items.push({ kind: 'message', id: `claude:text:${id}`, role: 'assistant', text: part.text })
+        current.items.push({
+          kind: 'message',
+          id: frameItemId('text', id, textParts++),
+          role: 'assistant',
+          text: part.text,
+        })
         continue
       }
 
@@ -619,7 +622,7 @@ export function buildTurns(
         if (!part.thinking) continue
         current.items.push({
           kind: 'reasoning',
-          id: `claude:reasoning:${id}`,
+          id: frameItemId('reasoning', id, thoughtParts++),
           summary: [],
           content: [part.thinking],
         })

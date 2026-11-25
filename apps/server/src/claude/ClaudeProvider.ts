@@ -67,7 +67,7 @@ import type {
 } from '@vibemobile/protocol'
 import { UnknownApprovalError } from '../providers/types.js'
 import type { AgentProvider, CreateSessionOptions, ListSessionsOptions, ProviderProbe } from '../providers/types.js'
-import { pageTurnsByItems } from '../providers/page.js'
+import { liveReplayTail, transcriptPage, type HistoryEntry, type PageRequest } from '../providers/page.js'
 import { readGitInfo } from '../providers/git.js'
 import { ClaudeEventMapper, resultEchoes } from './mapClaudeEvents.js'
 import { toolDisplayTitle } from './mapUtils.js'
@@ -92,7 +92,7 @@ import {
 } from './runtime.js'
 import { resolveClaudeBin } from '../agents/runtime.js'
 import { claudeProfileOptions, type AgentConnection } from '../agents/profileRuntime.js'
-import { buildTurns, MAX_CURSOR_SKIP, readTranscriptMessages, UUID_RE } from './transcript.js'
+import { buildTurns, readTranscriptMessages, UUID_RE } from './transcript.js'
 import { TurnInput } from './turnInput.js'
 
 function contextWindowField(value: any): { contextWindow?: number } {
@@ -754,7 +754,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
    * operation. Here it is cheap and idempotent: sessions must be resumed by
    * `options.resume` on the NEXT turn, and a turn already in flight keeps
    * running regardless. Its real job is the reload case — when a turn is live,
-   * replay `turn.started`, the status, and every item so far, so a client that
+   * replay `turn.started`, the status, and the latest page of items, so a client that
    * just reconnected renders the running turn instead of an empty transcript
    * with no stop button.
    */
@@ -840,7 +840,7 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
     const turnId = session.run.turnId
     this.#emit({ kind: 'turn.started', threadId: session.id, turnId })
     this.#emit({ kind: 'session.status', threadId: session.id, status: session.status })
-    for (const item of session.mapper.itemsForTurn(turnId)) {
+    for (const item of liveReplayTail(session.mapper.itemsForTurn(turnId))) {
       this.#emit({ kind: 'item.completed', threadId: session.id, turnId, item })
     }
     if (session.mapper.retryNotice) this.#emit(session.mapper.retryNotice)
@@ -932,129 +932,67 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
    * When a turn has never run in this process there is no live state and the
    * replay stands alone, which is the case after a server restart.
    */
-  async getTranscript(
-    sessionId: string,
-    opts: { limit?: number; cursor?: string; targetItems?: number } = {},
-  ): Promise<Transcript | null> {
+  async getTranscript(sessionId: string, opts: PageRequest = {}): Promise<Transcript | null> {
     const session = await this.getSession(sessionId)
     if (!session) return null
 
+    const page = await transcriptPage(sessionId, 'c:', opts, (depth, source, anchor) => {
+      const count = opts.targetItems || anchor ? 1 : Math.max(1, opts.limit ?? Infinity)
+      return this.#history(sessionId, depth + count, source, anchor)
+    })
+    return { session, turns: page.turns, nextCursor: page.nextCursor, ...(page.hasMore ? { hasMore: true } : {}) }
+  }
+
+  async *#history(sessionId: string, prompts: number, source?: string, anchor?: string): AsyncGenerator<HistoryEntry> {
     const live = this.#sessions.get(sessionId)
-
-    // The file reader pages by counting from the newest end, so the cursor is
-    // just how many turns to skip. It is opaque to the route and the client;
-    // an unrecognised value means "start over from the newest page" rather
-    // than an error, which is also what a cursor minted before a restart or by
-    // another build should degrade into.
-    const cursor = /^c:(\d+)$/.exec(opts.cursor ?? '')
-    const parsed = cursor ? Number(cursor[1]) : 0
-    // Capped, not just parsed: the skip becomes the reader's prompt count, and
-    // a digit string that overflows to Infinity would make it read the whole
-    // JSONL. An absurd cursor starts over from the newest page, like an
-    // unrecognised one.
-    const skip = Number.isSafeInteger(parsed) && parsed <= MAX_CURSOR_SKIP ? parsed : 0
-
-    // Always read the JSONL ourselves when it is on this machine. The SDK
-    // cannot answer this: `getSessionMessages` reconstructs only the current
-    // post-compaction chain at EVERY size (below 5 MB the old boundary roots
-    // are disconnected from the newest leaf; above it the SDK explicitly takes
-    // the buffer after the last boundary), and `includeSystemMessages` strips
-    // the subtype/metadata before we could find the boundaries. The reader
-    // also works backwards from the end, so it is the cheap path: the SDK
-    // parses the whole file and was measured at 640 ms / ~280 MB heap for a
-    // 200 MB session.
-    const targetItems =
-      opts.targetItems && Number.isFinite(opts.targetItems) && opts.targetItems > 0 ? Math.floor(opts.targetItems) : 0
-    const limitTurns = opts.limit && opts.limit > 0 ? opts.limit : 0
-    // The skipped turns are newer than this page and are still needed to reach
-    // back far enough. One extra prompt for the live turn: its replay is cut
-    // at `sliceAt`, so it does not count on its own.
-    const liveExtra = live?.lastTurn ? 1 : 0
-
-    const assemble = (messages: any[]) => {
-      const built = buildTurns(messages, {
-        sliceAt: live?.lastTurn?.commandUuid,
+    const last = live?.lastTurn
+    const liveItems = last ? live?.mapper.itemsForTurn(last.turnId) : undefined
+    const livePrompts = new Set(liveItems?.filter((i) => i.kind === 'message' && i.role === 'user').map((i) => i.id))
+    // A new prompt may have moved the anchored turn from live state to disk.
+    // Its mapper still owns the original item IDs, including steered inputs.
+    const previousLive =
+      source === 'live' && anchor && anchor !== last?.turnId ? live?.mapper.itemsForTurn(anchor) : undefined
+    const located = await this.#locateSessionFile(sessionId).catch(() => null)
+    if (last) prompts++
+    let oldest: string | undefined
+    for (;;) {
+      // Only the JSONL reader preserves history across compaction boundaries.
+      const disk = located ? await readTranscriptMessages(located.file, located.size, prompts).catch(() => null) : null
+      const messages = disk?.messages ?? (await getSessionMessages(sessionId))
+      // The tail window can start on a steer, with the opening prompt outside it.
+      const liveStart = last && messages.find((m) => livePrompts.has(`claude:user:${m.uuid}`))
+      const turns = buildTurns(messages, {
+        sliceAt: liveStart?.uuid ?? last?.commandUuid,
         images: this.#images,
       })
-      if (!live?.lastTurn) return built
-      // Compaction items are the one kind both sources can name: the replay id
-      // is `claude:compaction:<uuid>` and the live mapper now uses the same
-      // one, so a boundary that was written before `sliceAt` and also arrived
-      // on the stream is kept once.
-      const replayed = new Set(built.flatMap((turn) => turn.items.map((item) => item.id)))
-      built.push({
-        id: live.lastTurn.turnId,
-        status: live.lastTurn.status,
-        items: live.mapper.itemsForTurn(live.lastTurn.turnId).filter((item) => !replayed.has(item.id)),
-        startedAt: live.lastTurn.startedAt,
-        completedAt: live.lastTurn.completedAt,
-        durationMs: null,
-      })
-      return built
-    }
-
-    let turns: TranscriptTurn[] | null = null
-    let tailCut = false
-    try {
-      const located = await this.#locateSessionFile(sessionId)
-      if (located && targetItems) {
-        // The page is budgeted by items but cut on turn boundaries, and a turn
-        // can be one card or several hundred. Start with one prompt and double
-        // until the budget is met: reading `targetItems` prompts up front would
-        // pull most of a 200 MB file whenever the newest turn already has
-        // enough cards. Each turn carries at least one item, so `targetItems`
-        // prompts is the upper bound; the sum of the re-reads stays within
-        // ~2x the final window.
-        let prompts = 1
-        for (;;) {
-          const read = await readTranscriptMessages(located.file, located.size, skip + prompts + liveExtra)
-          tailCut = read.truncated
-          turns = assemble(read.messages)
-          const page = pageTurnsByItems(turns, targetItems, skip)
-          if (page.items >= targetItems || !read.truncated || prompts >= targetItems) break
-          prompts = Math.min(prompts * 2, targetItems)
-        }
-      } else if (located) {
-        // No item budget: the old turn-count contract. No limit means "all of
-        // it", which the reader answers by starting its window at `size`.
-        const neededPrompts = limitTurns ? limitTurns + skip + liveExtra : Number.POSITIVE_INFINITY
-        const read = await readTranscriptMessages(located.file, located.size, neededPrompts)
-        tailCut = read.truncated
-        turns = assemble(read.messages)
+      if (last && liveItems) {
+        const dividers = new Set(
+          turns.flatMap((turn) => turn.items.filter((i) => i.kind === 'compaction').map((i) => i.id)),
+        )
+        turns.push({
+          id: last.turnId,
+          status: last.status,
+          items: liveItems.filter((i) => !dividers.has(i.id)),
+          startedAt: last.startedAt,
+          completedAt: last.completedAt,
+          durationMs: null,
+        })
       }
-    } catch {
-      // File replaced or unreadable mid-read; the SDK still answers, scoped to
-      // the current segment. A partial transcript beats none.
-    }
-    if (!turns) turns = assemble(await getSessionMessages(sessionId))
-
-    // Counted from the end: `skip` drops the turns already on screen. With an
-    // item budget the cut moves by whole turns until the budget is met; without
-    // one it is a fixed number of turns. `start` is what says whether anything
-    // older exists *within* the window; `tailCut` says whether the window
-    // itself stopped short of the beginning of the transcript.
-    let start: number
-    let end: number
-    if (targetItems) {
-      ;({ start, end } = pageTurnsByItems(turns, targetItems, skip))
-    } else if (limitTurns) {
-      end = Math.max(0, turns.length - skip)
-      start = Math.max(0, end - limitTurns)
-    } else {
-      start = 0
-      end = turns.length
-    }
-    const limited = turns.slice(start, end)
-    const hasMore = start > 0 || tailCut
-
-    return {
-      session,
-      turns: limited,
-      // No cursor for an empty page: the skip count points past everything we
-      // can see (the transcript shrank, or the cursor came from another build),
-      // and repeating it would make the client ask forever.
-      nextCursor: hasMore && limited.length > 0 ? `c:${skip + limited.length}` : null,
-      ...(hasMore ? { hasMore: true } : {}),
+      let end = oldest === undefined ? turns.length : turns.findIndex((turn) => turn.id === oldest)
+      if (end < 0) throw Object.assign(new Error('Claude transcript changed; reopen the session'), { statusCode: 409 })
+      while (end > 0) {
+        const turn = turns[--end]
+        const prior = turn.id === anchor && previousLive?.length
+        if (prior) turn.items = previousLive
+        oldest = turn.id
+        yield {
+          turn,
+          hasOlder: end > 0 || !!disk?.truncated,
+          source: prior || turn.id === last?.turnId ? 'live' : undefined,
+        }
+      }
+      if (!disk?.truncated) return
+      prompts *= 2
     }
   }
 

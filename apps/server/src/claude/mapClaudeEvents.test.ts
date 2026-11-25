@@ -831,7 +831,7 @@ describe('ClaudeEventMapper — streaming text', () => {
     expect(events).toContainEqual({
       kind: 'turn.completed',
       threadId: THREAD,
-      turnId: 'id1',
+      turnId: 'claude:turn:cmd-1',
       status: 'interrupted',
       error: null,
     })

@@ -70,8 +70,8 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 ### 会话路由
 - `providers/registry.ts` 维护 `sessionId → providerId`：每个学到 id 的路径 `bind()`，未命中才挨个问 provider，兜底 `default`；`registry.default` = 第一个注册的 provider（Codex）—— `index.ts` 注册顺序有意义。
 - `/api/sessions` 不带 `provider` = 只有 Codex（旧契约）；全部要显式 `?provider=all`（逐 provider 拉、按 `updatedAt` 合并，单个抛错记 warn 当空）；未知 provider 兜底 `default`（200）；`all` 故意不进 `packages/protocol`（纯类型，服务端不引 runtime）。
-- `Transcript.hasMore` 只在真时出现；`hasMore`=「还有更早的」，`nextCursor`=「怎么取」，不能互相替代；客户端原样回传 `?cursor=`；Claude 游标是 `c:<跳过的轮数>`（从最新端数，会漂移，靠 item id 去重）。
-- `?items=`≈渲染条目数，`?limit=`=轮数，共用一个游标；前端两个入口都发 `items: 60`；三条不变：切在整轮边界、有更旧轮就绝不返回空页、游标按轮计；带 `items` 时仍发 `limit`（默认 60）。Codex 只收轮数：倍增探测后必须再发一次精确 `limit=kept` 请求，否则探测游标会静默跳过轮；Claude 按 prompt 数倍增（`skip + prompts + liveExtra`），无 `items` 走旧路径，`limit` 缺省=全部。
+- `Transcript.hasMore` 只在真时出现，`nextCursor` 指向上一页。客户端原样回传游标；同一轮可跨页，片段保留 turn ID，`hasEarlierItems` 表示轮内还有更早条目。
+- `?items=` 是条目上限，聊天默认 60；512 KiB 条目软预算，超大单条独占一页。`?limit=` 显式按整轮取页。Claude/OpenCode 条目游标定位到会话、轮次和条目，兼容旧按轮游标。重连的实时重放也受条目预算约束。
 - `search`/`archived`/`pinned` 不同：Codex `search` 走 `searchTerm`（仅标题），Claude 在已取页子串匹配；`archived` 过滤；`pinned` 仅 `PATCH`；置顶排序在前端。
 - 审批：`answerApproval` 只带审批 id → `ws/hub.ts` 另建 `requestId → providerId` owner 表；`approval.requested`/`resolved` 全局广播，两半必须一起发。
 ### Hub 多 runner
@@ -83,7 +83,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - `lib/ws.ts` 自带重连 + 订阅重放；`Query` 在 Node 进程，刷新不影响执行；`resumeSession` 重放 live 状态 + `getTranscript` 追加进行中回合。
 - 页面逻辑在 `pages/`，展示组件在 `components/`，不要把页面状态（滚动锚点、`loadingOlder`、分页 ref、`showFile`）搬进组件；新页面用 `React.lazy`（首页 `Sessions` 除外）；`manualChunks` 分 React/Radix/Markdown/xterm，不要静态 import xterm/react-markdown 到首屏，也不要提高 `chunkSizeWarningLimit`。
 - `loadingOlder` 绝不复用页面 `loading`（矮块会把 `scrollTop` 夹到 0）；锚点用「距底距离」、在响应落地时测，`useLayoutEffect` 里 `scrollTop = scrollHeight - anchor.height + anchor.top`。
-- `prependTranscriptItems` 按 item id 去重；`resyncTranscript` 按位置合并（否则旧页被搬到末尾）；同一 cursor 且没加任何 item 时必须丢 cursor（否则自动补页死循环）；Claude `claude:turn:N` 是窗口相对编号，只能拿 item id 当身份。
+- `prependTranscriptItems` 按 item id 去重；`resyncTranscript` 按位置合并（否则旧页被搬到末尾）；同一 cursor 且没加任何 item 时必须丢 cursor（否则自动补页死循环）。
 - 回到原位置（`pages/Sessions.tsx`、`pages/Files.tsx`）：状态放模块作用域（切导航会卸载）；`useLayoutEffect` 在 `!loading` 时恢复；监听里 `loading || editing` 时绝不写偏移（矮块/textarea 会夹到 0）；会话列表锚行 id + 像素，文件页锚 `scrollTop`；列表搜索框禁止 `setLoading(true)`（同上）。
 - `App.tsx` 第一枪是 `api.authMode()` 不是 `me()`：`authDisabled` 下 `/me` 永不 401；`me()` 的 401 才去 PIN 页，网络/5xx 是「连不上 + 重试」；连接状态要 `socket.started`，只看 `state` 会让每次加载闪一次假断线。
 ## 规则
@@ -112,7 +112,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - effort 只能看 CLI JSONL（`init.effort` 恒 `undefined`；用户消息行有 `effort`/`perTurnEffort`，缺省记 `high`）。
 - 斜杠命令来自 `system:init`，必须减掉 `terminal_slash_commands`（本地终端绑定）；走 `commands.updated`（每个 init 帧都发），`resumeSession` 重放；Codex 为空表；不用 `supportedCommands()`（每回合子进程，等于多起一次 CLI）。
 - 压缩 `compact_boundary` 是可见 item（与 Codex `contextCompaction` 同形），id `claude:compaction:<uuid>`（无 uuid 才随机），实时与回放都产出；边界不起 turn（无 turn 时缓存挂到下一个 prompt）。
-- `getTranscript` 读全部历史：从文件尾 512 KB 反向倍增，凑够 `limit + skip` 个 prompt；无 `limit` 传 `Infinity`；四处不能错：按 boundary 分段、每段独立 `orderTranscript`（boundary 不进段）、顺序按 parent 链（复刻 SDK `yBe + bBe`）、任意字节开窗要丢残行并按 Buffer 解码且 cut 推到第一个 prompt；游标按轮。SDK `getSessionMessages` 只是兜底、仍只给压缩后段。
+- `getTranscript` 从文件尾 512 KiB 反向倍增，按 boundary 分段、每段独立 `orderTranscript`（boundary 不进段），按 parent 链排序。开窗丢残行并从第一个 prompt 开始，按开头帧 UUID 标识轮次。SDK `getSessionMessages` 兜底时只给压缩后段。
 - `listSessions` 把 `limit` 当页大小：过滤在分页后跑，页大小按差多少增长；不设 limit 要读每个会话头尾（3,000 个实测 327 ms vs 26 ms）。
 ### Codex 后端
 - `@openai/codex` 精确 pin（根 devDependencies，无 `^`）；升版需同意，流程：改 pin → `npm ci` → `npm run gen:codex-types` → diff → 核对措辞 → 跑 smoke/approval/image；Dockerfile 从 `package.json` 读。
@@ -120,7 +120,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - 「没有这个线程」只有措辞（`thread not loaded`/`no rollout found`/`is not materialized yet`），全 `-32600`，集中在 `CodexProvider` 顶部谓词；措辞不在类型里且换过；未知 id → `SessionNotFoundError`（`#threadRpc`），路由 404；别把「没有历史」和「没有这个线程」混用（会把新建会话变 404）；`DELETE` 404 前端当成功。
 ### OpenCode 后端
 - API experimental：`client.ts` 只信 `types.ts` 窄类型，未知事件忽略；版本闸门 `2.3.x`，manifest 精确 pin。`server.ts` 先读 service.json 并对齐 `/api/info.pid` 再 attach，发现不到才 spawn 私有 `serve`；**版本不匹配绝不 spawn 第二个**（同 DB 无会话锁）。
-- 权限两张卡：`ask` = `*/*/ask`，`unattended` = `*/*/allow`；`startTurn` 先 `POST /agent {build}` + `PATCH /permissions` 再 prompt，失败不 prompt。无 OS 沙箱，别加只读。事件：`session.idle` 只改状态，`session.execution.*` 才结束回合；工具名只在 `tool.input.started/called`，用 `toolNames` 缓存。断线无回放，重连用 active + pending + 最新消息重建；游标 `oc:<轮数>`；表单只支持选项/文本/数字/布尔/多选，`external` 不弹；出站图片 `Prompt.FileAttachment`，首版不回读历史。
+- 权限两张卡：`ask` = `*/*/ask`，`unattended` = `*/*/allow`；`startTurn` 先 `POST /agent {build}` + `PATCH /permissions` 再 prompt，失败不 prompt。无 OS 沙箱，别加只读。事件：`session.idle` 只改状态，`session.execution.*` 才结束回合；工具名只在 `tool.input.started/called`，用 `toolNames` 缓存。断线无回放，重连用 active + pending + 最新消息重建；表单只支持选项/文本/数字/布尔/多选，`external` 不弹；出站图片 `Prompt.FileAttachment`，首版不回读历史。
 ### 图片
 - 图片落 `.vibemobile/images/`（`<sha256[:32]>.<ext>`），转写只放 `/api/images/<token>`；代理会话文件只读：不写 `~/.codex/sessions/**`、`~/.claude/projects/**`，`*-sessions.json` 不记图。
 - `ImageStore` 无内存态，可多实例同 `stateDir`；`SessionPrefsStore` 相反只能一个实例；无 `stateDir` = 无 store（不写 `images`，data URL 不上 item）。

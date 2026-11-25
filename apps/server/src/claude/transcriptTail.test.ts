@@ -1,7 +1,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ClaudeProvider } from './ClaudeProvider.js'
 import { buildTurns, isUserPrompt, orderTranscript, readTranscriptMessages } from './transcript.js'
 
 /**
@@ -20,6 +21,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
@@ -71,6 +73,57 @@ function write(frames: any[]): { file: string; size: number } {
   fs.writeFileSync(file, linked.map((f) => JSON.stringify(f)).join('\n') + '\n')
   return { file, size: fs.statSync(file).size }
 }
+
+describe('Claude provider transcript pages', () => {
+  it('paginates a JSONL turn across compaction, grouped text, and tool results while new turns arrive', async () => {
+    vi.stubEnv('CLAUDE_CONFIG_DIR', dir)
+    const provider = new ClaudeProvider({ workspaceRoots: [dir] })
+    const { id } = await provider.createSession({ cwd: dir })
+    const project = path.join(dir, 'projects', 'fixture')
+    fs.mkdirSync(project, { recursive: true })
+    const sessionFile = path.join(project, `${id}.jsonl`)
+    const prompt = frame('user', [{ type: 'text', text: 'long' }])
+    const frames = [
+      ...turn('older'),
+      prompt,
+      ...Array.from({ length: 125 }, (_, i) => frame('assistant', [{ type: 'text', text: String(i) }])),
+      boundary({ trigger: 'auto' }),
+      frame('assistant', [
+        { type: 'text', text: 'one' },
+        { type: 'text', text: 'two' },
+      ]),
+      frame('assistant', [{ type: 'tool_use', id: 'call', name: 'Bash', input: { command: 'echo hello' } }]),
+      frame('user', [{ type: 'tool_result', tool_use_id: 'call', content: 'hello' }]),
+    ]
+    fs.copyFileSync(write(frames).file, sessionFile)
+    const turns = buildTurns(frames)
+    const expected = turns.flatMap((t) => t.items.map((i) => [t.id, i.id]))
+    const ids: string[][] = []
+    let cursor: string | undefined
+    let count = 0
+    do {
+      const page = await provider.getTranscript(id, { targetItems: 60, cursor })
+      if (!page) throw new Error('missing page')
+      const items = page.turns.flatMap((t) => t.items.map((i) => [t.id, i.id]))
+      expect(items.length).toBeLessThanOrEqual(60)
+      expect(items.length).toBeGreaterThan(0)
+      if (count++ === 0) {
+        expect(items).toHaveLength(60)
+        expect(page.turns[0]).toMatchObject({ id: `claude:turn:${prompt.uuid}`, hasEarlierItems: true })
+        expect(page.turns[0].items.at(-1)).toMatchObject({ kind: 'command', status: 'done', output: 'hello' })
+        fs.copyFileSync(write([...frames, ...turn('appended')]).file, sessionFile)
+      }
+      ids.unshift(...items)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor && count < 5)
+    expect(count).toBe(3)
+    expect(ids).toEqual(expected)
+    expect(new Set(ids.map(([, item]) => item)).size).toBe(expected.length)
+    const legacy = await provider.getTranscript(id, { limit: 1, cursor: 'c:1' })
+    expect(legacy?.turns).toEqual(turns.slice(-1))
+    expect(legacy?.nextCursor).toBe('c:2')
+  })
+})
 
 describe('isUserPrompt', () => {
   it('keeps stored retry frames through the tail reader and turn builder', async () => {

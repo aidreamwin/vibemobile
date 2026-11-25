@@ -30,6 +30,22 @@ function harness() {
 }
 
 describe('opencode event mapper', () => {
+  it('replays only the newest page of an active turn on reconnect', () => {
+    const { events, mapper, frame, inbox } = harness()
+    mapper.track('ses_1')
+    mapper.beginTurn('ses_1', inbox)
+    for (let n = 0; n < 75; n++) {
+      mapper.handle(
+        frame('session.text.ended', { sessionID: 'ses_1', assistantMessageID: `a${n}`, ordinal: 0, text: String(n) }),
+      )
+    }
+    events.length = 0
+    mapper.replayRunning('ses_1')
+    const items = events.flatMap((e) => (e.kind === 'item.updated' ? [e.item.id] : []))
+    expect(items).toEqual(Array.from({ length: 60 }, (_, n) => `oc:text:a${n + 15}:0`))
+    expect(mapper.itemsFor('ses_1')).toHaveLength(76)
+  })
+
   it('turns text, tools and execution ends into normalized events', () => {
     const { events, mapper, frame, inbox } = harness()
     mapper.track('ses_1')

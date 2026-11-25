@@ -1,4 +1,5 @@
 import type { AgentItem, TranscriptTurn } from '@vibemobile/protocol'
+import { PAGE_ITEM_BYTES } from '../providers/page.js'
 
 type Position = string | number | null
 interface Cursor {
@@ -24,7 +25,6 @@ interface List<T> {
 }
 type Request = <T>(method: string, params: object) => Promise<T>
 const PREFIX = 'ci1.'
-const PAGE_BYTES = 512 * 1024
 
 export function turnTime(value?: number | null) {
   return value ? Math.round(value < 1e12 ? value * 1000 : value) : null
@@ -83,7 +83,7 @@ export async function codexItemPage(
   let nextCursor: string | null = null
 
   // Bound local round trips for histories with many tiny (or empty) turns.
-  for (let i = 0; i < 8 && slots > 0 && bytes < PAGE_BYTES; i++) {
+  for (let i = 0; i < 8 && slots > 0 && bytes < PAGE_ITEM_BYTES; i++) {
     const turnParams = {
       threadId: thread,
       limit: 1,
@@ -139,7 +139,7 @@ export async function codexItemPage(
     let used = 0
     for (const item of candidates) {
       const size = Buffer.byteLength(JSON.stringify(item)) + 1
-      if (used === slots || (bytes > 0 && bytes + size > PAGE_BYTES)) break
+      if (used === slots || (bytes > 0 && bytes + size > PAGE_ITEM_BYTES)) break
       bytes += size
       used++
     }

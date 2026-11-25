@@ -306,16 +306,15 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
     await this.#ensureService()
     const session = await this.getSession(sessionId)
     if (!session) return null
-    const fetched = await fetchTranscript((request) => this.#messagePage(sessionId, request), {
-      limit: opts.limit,
-      targetItems: opts.targetItems,
-      cursor: opts.cursor,
-    })
-    const turns = fetched.turns.map((turn) => ({ ...turn }))
-    this.#mergeLiveTail(sessionId, turns)
+    const items = this.#mapper.isRunning(sessionId) ? this.#mapper.itemsFor(sessionId) : []
+    const fetched = await fetchTranscript(
+      (request) => this.#messagePage(sessionId, request),
+      { ...opts, sessionId },
+      items.length ? { id: this.#mapper.currentTurnId(sessionId), status: 'inProgress', items } : undefined,
+    )
     return {
       session,
-      turns,
+      turns: fetched.turns,
       ...(fetched.nextCursor ? { nextCursor: fetched.nextCursor } : {}),
       ...(fetched.hasMore ? { hasMore: true } : {}),
     }
@@ -763,20 +762,6 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
     if (cardFromPair(prefs.sandbox, prefs.approvalPolicy) !== 'unattended') return
     this.#noticed.add(sessionID)
     this.#opts.onNotice?.(`opencode session ${sessionID} restored on 完全放行`)
-  }
-
-  #mergeLiveTail(sessionID: string, turns: Transcript['turns']): void {
-    if (!this.#mapper.isRunning(sessionID)) return
-    const live = this.#mapper.itemsFor(sessionID)
-    if (live.length === 0) return
-    const turnId = this.#mapper.currentTurnId(sessionID)
-    let turn = turns.find((candidate) => candidate.id === turnId)
-    if (!turn) {
-      turn = { id: turnId, status: 'inProgress', items: [] }
-      turns.push(turn)
-    }
-    const known = new Set(turn.items.map((item) => item.id))
-    for (const item of live) if (!known.has(item.id)) turn.items.push(item)
   }
 
   #messagePage(

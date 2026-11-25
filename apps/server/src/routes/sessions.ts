@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { ApprovalPolicy, SandboxMode, SessionSummary } from '@vibemobile/protocol'
 import type { Config } from '../config.js'
 import { registry } from '../providers/registry.js'
+import { DEFAULT_PAGE_ITEMS } from '../providers/page.js'
 import { probeCache } from '../providers/probeCache.js'
 import { SessionInUseError, SessionNotFoundError, SessionProviderMismatchError } from '../providers/types.js'
 import { requireAuth } from './guards.js'
@@ -228,15 +229,15 @@ export function registerSessionRoutes(app: FastifyInstance, config: Config, prof
     const requested = Number(req.query.limit)
     // Floored as well as capped: a fractional limit would reach the app-server
     // RPC and the tail reader's prompt arithmetic as-is.
-    const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 200) : 60
+    const limit = Number.isFinite(requested) && requested > 0 ? Math.max(1, Math.min(Math.floor(requested), 200)) : 60
     // Old web clients omit items when reconnecting. Keep those snapshots
     // bounded too, without changing the explicit turn-limit API.
     const requestedItems = Number(req.query.items)
     const targetItems =
       Number.isFinite(requestedItems) && requestedItems >= 1
         ? Math.min(Math.floor(requestedItems), 500)
-        : provider.id === 'codex' && req.query.limit === undefined
-          ? 60
+        : req.query.limit === undefined
+          ? DEFAULT_PAGE_ITEMS
           : undefined
     const transcript = await provider.getTranscript(req.params.id, {
       // 60 when the caller does not choose: a session that ran all day is

@@ -233,9 +233,9 @@ describe('GET /api/sessions', () => {
 })
 
 describe('GET /api/sessions/:id (a transcript page)', () => {
-  it('defaults the first page to 60 turns', async () => {
+  it('defaults the first page to 60 items', async () => {
     await app.inject({ method: 'GET', url: '/api/sessions/a1' })
-    expect(transcripts.at(-1)).toEqual({ limit: 60 })
+    expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60 })
   })
 
   it('passes a cursor back to the provider verbatim', async () => {
@@ -267,6 +267,8 @@ describe('GET /api/sessions/:id (a transcript page)', () => {
     // reader's prompt count should never see a fractional size.
     await app.inject({ method: 'GET', url: '/api/sessions/a1?limit=20.9' })
     expect(transcripts.at(-1)?.limit).toBe(20)
+    await app.inject('/api/sessions/a1?limit=0.5')
+    expect(transcripts.at(-1)?.limit).toBe(1)
   })
 
   it('forwards an item budget alongside the turn fallback', async () => {
@@ -277,8 +279,8 @@ describe('GET /api/sessions/:id (a transcript page)', () => {
     expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60, cursor: 'c:80' })
   })
 
-  it('bounds Codex reconnects from older clients that omit items', async () => {
-    vi.spyOn(registry, 'forSession').mockResolvedValue(stub('codex', 'c', false))
+  it.each(['codex', 'claude', 'opencode'])('bounds %s reconnects from older clients that omit items', async (id) => {
+    vi.spyOn(registry, 'forSession').mockResolvedValue(stub(id, 'c', false))
     await app.inject('/api/sessions/c1')
     expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60 })
     await app.inject('/api/sessions/c1?limit=2')
@@ -293,12 +295,12 @@ describe('GET /api/sessions/:id (a transcript page)', () => {
     expect(transcripts.at(-1)?.targetItems).toBe(59)
   })
 
-  it('omits the item budget when it is unusable', async () => {
+  it('falls back to the default page when an item budget is unusable', async () => {
     await app.inject({ method: 'GET', url: '/api/sessions/a1?items=nope' })
-    expect(transcripts.at(-1)).toEqual({ limit: 60 })
+    expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60 })
 
     await app.inject({ method: 'GET', url: '/api/sessions/a1?items=0' })
-    expect(transcripts.at(-1)).toEqual({ limit: 60 })
+    expect(transcripts.at(-1)).toEqual({ limit: 60, targetItems: 60 })
   })
 })
 

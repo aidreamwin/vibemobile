@@ -159,7 +159,7 @@ export class ClaudeEventMapper {
    * us close exactly this turn even when several are queued.
    */
   beginTurn(text: string, commandUuid: string | null, imageIds?: string[]): { turnId: string; started: boolean } {
-    const turn: TurnState = { turnId: this.#newId(), commandUuid }
+    const turn: TurnState = { turnId: commandUuid ? `claude:turn:${commandUuid}` : this.#newId(), commandUuid }
     if (commandUuid) this.#byCommand.set(commandUuid, turn.turnId)
 
     // The user's own bubble. Emitted here rather than from the SDK's `user`

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { fetchTranscript, formatCursor, messagesToTurns, parseCursor, type MessagePageFetcher } from './transcript.js'
+import { fetchTranscript, messagesToTurns, type MessagePageFetcher } from './transcript.js'
 import type { OpencodeMessage } from './types.js'
 
-function must<T>(value: T | undefined): T {
-  if (value === undefined) throw new Error('expected a value')
+function must<T>(value: T | undefined | null): T {
+  if (value == null) throw new Error('expected a value')
   return value
 }
 
@@ -168,31 +168,102 @@ describe('fetchTranscript', () => {
   it('pages by whole turns, newest first', async () => {
     const page = await fetchTranscript(fetcher(threeTurns()), { limit: 2 })
     expect(page.turns.map((turn) => turn.id)).toEqual(['oc:turn:u2', 'oc:turn:u3'])
-    expect(page.nextCursor).toBe(formatCursor(2))
+    expect(page.nextCursor).toBe('oc:2')
     expect(page.hasMore).toBe(true)
 
     const older = await fetchTranscript(fetcher(threeTurns()), { limit: 2, cursor: page.nextCursor ?? undefined })
     expect(older.turns.map((turn) => turn.id)).toEqual(['oc:turn:u1'])
     expect(older.hasMore).toBe(false)
     expect(older.nextCursor).toBeNull()
+    const resumed = await fetchTranscript(fetcher(threeTurns()), { targetItems: 1, cursor: 'oc:2' })
+    expect(resumed.turns).toMatchObject([{ id: 'oc:turn:u1', hasEarlierItems: true, items: [{ id: 'oc:text:a1:0' }] }])
   })
 
   it('uses an item budget and still proves there is an older page', async () => {
     const page = await fetchTranscript(fetcher(threeTurns()), { targetItems: 3 })
     expect(page.turns.map((turn) => turn.id)).toEqual(['oc:turn:u2', 'oc:turn:u3'])
+    expect(page.turns[0]).toMatchObject({ hasEarlierItems: true, items: [{ id: 'oc:text:a2:0' }] })
     expect(page.hasMore).toBe(true)
   })
 
   it('never returns a page for a stale cursor', async () => {
-    const page = await fetchTranscript(fetcher(threeTurns()), { limit: 2, cursor: formatCursor(99) })
+    const page = await fetchTranscript(fetcher(threeTurns()), { limit: 2, cursor: 'oc:99' })
     expect(page.turns).toEqual([])
     expect(page.hasMore).toBe(false)
     expect(page.nextCursor).toBeNull()
   })
 
-  it('parses only its own cursors', () => {
-    expect(parseCursor('oc:12')).toBe(12)
-    expect(parseCursor('c:12')).toBe(0)
-    expect(parseCursor(undefined)).toBe(0)
+  it('keeps steers, tools and assistant parts in their original turn across native pages', async () => {
+    const messages = [
+      ...threeTurns(),
+      user('long', 40, 'start'),
+      ...Array.from({ length: 106 }, (_, i) => shellTool(`tool${i}`, 41 + i)),
+      user('steer', 150, 'also'),
+      assistant('last', 151, 'done'),
+      idle('end', 152, 'succeeded'),
+    ]
+    const desc = messages.slice().reverse()
+    const calls: (string | undefined)[] = []
+    const fetch: MessagePageFetcher = async ({ cursor }) => {
+      calls.push(cursor)
+      const start = cursor ? desc.findIndex((m) => m.id === cursor) : 0
+      const data = desc.slice(start, start + 2)
+      return { data, cursor: { previous: null, next: desc[start + 2]?.id ?? null } }
+    }
+    const expected = messagesToTurns(messages).flatMap((t) => t.items.map((i) => [t.id, i.id]))
+    const got: string[][] = []
+    let cursor: string | undefined
+    do {
+      const page = await fetchTranscript(fetch, { sessionId: 's', targetItems: 7, cursor })
+      const items = page.turns.flatMap((t) => t.items.map((i) => [t.id, i.id]))
+      expect(items.length).toBeLessThanOrEqual(7)
+      expect(items.length).toBeGreaterThan(0)
+      got.unshift(...items)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor && got.length <= expected.length)
+    expect(got).toEqual(expected)
+    expect(calls.length).toBeGreaterThan(40)
+  })
+
+  it('merges live-only items before slicing and keeps them out of older pages', async () => {
+    const fetch = fetcher([...threeTurns(), user('live', 35, 'go')])
+    const items = Array.from({ length: 75 }, (_, i) => ({
+      id: i ? `live${i}` : 'oc:user:live',
+      kind: 'message' as const,
+      role: 'user' as const,
+      text: String(i),
+    }))
+    const live = { id: 'oc:turn:live', status: 'inProgress' as const, items }
+    const first = await fetchTranscript(fetch, { targetItems: 60 }, live)
+    expect(first.turns).toMatchObject([
+      { id: live.id, status: 'inProgress', items: items.slice(15), hasEarlierItems: true },
+    ])
+    const older = await fetchTranscript(fetch, { targetItems: 60, cursor: must(first.nextCursor) }, live)
+    expect(older.turns.at(-1)?.items.map((i) => i.id)).toEqual(items.slice(0, 15).map((i) => i.id))
+    expect(older.nextCursor).toBeNull()
+    const onlyLive = await fetchTranscript(fetcher([]), { targetItems: 60 }, live)
+    expect(onlyLive.turns[0].items).toEqual(items.slice(15))
+  })
+
+  it('resumes a deep page at its native cursor and rejects a cursor from another session', async () => {
+    const desc = threeTurns().reverse()
+    const calls: (string | undefined)[] = []
+    const fetch: MessagePageFetcher = async ({ cursor }) => {
+      calls.push(cursor)
+      const start = cursor ? Number(cursor) : 0
+      return {
+        data: desc.slice(start, start + 3),
+        cursor: { previous: null, next: start + 3 < desc.length ? String(start + 3) : null },
+      }
+    }
+    const first = await fetchTranscript(fetch, { sessionId: 's', targetItems: 3 })
+    calls.length = 0
+    const opts = { targetItems: 3, cursor: must(first.nextCursor) }
+    const older = await fetchTranscript(fetch, { ...opts, sessionId: 's' })
+    expect(calls[0]).toBe('3')
+    expect(older.hasMore).toBe(false)
+    await expect(fetchTranscript(fetch, { ...opts, sessionId: 'other' })).rejects.toMatchObject({
+      statusCode: 400,
+    })
   })
 })

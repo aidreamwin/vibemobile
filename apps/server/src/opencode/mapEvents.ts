@@ -17,6 +17,7 @@
  *    their `session.status` through would put ghost "working" rows on the phone.
  */
 import type { AgentEvent, AgentItem, ApprovalRequest, SessionStatus, Usage } from '@vibemobile/protocol'
+import { liveReplayTail } from '../providers/page.js'
 import {
   answersToForm,
   decisionToReply,
@@ -253,7 +254,7 @@ export class OpencodeEventMapper {
     if (!session?.running || !session.turnId) return
     this.#opts.emit({ kind: 'turn.started', threadId: session.id, turnId: session.turnId })
     this.#opts.emit({ kind: 'session.status', threadId: session.id, status: 'working' })
-    for (const item of session.items.values()) {
+    for (const item of liveReplayTail(this.itemsFor(sessionID))) {
       this.#opts.emit({ kind: 'item.updated', threadId: session.id, turnId: session.turnId, item })
     }
   }

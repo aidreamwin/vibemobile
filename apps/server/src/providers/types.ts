@@ -144,12 +144,9 @@ export interface AgentProvider {
       /** Page size in turns, when `targetItems` is absent. */
       limit?: number
       /**
-       * Approximate page size in rendered items.
-       *
-       * Takes precedence over `limit`. Providers always cut on a turn
-       * boundary, so the returned page may exceed the budget — and a single
-       * huge turn is returned alone — but never returns an empty page while
-       * turns remain. The cursor still names a turn position.
+       * Maximum rendered items, taking precedence over `limit`. A byte budget
+       * can shorten a page. A partial turn keeps its ID and marks
+       * `hasEarlierItems` so the next page can complete it.
        */
       targetItems?: number
       cursor?: string

@@ -1,6 +1,7 @@
 import type { ContentBlock, SessionUpdate, ToolCallUpdate } from '@agentclientprotocol/sdk'
 import type { AgentEvent, AgentInput, AgentItem, TranscriptTurn, TurnStatus } from '@vibemobile/protocol'
 import { capImages, type ImageStore } from '../images/store.js'
+import { PAGE_ITEM_BYTES } from '../providers/page.js'
 
 export function promptBlocks(input: AgentInput[], supportsImage: boolean): ContentBlock[] {
   return capImages(input).map((part) => {
@@ -203,7 +204,7 @@ export class AgyTranscript {
       let start = end
       while (start > 0 && remaining > 0) {
         const size = Buffer.byteLength(JSON.stringify(turn.items[start - 1])) + 1
-        if (bytes && bytes + size > 512 * 1024) break
+        if (bytes && bytes + size > PAGE_ITEM_BYTES) break
         bytes += size
         start--
         remaining--
