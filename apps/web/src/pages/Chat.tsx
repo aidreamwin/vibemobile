@@ -6,6 +6,7 @@ import type { AgentInput, AgentItem, ModelInfo, SessionStatus, SessionSummary, T
 import { api, ApiError } from '../lib/api'
 import { socket } from '../lib/ws'
 import { useApprovalStore } from '../lib/approvals'
+import { clearSessionLists } from '../lib/sessionLists'
 import { createChatStore, registerChatStore } from '../lib/store'
 import {
   downloadMarkdown,
@@ -786,6 +787,7 @@ function ChatView({
     setForkError(null)
     try {
       const forked = await api.forkSession(threadId)
+      clearSessionLists()
       onSelectSession?.(forked.id)
     } catch (err) {
       setForkError((err as Error).message)

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Columns2, Ellipsis, ListFilter, Plus, RefreshCw, Search, X } from 'lucide-react'
 import type { ProviderId, ProviderStatus, SessionSummary } from '@vibemobile/protocol'
 import { api, ApiError } from '../../lib/api'
+import { cachedSessionList, clearSessionLists, loadSessionList } from '../../lib/sessionLists'
 import { relativeTime } from '../../lib/format'
 import { isPathInside, useWorkspaceStore } from '../../lib/workspace'
 import { socket } from '../../lib/ws'
@@ -47,7 +48,7 @@ const TOOL_BUTTON =
 const ROW_ACTION =
   'flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
 
-export default function DesktopAgentSidebar({
+export default memo(function DesktopAgentSidebar({
   activeThreadId,
   secondaryThreadId,
   creating,
@@ -108,36 +109,36 @@ export default function DesktopAgentSidebar({
     }
   }, [])
 
-  const loadSessions = useCallback(async () => {
-    // A result must belong to the latest request. Changes received while it
-    // was pending must also survive the response.
-    const updates: SessionUpdate[] = []
-    sessionRequest.current = updates
-    setFetching(true)
-    setError(null)
-    try {
-      const { data } = await api.sessions({
-        provider: filter,
-        cwd,
-        archived: showArchived,
-        limit: 60,
-        search: search || undefined,
-      })
-      if (sessionRequest.current !== updates) return
-      setResult({
-        key: filterKey,
-        search,
-        sessions: updates.reduce((sessions, update) => update(sessions, search), data),
-      })
-    } catch (err) {
-      if (sessionRequest.current === updates) setError((err as Error).message)
-    } finally {
-      if (sessionRequest.current === updates) {
-        sessionRequest.current = null
-        setFetching(false)
+  const loadSessions = useCallback(
+    async (force = false) => {
+      // A result must belong to the latest request. Changes received while it
+      // was pending must also survive the response.
+      const updates: SessionUpdate[] = []
+      sessionRequest.current = updates
+      setFetching(true)
+      setError(null)
+      const params = { provider: filter, cwd, archived: showArchived, limit: 60, search: search || undefined }
+      const cached = cachedSessionList(params)
+      if (cached && !force) setResult({ key: filterKey, search, sessions: cached })
+      try {
+        const data = await loadSessionList(params, force)
+        if (sessionRequest.current !== updates) return
+        setResult({
+          key: filterKey,
+          search,
+          sessions: updates.reduce((sessions, update) => update(sessions, search), data),
+        })
+      } catch (err) {
+        if (sessionRequest.current === updates) setError((err as Error).message)
+      } finally {
+        if (sessionRequest.current === updates) {
+          sessionRequest.current = null
+          setFetching(false)
+        }
       }
-    }
-  }, [cwd, filter, filterKey, search, showArchived])
+    },
+    [cwd, filter, filterKey, search, showArchived],
+  )
 
   useEffect(() => {
     void loadProviders()
@@ -216,6 +217,7 @@ export default function DesktopAgentSidebar({
   }, [creating, filter, providers])
 
   function handleCreated(session: SessionSummary) {
+    clearSessionLists()
     setCreating(false)
     setLastSessionCwd(session.cwd)
     if (
@@ -240,6 +242,7 @@ export default function DesktopAgentSidebar({
     setError(null)
     try {
       await save()
+      clearSessionLists()
       onSaved()
     } catch (err) {
       setError((err as Error).message)
@@ -248,65 +251,9 @@ export default function DesktopAgentSidebar({
     }
   }
 
-  function renderRow(session: SessionSummary) {
-    const selected = session.id === activeThreadId
-    const title = session.title || '未命名会话'
-    const status = SESSION_STATUS[session.status]
-    const time = relativeTime(session.updatedAt)
-    return (
-      <li
-        key={session.id}
-        className={`group relative flex items-center rounded-md transition-colors ${
-          selected
-            ? 'bg-[var(--workbench-selection)] text-foreground'
-            : session.id === secondaryThreadId
-              ? 'bg-secondary text-foreground'
-              : 'text-foreground/85 hover:bg-secondary/55'
-        }`}
-      >
-        <button
-          type="button"
-          aria-current={selected || undefined}
-          title={title}
-          onClick={() => onSelectSession(session)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-2 pr-1 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
-        >
-          <span className={`size-1.5 shrink-0 rounded-full ${status.color}`} title={status.label} />
-          <span className="min-w-0">
-            <span className="block truncate text-[12.5px] leading-4 font-medium">{title}</span>
-            <span className="mt-0.5 flex items-center gap-1 text-[11px] leading-3.5 text-muted-foreground">
-              <span className="sr-only">{status.label}，</span>
-              <span className="truncate">{PROVIDER_NAMES[session.provider] ?? session.provider}</span>
-              {time && <span className="shrink-0">· {time}</span>}
-            </span>
-          </span>
-        </button>
-        <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          <button
-            type="button"
-            title="分屏打开"
-            aria-label={`分屏打开 ${title}`}
-            onClick={() => onSplitSession(session)}
-            className={ROW_ACTION}
-          >
-            <Columns2 className="size-3" strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title="更多操作"
-            aria-label={`${title} 的更多操作`}
-            aria-haspopup="dialog"
-            onClick={() => {
-              if (!pendingActions.current.has(session.id)) setActionsFor(session)
-            }}
-            className={ROW_ACTION}
-          >
-            <Ellipsis className="size-3.5" strokeWidth={1.7} />
-          </button>
-        </div>
-      </li>
-    )
-  }
+  const openSessionActions = useCallback((session: SessionSummary) => {
+    if (!pendingActions.current.has(session.id)) setActionsFor(session)
+  }, [])
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
@@ -397,7 +344,7 @@ export default function DesktopAgentSidebar({
         <button
           type="button"
           onClick={() => {
-            void loadSessions()
+            void loadSessions(true)
             void loadProviders()
           }}
           disabled={fetching}
@@ -441,7 +388,19 @@ export default function DesktopAgentSidebar({
               {(label !== '最近' || groups.length > 1) && (
                 <h3 className="px-2 pt-0.5 pb-1 text-[11px] font-medium text-muted-foreground">{label}</h3>
               )}
-              <ul className="space-y-0.5">{sessions.map(renderRow)}</ul>
+              <ul className="space-y-0.5">
+                {sessions.map((session) => (
+                  <DesktopSessionRow
+                    key={session.id}
+                    session={session}
+                    selected={session.id === activeThreadId}
+                    secondary={session.id === secondaryThreadId}
+                    onSelectSession={onSelectSession}
+                    onSplitSession={onSplitSession}
+                    onActions={openSessionActions}
+                  />
+                ))}
+              </ul>
             </section>
           ))
         ) : (
@@ -492,10 +451,12 @@ export default function DesktopAgentSidebar({
             )
           }
           onArchived={() => {
+            clearSessionLists()
             setActionsFor(null)
             removeSession(actionsFor)
           }}
           onPinned={(pinned) => {
+            clearSessionLists()
             setActionsFor(null)
             updateSessions((sessions) =>
               sessions.map((item) => (item.id === actionsFor.id ? { ...item, pinned } : item)),
@@ -505,7 +466,77 @@ export default function DesktopAgentSidebar({
       )}
     </div>
   )
-}
+})
+
+const DesktopSessionRow = memo(function DesktopSessionRow({
+  session,
+  selected,
+  secondary,
+  onSelectSession,
+  onSplitSession,
+  onActions,
+}: {
+  session: SessionSummary
+  selected: boolean
+  secondary: boolean
+  onSelectSession: (session: SessionSummary) => void
+  onSplitSession: (session: SessionSummary) => void
+  onActions: (session: SessionSummary) => void
+}) {
+  const title = session.title || '未命名会话'
+  const status = SESSION_STATUS[session.status]
+  const time = relativeTime(session.updatedAt)
+  return (
+    <li
+      className={`group relative flex items-center rounded-md transition-colors ${
+        selected
+          ? 'bg-[var(--workbench-selection)] text-foreground'
+          : secondary
+            ? 'bg-secondary text-foreground'
+            : 'text-foreground/85 hover:bg-secondary/55'
+      }`}
+    >
+      <button
+        type="button"
+        aria-current={selected || undefined}
+        title={title}
+        onClick={() => onSelectSession(session)}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-2 pr-1 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+      >
+        <span className={`size-1.5 shrink-0 rounded-full ${status.color}`} title={status.label} />
+        <span className="min-w-0">
+          <span className="block truncate text-[12.5px] leading-4 font-medium">{title}</span>
+          <span className="mt-0.5 flex items-center gap-1 text-[11px] leading-3.5 text-muted-foreground">
+            <span className="sr-only">{status.label}，</span>
+            <span className="truncate">{PROVIDER_NAMES[session.provider] ?? session.provider}</span>
+            {time && <span className="shrink-0">· {time}</span>}
+          </span>
+        </span>
+      </button>
+      <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <button
+          type="button"
+          title="分屏打开"
+          aria-label={`分屏打开 ${title}`}
+          onClick={() => onSplitSession(session)}
+          className={ROW_ACTION}
+        >
+          <Columns2 className="size-3" strokeWidth={1.7} />
+        </button>
+        <button
+          type="button"
+          title="更多操作"
+          aria-label={`${title} 的更多操作`}
+          aria-haspopup="dialog"
+          onClick={() => onActions(session)}
+          className={ROW_ACTION}
+        >
+          <Ellipsis className="size-3.5" strokeWidth={1.7} />
+        </button>
+      </div>
+    </li>
+  )
+})
 
 function matchesTitle(title: string, query: string) {
   return title.toLocaleLowerCase().includes(query.toLocaleLowerCase())

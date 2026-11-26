@@ -125,19 +125,29 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
     term.open(container)
     termRef.current = term
 
+    let sizeFrame: number | null = null
     const syncSize = () => {
-      try {
-        fit.fit()
-      } catch {
-        /* container not laid out yet */
-      }
-      sizeRef.current = { cols: term.cols, rows: term.rows }
-      // Only the first fit gates the socket; later ones are told to the shell.
-      setSized(true)
-      send({ type: 'resize', cols: term.cols, rows: term.rows })
+      if (sizeFrame !== null) return
+      sizeFrame = requestAnimationFrame(() => {
+        sizeFrame = null
+        // An inactive terminal keeps its current grid while its container is hidden.
+        if (!container.clientWidth || !container.clientHeight) return
+        try {
+          fit.fit()
+        } catch {
+          return
+        }
+        const previous = sizeRef.current
+        const { cols, rows } = term
+        if (previous.cols === cols && previous.rows === rows) return
+        sizeRef.current = { cols, rows }
+        // Only the first fit gates the socket; later grids are sent to the shell.
+        if (!previous.cols) setSized(true)
+        else send({ type: 'resize', cols, rows })
+      })
     }
     // First fit must wait for layout, otherwise cols/rows come out as 2x1.
-    requestAnimationFrame(syncSize)
+    syncSize()
 
     const dataSub = term.onData((data) => {
       if (ctrlArmedRef.current && data.length === 1) {
@@ -160,6 +170,7 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
     term.focus()
 
     return () => {
+      if (sizeFrame !== null) cancelAnimationFrame(sizeFrame)
       observer.disconnect()
       window.removeEventListener('orientationchange', syncSize)
       dataSub.dispose()
@@ -197,6 +208,7 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
     }
 
     socket.onmessage = (event) => {
+      if (disposed) return
       let msg: ServerMessage
       try {
         msg = JSON.parse(event.data)
@@ -205,7 +217,7 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
       }
       const term = termRef.current
       switch (msg.type) {
-        case 'ready':
+        case 'ready': {
           // The screen is about to be replaced wholesale by `snapshot`, so
           // whatever this xterm still holds (a previous connection's view after
           // a drop) has to go first or it shows through.
@@ -222,7 +234,12 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
           // have, and the two drift apart from then on.
           if (!msg.attached) term?.writeln(`\x1b[90m${msg.shell} · ${msg.cwd}\x1b[0m\r\n`)
           else setNotice('已接回上次的终端')
+          const { cols, rows } = sizeRef.current
+          if (query.get('cols') !== String(cols) || query.get('rows') !== String(rows)) {
+            socket.send(JSON.stringify({ type: 'resize', cols, rows }))
+          }
           break
+        }
         case 'snapshot':
           term?.write(msg.data)
           break

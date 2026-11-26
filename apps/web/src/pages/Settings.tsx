@@ -104,6 +104,7 @@ function MobileSettingsLayout({ children }: { children: React.ReactNode; hub: bo
 }
 
 export default function Settings({ onLogout, embedded = false }: { onLogout: () => void; embedded?: boolean }) {
+  const [section, setSection] = useState<SettingsSectionId>('agents')
   const projects = useWorkspaceStore((state) => state.projects)
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoading = useWorkspaceStore((state) => state.loading)
@@ -128,11 +129,18 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   const [runnerSheetError, setRunnerSheetError] = useState<string | null>(null)
   const [runnerCopied, setRunnerCopied] = useState(false)
 
-  useEffect(() => socket.onState(setConn), [])
+  const showingSystem = !embedded || section === 'system'
+  const showingRunners = !embedded || section === 'runners'
+  const showingUpdates = !embedded || section === 'updates'
 
   useEffect(() => {
+    if (showingSystem) return socket.onState(setConn)
+  }, [showingSystem])
+
+  useEffect(() => {
+    if (!showingSystem) return
     let cancelled = false
-    // Not cached or polled: the build stamps are read when the page opens, which is
+    // Read the build stamps when the system settings open, which is
     // the moment the question "is this the latest code?" is actually being asked.
     api
       .health()
@@ -144,7 +152,7 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [showingSystem])
 
   const reloadRunners = useCallback(async () => {
     const result = await api.runners()
@@ -156,32 +164,45 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   // concept at all and the section below must stay hidden.
   useEffect(() => {
     let active = true
-    let timer: ReturnType<typeof setInterval> | undefined
-    const refresh = () => {
-      api
-        .runners()
-        .then((result) => {
-          if (!active) return
-          setRunners(result.data)
-          setDefaultRunner(result.default)
-        })
-        .catch(() => undefined)
-    }
     api
       .hubMode()
       .then(() => {
-        if (!active) return
-        setHub(true)
-        refresh()
-        // Online/offline is the point of the list; same cadence as RunnerSelector.
-        timer = setInterval(refresh, 10_000)
+        if (active) setHub(true)
       })
       .catch(() => undefined)
     return () => {
       active = false
-      if (timer) clearInterval(timer)
     }
   }, [])
+
+  useEffect(() => {
+    if (!hub || (!showingRunners && !showingUpdates)) return
+    let active = true
+    let pending = false
+    async function refresh() {
+      if (pending || document.visibilityState === 'hidden') return
+      pending = true
+      try {
+        const result = await api.runners()
+        if (active) {
+          setRunners(result.data)
+          setDefaultRunner(result.default)
+        }
+      } catch {
+        // Keep the previously loaded list available until the next refresh.
+      } finally {
+        pending = false
+      }
+    }
+    void refresh()
+    const timer = showingRunners ? setInterval(() => void refresh(), 10_000) : undefined
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      active = false
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [hub, showingRunners, showingUpdates])
 
   function closeRunnerSheet() {
     setRunnerSheet(null)
@@ -315,11 +336,14 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   return (
     <SheetPresentation centered={embedded}>
       <div className="h-full flex flex-col overflow-hidden">
-        <Layout hub={hub}>
+        <Layout hub={hub} section={section} onSectionChange={setSection}>
           <AgentsSection />
           {embedded && <WorkbenchSection />}
 
-          <SystemUpdateSection runnerName={runners.find((runner) => runner.id === runnerId)?.name} />
+          <SystemUpdateSection
+            active={showingUpdates}
+            runnerName={runners.find((runner) => runner.id === runnerId)?.name}
+          />
 
           <Section section="workspace">
             <div className={`flex min-w-0 items-center ${embedded ? 'px-3' : 'pl-4 pr-1'}`}>
@@ -690,7 +714,7 @@ const UPDATE_REASONS: Record<string, string> = {
   update_via_hub: '随 Hub 升级',
 }
 
-function SystemUpdateSection({ runnerName }: { runnerName?: string }) {
+function SystemUpdateSection({ active, runnerName }: { active: boolean; runnerName?: string }) {
   const { current, hub, loading, currentError, hubError, load, start } = useSystemStore()
   const [confirming, setConfirming] = useState<'current' | 'hub' | null>(null)
   const [starting, setStarting] = useState(false)
@@ -698,9 +722,10 @@ function SystemUpdateSection({ runnerName }: { runnerName?: string }) {
   const running = jobRunning(current?.job) || jobRunning(hub?.job)
 
   useEffect(() => {
+    if (!active) return
     void load()
     if (inRunner) void load({ hub: true })
-  }, [load, inRunner])
+  }, [active, load, inRunner])
 
   useEffect(() => {
     if (!running) return

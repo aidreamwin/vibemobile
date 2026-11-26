@@ -23,6 +23,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { FileContent, FileEntry } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { formatBytes, shortPath } from '../lib/format'
+import { getFileSnapshot, readFileSnapshot, rememberFileSnapshot } from '../lib/fileSnapshots'
 import { isPathInside, parentPath, useWorkspaceStore } from '../lib/workspace'
 import { UnifiedDiff } from '../components/DiffView'
 import FileBody, { isRenderable } from '../components/FileBody'
@@ -59,7 +60,7 @@ const offsets = new Map<string, number>()
  * being pushed into `localStorage`: it belongs to this browsing session, not to
  * the device, and a stale draft restored a week later would be a trap.
  */
-const drafts = new Map<string, string>()
+const drafts = new Map<string, { text: string; base: FileContent }>()
 
 /** Which screen a scroll offset belongs to. */
 function viewKey(view: View): string {
@@ -81,13 +82,21 @@ function inWorkspace(view: View, root: string): boolean {
 
 export interface FilesProps {
   embedded?: boolean
+  visible?: boolean
   fixedView?: FilePaneView
   line?: number
   onOpenFileTab?: (path: string, name: string, line?: number) => void
   onOpenDiffTab?: (path?: string) => void
 }
 
-export default function Files({ embedded = false, fixedView, line, onOpenFileTab, onOpenDiffTab }: FilesProps = {}) {
+export default function Files({
+  embedded = false,
+  visible = true,
+  fixedView,
+  line,
+  onOpenFileTab,
+  onOpenDiffTab,
+}: FilesProps = {}) {
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoaded = useWorkspaceStore((state) => state.loaded)
   // Picked up from the last visit to this page, if there was one — which is the
@@ -105,7 +114,7 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
   )
 
   const [entries, setEntries] = useState<FileEntry[]>([])
-  const [content, setContent] = useState<FileContent | null>(null)
+  const [content, setContent] = useState(() => (view.kind === 'file' ? getFileSnapshot(view.path) : null))
   const [diff, setDiff] = useState('')
   // Markdown opens rendered; the header's code/eye button flips it back.
   const [preview, setPreview] = useState(!line)
@@ -113,16 +122,18 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
   const [query, setQuery] = useState('')
   const [sortByName, setSortByName] = useState(false)
 
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => !content)
   const [error, setError] = useState<string | null>(null)
   /** Bumped by 刷新, so re-reading the same view is one more fetch. */
   const [reload, setReload] = useState(0)
+  const lastReload = useRef(reload)
 
   // Editing state lives here rather than inside `FileEditor`, because three
   // things outside it need to know: the header (which buttons to draw), the
   // scroll memory (below), and the draft that survives a tab switch.
   const [editing, setEditing] = useState(() => view.kind === 'file' && drafts.has(view.path))
-  const [draft, setDraft] = useState(() => (view.kind === 'file' ? (drafts.get(view.path) ?? '') : ''))
+  const [draft, setDraft] = useState(() => (view.kind === 'file' ? (drafts.get(view.path)?.text ?? '') : ''))
+  const [editBase, setEditBase] = useState(() => (view.kind === 'file' ? drafts.get(view.path)?.base : undefined))
   const [saving, setSaving] = useState(false)
   /**
    * Kept apart from `error` on purpose. `error` is the page-level fetch banner,
@@ -156,7 +167,7 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
     if (!fixedView) lastView = view
   }, [view, fixedView])
 
-  const dirty = editing && content !== null && draft !== content.text
+  const dirty = editing && editBase !== undefined && draft !== editBase.text
 
   /** Files the editor will not open, with the reason to show instead of a button. */
   const editBlockedBy = useMemo(() => {
@@ -170,9 +181,9 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
 
   useEffect(() => {
     if (view.kind !== 'file') return
-    if (dirty) drafts.set(view.path, draft)
-    else if (!editing || content) drafts.delete(view.path)
-  }, [content, dirty, draft, editing, view])
+    if (dirty && editBase) drafts.set(view.path, { text: draft, base: editBase })
+    else drafts.delete(view.path)
+  }, [dirty, draft, editBase, view])
 
   // Closing the tab or pulling to refresh is the one exit that cannot be
   // captured; this at least makes the browser ask.
@@ -191,7 +202,14 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
     // `loading` moves in the same tick as the view on purpose: the fetch below
     // only starts after the render that shows the new screen, and without this
     // that render would carry the *previous* screen's rows or file body.
-    setLoading(true)
+    const cached = next.kind === 'file' ? getFileSnapshot(next.path) : null
+    const restoredDraft = next.kind === 'file' ? drafts.get(next.path) : undefined
+    setLoading(!cached)
+    setContent(cached)
+    setEditing(Boolean(restoredDraft))
+    setDraft(restoredDraft?.text ?? '')
+    setEditBase(restoredDraft?.base)
+    setSaveError(null)
     setError(null)
     if (next.kind === 'list') {
       setQuery('')
@@ -204,26 +222,30 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
     if (!content) return
     setSaveError(null)
     setDraft(content.text)
+    setEditBase(content)
     setEditing(true)
   }
 
   function cancelEdit() {
     setSaveError(null)
     setDraft(content?.text ?? '')
+    setEditBase(undefined)
     setEditing(false)
   }
 
   async function save() {
-    if (!content || view.kind !== 'file' || !dirty || saving) return
+    if (!editBase || view.kind !== 'file' || !dirty || saving) return
     setSaving(true)
     setSaveError(null)
     try {
-      const saved = await api.saveFile(view.path, draft, content.rev)
+      const saved = await api.saveFile(view.path, draft, editBase.rev)
       // The server's copy is authoritative and is not byte-identical to what was
       // sent — it restored the file's line endings — so the draft is rebased on
       // it rather than kept as typed.
       setContent(saved)
       setDraft(saved.text)
+      setEditBase(undefined)
+      rememberFileSnapshot(view.path, saved)
       drafts.delete(view.path)
       setEditing(false)
     } catch (err) {
@@ -234,7 +256,11 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
         // discarding it to match the disk would be choosing the agent's work
         // over theirs without asking.
         const fresh = await api.fileContent(view.path).catch(() => null)
-        if (fresh) setContent(fresh)
+        if (fresh) {
+          setContent(fresh)
+          setEditBase(fresh)
+          rememberFileSnapshot(view.path, fresh)
+        }
         setSaveError('文件在磁盘上已被改动。你的草稿还在，再点一次保存会覆盖磁盘上的版本。')
       } else {
         setSaveError((err as Error).message)
@@ -263,11 +289,16 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
   // file and landing back on a remembered one are all the same path through
   // here — and 刷新 is just one more turn of `reload`.
   useEffect(() => {
+    if (!visible) return
     if (view.kind === 'list' && !view.path) return
     if (view.kind === 'diff' && !defaultCwd) return
 
     let cancelled = false
-    setLoading(true)
+    const force = reload !== lastReload.current
+    lastReload.current = reload
+    const cached = view.kind === 'file' ? getFileSnapshot(view.path) : null
+    if (cached) setContent(cached)
+    setLoading(!cached)
     setError(null)
 
     void (async () => {
@@ -276,7 +307,7 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
           const res = await api.files(view.path)
           if (!cancelled) setEntries(res.data)
         } else if (view.kind === 'file') {
-          const res = await api.fileContent(view.path)
+          const res = await readFileSnapshot(view.path, force)
           if (!cancelled) setContent(res)
         } else {
           const res = await api.fileDiff(defaultCwd, view.path)
@@ -285,12 +316,15 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
       } catch (err) {
         if (cancelled) return
         setError((err as Error).message)
+        if (view.kind === 'file' && !getFileSnapshot(view.path)) setContent(null)
         // What this mount opened on can outlive itself: the agent renames and
         // deletes files while this page sits in another tab. An empty pane
         // under a red banner is a dead end nobody asked for, so only the first
         // load of a mount falls back — after that the error is the answer to
         // something the user just did, and hiding it would be the wrong move.
-        if (firstLoad.current && !fixedView) go({ kind: 'list', path: defaultCwd || '' })
+        if (firstLoad.current && !fixedView && !cached && view.kind !== 'list') {
+          go({ kind: 'list', path: defaultCwd || '' })
+        }
       } finally {
         firstLoad.current = false
         if (!cancelled) setLoading(false)
@@ -300,7 +334,7 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
     return () => {
       cancelled = true
     }
-  }, [view, defaultCwd, fixedView, go, reload])
+  }, [view, defaultCwd, fixedView, go, reload, visible])
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
@@ -313,25 +347,26 @@ export default function Files({ embedded = false, fixedView, line, onOpenFileTab
     // container's content shrinks, the browser clamps `scrollTop`, and the
     // resulting scroll event would write the clamped value over the position the
     // reader had. Same shape as the 加载中 frame, one layer further in.
-    if (!el || loading || editing) return
+    if (!el || !visible || loading || editing) return
     offsets.set(key, el.scrollTop)
-  }, [key, loading, editing])
+  }, [key, loading, editing, visible])
 
   // Laid out, not painted: restoring in a plain effect shows the top of the
   // page for one frame first.
   useLayoutEffect(() => {
     const el = scrollRef.current
-    if (!el || loading || editing) return
+    if (!el || !visible || loading || editing) return
     // Absent means "never seen" — a directory opened for the first time starts
     // at the top, which is what `0` here does.
     el.scrollTop = offsets.get(key) ?? 0
     // `editing` is a dependency so that leaving the editor puts the reader back
     // where they were, rather than at the top the clamp left behind.
-  }, [key, loading, editing])
+  }, [key, loading, editing, visible])
 
   if (embedded && fixedView) {
     return (
       <DesktopFilePane
+        visible={visible}
         view={fixedView}
         root={defaultCwd}
         line={line}

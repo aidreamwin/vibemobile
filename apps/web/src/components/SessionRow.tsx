@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { SessionSummary } from '@vibemobile/protocol'
 import { relativeTime, shortPath } from '../lib/format'
 
@@ -35,16 +36,16 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-export default function SessionRow({
+export default memo(function SessionRow({
   session,
   providerName,
   onOpen,
   onActions,
 }: {
   session: SessionSummary
-  providerName: (id: string) => string
-  onOpen: () => void
-  onActions: () => void
+  providerName: string
+  onOpen: (session: SessionSummary) => void
+  onActions: (session: SessionSummary) => void
 }) {
   return (
     // data-session-id is how the list remembers the row the user was looking at.
@@ -52,7 +53,7 @@ export default function SessionRow({
       <div className="flex items-stretch">
         <button
           type="button"
-          onClick={onOpen}
+          onClick={() => onOpen(session)}
           className="min-w-0 flex-1 px-4 py-3.5 text-left active:bg-card transition-colors"
         >
           <div className="flex items-start gap-2">
@@ -93,7 +94,7 @@ export default function SessionRow({
                 PROVIDER_TAG[session.provider] ?? 'border-border'
               }`}
             >
-              {providerName(session.provider)}
+              {providerName}
             </span>
             {session.status !== 'idle' && <StatusPill status={session.status} />}
             <span className="min-w-0 truncate font-mono text-[11px]">{shortPath(session.cwd, 1)}</span>
@@ -102,7 +103,7 @@ export default function SessionRow({
 
         <button
           type="button"
-          onClick={onActions}
+          onClick={() => onActions(session)}
           className="tap w-11 shrink-0 text-muted-foreground active:bg-card"
           aria-label="更多操作"
         >
@@ -115,4 +116,4 @@ export default function SessionRow({
       </div>
     </li>
   )
-}
+})

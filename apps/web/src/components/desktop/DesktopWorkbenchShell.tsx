@@ -50,8 +50,9 @@ import './workbench.css'
 const Chat = lazy(() => import('../../pages/Chat'))
 const Files = lazy(() => import('../../pages/Files'))
 const Settings = lazy(() => import('../../pages/Settings'))
-// Limit retained transcripts and live subscriptions to the most recently used chats.
+// Keep recently visited panes warm without retaining every transcript and file DOM.
 const MAX_MOUNTED_CHATS = 5
+const MAX_MOUNTED_FILES = 3
 
 function PaneFallback() {
   return <div className="flex h-full items-center justify-center text-xs text-muted-foreground">加载中…</div>
@@ -193,6 +194,7 @@ const WorkbenchPane = memo(function WorkbenchPane({
       ) : fixedView ? (
         <Files
           embedded
+          visible={visible}
           fixedView={fixedView}
           line={tab.kind === 'file' ? tab.line : undefined}
           onOpenFileTab={(path, title, line) => openFileTab({ path, title, line })}
@@ -248,7 +250,7 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   const [creatingSession, setCreatingSession] = useState(false)
   const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null)
   const [filesVisited, setFilesVisited] = useState(sidebarTab === 'files')
-  const [recentChatIds, setRecentChatIds] = useState<string[]>([])
+  const [recentPaneIds, setRecentPaneIds] = useState<string[]>([])
   const sidebarDrag = useRef<{ x: number; width: number } | null>(null)
   const editorRef = useRef<HTMLElement>(null)
   const handledLocation = useRef<string | null>(null)
@@ -271,16 +273,26 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
       ? [visibleAgent, filePane]
       : [filePane, visibleAgent]
     : [activeTab, secondaryTab]
-  const activeChatId = activeTab?.kind === 'chat' ? activeTab.id : undefined
-  const secondaryChatId = secondaryTab?.kind === 'chat' ? secondaryTab.id : undefined
-  const retainedChatIds = useMemo(() => {
-    const open = new Set(tabs.flatMap((tab) => (tab.kind === 'chat' ? [tab.id] : [])))
-    return [...new Set([activeChatId, secondaryChatId, ...recentChatIds])]
-      .filter((id): id is string => id !== undefined && open.has(id))
-      .slice(0, MAX_MOUNTED_CHATS)
-  }, [activeChatId, secondaryChatId, recentChatIds, tabs])
+  const retainedPaneIds = useMemo(() => {
+    const open = new Map(tabs.map((tab) => [tab.id, tab.kind]))
+    const retained: string[] = []
+    let chats = 0
+    let files = 0
+    for (const id of new Set([activeTabId, secondaryTab?.id, ...recentPaneIds])) {
+      if (!id) continue
+      const kind = open.get(id)
+      if (kind === 'chat' && chats < MAX_MOUNTED_CHATS) {
+        retained.push(id)
+        chats += 1
+      } else if (kind === 'file' && files < MAX_MOUNTED_FILES) {
+        retained.push(id)
+        files += 1
+      }
+    }
+    return retained
+  }, [activeTabId, secondaryTab?.id, recentPaneIds, tabs])
   const cachedTabs = tabs.filter(
-    (tab) => retainedChatIds.includes(tab.id) && tab.id !== activeChatId && tab.id !== secondaryChatId,
+    (tab) => retainedPaneIds.includes(tab.id) && tab.id !== activeTabId && tab.id !== secondaryTab?.id,
   )
   const mixedBefore = useRef(mixedSplit)
   const canSplit = activeTab?.kind !== 'settings' && tabs.filter((tab) => tab.kind !== 'settings').length >= 2
@@ -293,12 +305,12 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
 
   useEffect(() => {
     if (
-      retainedChatIds.length !== recentChatIds.length ||
-      retainedChatIds.some((id, index) => id !== recentChatIds[index])
+      retainedPaneIds.length !== recentPaneIds.length ||
+      retainedPaneIds.some((id, index) => id !== recentPaneIds[index])
     ) {
-      setRecentChatIds(retainedChatIds)
+      setRecentPaneIds(retainedPaneIds)
     }
-  }, [recentChatIds, retainedChatIds])
+  }, [recentPaneIds, retainedPaneIds])
 
   useEffect(() => {
     if (activeTab?.kind === 'settings') return

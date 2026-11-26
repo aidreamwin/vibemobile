@@ -12,6 +12,8 @@ import type {
   SessionSummary,
 } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
+import { cachedSessionList, clearSessionLists, loadSessionList, withSessionStatus } from '../lib/sessionLists'
+import { socket } from '../lib/ws'
 import { useWorkspaceStore } from '../lib/workspace'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from '../components/ui/select'
 import RunnerSelector from '../components/RunnerSelector'
@@ -63,6 +65,7 @@ function persistFilter(filter: ProviderFilter): void {
  * keystroke, long enough that a word is one request.
  */
 const SEARCH_DEBOUNCE_MS = 250
+const SESSION_LIMIT = 60
 
 /** Which list this position belongs to — the rows only mean the same thing
  *  under the same filter and the same project. */
@@ -105,12 +108,14 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
   // used by Files, Git diff, and Terminal.
   const lastSessionCwd = useWorkspaceStore((state) => state.lastSessionCwd)
   const setLastSessionCwd = useWorkspaceStore((state) => state.setLastSessionCwd)
+  const [filter, setFilter] = useState<ProviderFilter>(readStoredFilter)
+  const [initialSessions] = useState(() => cachedSessionList({ provider: filter, limit: SESSION_LIMIT }))
   const [providers, setProviders] = useState<ProviderStatus[]>([])
-  const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [sessions, setSessions] = useState<SessionSummary[]>(() => initialSessions ?? [])
   const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [showArchived, setShowArchived] = useState(false)
 
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(initialSessions === undefined)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
@@ -142,8 +147,6 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
     setQuery('')
   }
 
-  const [filter, setFilter] = useState<ProviderFilter>(readStoredFilter)
-
   /** Only the filter is persisted. The rest of the page is deliberately fresh. */
   function chooseFilter(next: ProviderFilter) {
     persistFilter(next)
@@ -170,16 +173,21 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
     const box = el.getBoundingClientRect().top
     // The first row still (even partly) below the top edge is the one the user
     // sees first, so that is what "the position" means.
-    let id: string | null = null
-    let offset = 0
-    for (const row of el.querySelectorAll<HTMLElement>('[data-session-id]')) {
-      if (row.getBoundingClientRect().bottom > box) {
-        id = row.dataset.sessionId ?? null
-        offset = row.getBoundingClientRect().top - box
-        break
-      }
+    const rows = el.querySelectorAll<HTMLElement>('[data-session-id]')
+    let start = 0
+    let end = rows.length
+    while (start < end) {
+      const index = Math.floor((start + end) / 2)
+      if (rows[index].getBoundingClientRect().bottom > box) end = index
+      else start = index + 1
     }
-    listScroll = { key: queryKey, id, offset, top: el.scrollTop }
+    const row = rows[start]
+    listScroll = {
+      key: queryKey,
+      id: row?.dataset.sessionId ?? null,
+      offset: row ? row.getBoundingClientRect().top - box : 0,
+      top: el.scrollTop,
+    }
   }
 
   // Laid out, not painted: the rows only exist after the fetch has answered, and
@@ -211,9 +219,18 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
   const createWith = providers.find((p) => p.id === newSessionProvider) ?? usable[0] ?? providers[0]
 
   /** The label for a session's provider, falling back to the raw id. */
-  function providerName(id: string): string {
-    return providers.find((p) => p.id === id)?.displayName ?? id
-  }
+  const names = useMemo(
+    () => new Map<string, string>(providers.map((provider) => [provider.id, provider.displayName])),
+    [providers],
+  )
+  const providerName = useCallback((id: string) => names.get(id) ?? id, [names])
+  const openSession = useCallback(
+    (session: SessionSummary) => {
+      if (onSelectSession) onSelectSession(session)
+      else navigate('/chat/' + session.id)
+    },
+    [navigate, onSelectSession],
+  )
 
   // The browser remembers a filter across deploys; the server does not. A
   // stored id that no longer exists would otherwise pin the list to a provider
@@ -236,8 +253,13 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
    */
   const requestSeq = useRef(0)
 
+  function invalidateSessionLists() {
+    requestSeq.current += 1
+    clearSessionLists()
+  }
+
   const loadSessions = useCallback(
-    async (cwd: string | undefined, archived: boolean, provider: ProviderFilter, search: string) => {
+    async (cwd: string | undefined, archived: boolean, provider: ProviderFilter, search: string, force = false) => {
       // ONE request, not one per provider: 'all' asks the server to merge and
       // sort them ("recently touched" is the useful order, and interleaving
       // Codex and Claude by time is the point of 全部 being the default).
@@ -249,15 +271,24 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
       // probe. Nothing about listing sessions needs to know whether a provider
       // is healthy.
       const seq = ++requestSeq.current
-      const { data } = await api.sessions({
+      const params = {
         provider,
         cwd,
         archived,
-        limit: 60,
+        limit: SESSION_LIMIT,
         search: search || undefined,
-      })
-      if (seq !== requestSeq.current) return
-      setSessions(data)
+      }
+      const cached = cachedSessionList(params)
+      if (cached && !force) {
+        setSessions(cached)
+        setLoading(false)
+      }
+      try {
+        const data = await loadSessionList(params, force)
+        if (seq === requestSeq.current) setSessions(data)
+      } catch (error) {
+        if (seq === requestSeq.current) throw error
+      }
     },
     [],
   )
@@ -270,6 +301,16 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
     const timer = setTimeout(() => setQuery(search.trim()), SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [search])
+
+  useEffect(
+    () =>
+      socket.onEvent((event) => {
+        if (event.kind === 'session.status') {
+          setSessions((current) => withSessionStatus(current, event.threadId, event.status))
+        }
+      }),
+    [],
+  )
 
   // Provider status changes rarely, so it is fetched once; only the session
   // list is re-fetched on filter changes. The default workspace is deliberately
@@ -307,13 +348,14 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
       .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
+      requestSeq.current += 1
     }
   }, [activeProject, showArchived, loadSessions, filter, query])
 
   async function refresh() {
     setRefreshing(true)
     try {
-      await loadSessions(activeProject?.path, showArchived, filter, query)
+      await loadSessions(activeProject?.path, showArchived, filter, query, true)
       setError(null)
     } catch (err) {
       setError((err as Error).message)
@@ -326,6 +368,7 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
     // Inserted rather than re-fetched: a brand-new session has no history for
     // the server to return yet, so a reload here would show an empty list.
     setSessions((prev) => [session, ...prev.filter((s) => s.id !== session.id)])
+    invalidateSessionLists()
     setLastSessionCwd(session.cwd)
     setCreating(false)
     navigate(`/chat/${session.id}`)
@@ -333,10 +376,12 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
 
   async function handleRename(session: SessionSummary, name: string) {
     setActionsFor(null)
+    invalidateSessionLists()
     // Optimistic — the list is cheap to reload if the server disagrees.
     setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, title: name } : s)))
     try {
       await api.renameSession(session.id, name)
+      clearSessionLists()
     } catch (err) {
       setError((err as Error).message)
       void refresh()
@@ -353,11 +398,13 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
    * taken: the row leaves either way.
    */
   function handleArchived(session: SessionSummary) {
+    invalidateSessionLists()
     setActionsFor(null)
     setSessions((prev) => prev.filter((s) => s.id !== session.id))
   }
 
   function handlePinned(session: SessionSummary, pinned: boolean) {
+    invalidateSessionLists()
     setActionsFor(null)
     // Optimistic, and applied here rather than by refetching: the sort below is
     // what puts the row at the top, so a pin that worked is visible immediately.
@@ -366,14 +413,19 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
 
   async function handleDelete(session: SessionSummary) {
     setActionsFor(null)
+    invalidateSessionLists()
     setSessions((prev) => prev.filter((s) => s.id !== session.id))
     try {
       await api.deleteSession(session.id)
+      clearSessionLists()
     } catch (err) {
       // A 404 means it was already gone — the list was stale, and what the user
       // asked for is true now. The row is off the screen already; reporting an
       // error and refreshing would put a red banner on a successful outcome.
-      if (err instanceof ApiError && err.status === 404) return
+      if (err instanceof ApiError && err.status === 404) {
+        clearSessionLists()
+        return
+      }
       setError((err as Error).message)
       void refresh()
     }
@@ -580,15 +632,7 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
         ) : visible.length === 0 ? (
           <SessionListEmpty query={query} showArchived={showArchived} filter={filter} providerName={providerName} />
         ) : (
-          <SessionList
-            sessions={visible}
-            providerName={providerName}
-            onOpen={(session) => {
-              if (onSelectSession) onSelectSession(session)
-              else navigate('/chat/' + session.id)
-            }}
-            onActions={setActionsFor}
-          />
+          <SessionList sessions={visible} providerName={providerName} onOpen={openSession} onActions={setActionsFor} />
         )}
 
         <button

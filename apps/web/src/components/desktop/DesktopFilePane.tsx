@@ -48,6 +48,7 @@ function PathBreadcrumbs({ path, root, diff }: { path: string | undefined; root:
 }
 
 interface DesktopFilePaneProps {
+  visible: boolean
   view: FilePaneView
   root: string
   line?: number
@@ -76,6 +77,7 @@ interface DesktopFilePaneProps {
 }
 
 export default function DesktopFilePane({
+  visible,
   view,
   root,
   line,
@@ -99,7 +101,7 @@ export default function DesktopFilePane({
   const rendered = markdown && preview
   const selection = editor?.value ?? content?.text
   const lineCount = useMemo(() => selection?.split('\n').length, [selection])
-  const saveEnabled = editor && editor.dirty && !editor.saving
+  const saveEnabled = editor?.dirty && !editor.saving
 
   return (
     <section
@@ -255,6 +257,7 @@ export default function DesktopFilePane({
           (editor ? (
             <FileEditor
               desktop
+              visible={visible}
               path={view.path}
               value={editor.value}
               disabled={editor.saving}
@@ -264,6 +267,7 @@ export default function DesktopFilePane({
           ) : (
             <FileBody
               desktop
+              visible={visible}
               wrap={wrap}
               content={content}
               path={view.path}

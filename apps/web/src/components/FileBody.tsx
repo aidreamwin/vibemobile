@@ -63,6 +63,7 @@ export default function FileBody({
   line = null,
   preview = false,
   desktop = false,
+  visible = true,
   wrap = !desktop,
   onOpenFile,
 }: {
@@ -71,6 +72,7 @@ export default function FileBody({
   line?: number | null
   preview?: boolean
   desktop?: boolean
+  visible?: boolean
   wrap?: boolean
   /** Given, a link inside the preview opens in the app instead of a new tab. */
   onOpenFile?: (ref: FileRef) => void
@@ -90,28 +92,22 @@ export default function FileBody({
 
   const targetRef = useRef<HTMLDivElement>(null)
 
-  // Depends on `content` because the target row does not exist until the text
-  // does; `line` alone would scroll a row that is not on screen yet.
+  const lastAddressedLine = useRef<{ path: string; line: number } | null>(null)
   useEffect(() => {
-    if (!shown) targetRef.current?.scrollIntoView({ block: 'center' })
-  }, [content, line, shown])
+    if (shown || !line) {
+      lastAddressedLine.current = null
+      return
+    }
+    if (!visible || line > rows.length || !targetRef.current) return
+    const previous = lastAddressedLine.current
+    if (previous?.path === path && previous.line === line) return
+    targetRef.current.scrollIntoView({ block: 'center' })
+    lastAddressedLine.current = { path, line }
+  }, [line, path, rows.length, shown, visible])
 
-  return (
-    <>
-      {content.truncated && (
-        <div className="bg-warning/15 px-4 py-1.5 text-[11px] text-warning">
-          文件较大，仅显示前 {Math.round(content.text.length / 1024)} KB（共 {formatBytes(content.bytes)}）
-        </div>
-      )}
-      {shown ? (
-        /* The same renderer the transcript uses, so a document looks the same
-           whether the agent wrote it or wrote a link to it. */
-        <div className={desktop ? 'mx-auto max-w-4xl px-6 py-6' : 'px-4 py-3'}>
-          <Markdown text={content.text} cwd={folder} onOpenFile={onOpenFile} />
-        </div>
-      ) : (
-        /* Phones wrap long lines. Desktop can scroll horizontally while the
-           gutter stays visible. Empty lines keep their row height. */
+  const source = useMemo(
+    () =>
+      shown ? null : (
         <div
           className={`file-source py-2 font-mono text-[13px] leading-[1.7] text-foreground/90 ${wrap ? '' : 'w-max min-w-full'}`}
         >
@@ -155,6 +151,25 @@ export default function FileBody({
             </div>
           )}
         </div>
+      ),
+    [desktop, highlighted, line, lines.length, rows, shown, wrap],
+  )
+
+  return (
+    <>
+      {content.truncated && (
+        <div className="bg-warning/15 px-4 py-1.5 text-[11px] text-warning">
+          文件较大，仅显示前 {Math.round(content.text.length / 1024)} KB（共 {formatBytes(content.bytes)}）
+        </div>
+      )}
+      {shown ? (
+        /* The same renderer the transcript uses, so a document looks the same
+           whether the agent wrote it or wrote a link to it. */
+        <div className={desktop ? 'mx-auto max-w-4xl px-6 py-6' : 'px-4 py-3'}>
+          <Markdown text={content.text} cwd={folder} onOpenFile={onOpenFile} />
+        </div>
+      ) : (
+        source
       )}
     </>
   )

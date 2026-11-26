@@ -10,6 +10,8 @@ import { useWorkspaceStore } from './lib/workspace'
 import { pathAfterScope, runnerId, runnerSwitchUrl } from './lib/runner'
 import { routeTitle, useDocumentTitle } from './lib/title'
 import { useIsDesktop } from './lib/viewport'
+import { clearSessionLists, updateSessionListsStatus } from './lib/sessionLists'
+import { clearFileSnapshots } from './lib/fileSnapshots'
 
 // The landing page stays eager; everything else is fetched when its route is
 // opened. That keeps xterm (Terminal) and react-markdown (Chat / Files) out of
@@ -32,8 +34,12 @@ function PageFallback({ full = false }: { full?: boolean }) {
 type AuthState = 'checking' | 'authed' | 'anonymous' | 'offline'
 
 export default function App() {
-  const logout = useCallback(() => setAuth('anonymous'), [])
   const [auth, setAuth] = useState<AuthState>('checking')
+  const logout = useCallback(() => {
+    clearSessionLists()
+    clearFileSnapshots()
+    setAuth('anonymous')
+  }, [])
   const [bootError, setBootError] = useState<string | null>(null)
   /** Bumped by the retry button; the effect below re-runs on it. */
   const [bootAttempt, setBootAttempt] = useState(0)
@@ -48,6 +54,11 @@ export default function App() {
     let cancelled = false
     void (async () => {
       try {
+        // Hub discovery is public, and can run while authentication is checked.
+        const hubProbe = api.hubMode().then(
+          () => ({ available: true as const }),
+          (error: unknown) => ({ available: false as const, error }),
+        )
         // The deployment's own flag first, because it is authoritative about
         // whether a PIN exists at all: with `authDisabled`, `requireAuth` lets
         // every request through, so a PIN form can only ever be a dead end —
@@ -58,14 +69,12 @@ export default function App() {
         if (cancelled) return
         if (!authDisabled) await api.me()
         // The old standalone server has no Hub endpoint; preserve that mode.
-        let isHub = false
-        try {
-          await api.hubMode()
-          isHub = true
-        } catch (err) {
-          if (!(err instanceof ApiError && err.status === 404)) throw err
+        const hub = await hubProbe
+        if (cancelled) return
+        if (!hub.available && !(hub.error instanceof ApiError && hub.error.status === 404)) {
+          throw hub.error
         }
-        if (isHub) {
+        if (hub.available) {
           const runners = await api.runners()
           if (cancelled) return
           if (!runners.data.some((runner) => runner.id === runnerId)) {
@@ -86,7 +95,7 @@ export default function App() {
         // for it is what made "the app is asking for my PIN again" the
         // reported symptom of a server that was merely restarting.
         if (err instanceof ApiError && err.status === 401) {
-          setAuth('anonymous')
+          logout()
           return
         }
         setBootError(err instanceof Error ? err.message : String(err))
@@ -96,10 +105,15 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [bootAttempt])
+  }, [bootAttempt, logout])
 
   useEffect(() => {
-    if (auth === 'authed') socket.connect()
+    if (auth !== 'authed') return
+    const unsubscribe = socket.onEvent((event) => {
+      if (event.kind === 'session.status') updateSessionListsStatus(event.threadId, event.status)
+    })
+    socket.connect()
+    return unsubscribe
   }, [auth])
 
   useEffect(() => {
@@ -140,11 +154,7 @@ export default function App() {
         </Button>
         {/* The escape hatch for the one case the flag cannot cover: a server
             that reports a PIN but will not accept the session it is holding. */}
-        <button
-          type="button"
-          onClick={() => setAuth('anonymous')}
-          className="text-xs text-muted-foreground underline underline-offset-2"
-        >
+        <button type="button" onClick={logout} className="text-xs text-muted-foreground underline underline-offset-2">
           去登录页
         </button>
       </div>

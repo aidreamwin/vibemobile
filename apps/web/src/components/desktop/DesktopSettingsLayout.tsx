@@ -15,17 +15,26 @@ export const settingsSections = {
 
 export type SettingsSectionId = keyof typeof settingsSections
 
-const DesktopSettingsContext = createContext(false)
+const DesktopSettingsContext = createContext<SettingsSectionId | null>(null)
 
 export function useDesktopSettings() {
-  return useContext(DesktopSettingsContext)
+  return useContext(DesktopSettingsContext) !== null
 }
 
 const SIDE_NAV_MIN_WIDTH = 600
 
-export default function DesktopSettingsLayout({ hub, children }: { hub: boolean; children: ReactNode }) {
+export default function DesktopSettingsLayout({
+  hub,
+  section,
+  onSectionChange,
+  children,
+}: {
+  hub: boolean
+  section: SettingsSectionId
+  onSectionChange: (section: SettingsSectionId) => void
+  children: ReactNode
+}) {
   const [vertical, setVertical] = useState(false)
-  const [section, setSection] = useState('agents')
   const root = useRef<HTMLDivElement>(null)
   const navigation = useRef<HTMLDivElement>(null)
 
@@ -44,11 +53,11 @@ export default function DesktopSettingsLayout({ hub, children }: { hub: boolean;
   }, [section, vertical])
 
   return (
-    <DesktopSettingsContext.Provider value>
+    <DesktopSettingsContext.Provider value={section}>
       <Tabs.Root
         ref={root}
         value={section}
-        onValueChange={setSection}
+        onValueChange={(value) => onSectionChange(value as SettingsSectionId)}
         orientation={vertical ? 'vertical' : 'horizontal'}
         aria-label="设置"
         className={`flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-background ${vertical ? '' : 'flex-col'}`}
@@ -83,11 +92,22 @@ export default function DesktopSettingsLayout({ hub, children }: { hub: boolean;
 
 export function DesktopSettingsSection({ section, children }: { section: SettingsSectionId; children: ReactNode }) {
   const { label } = settingsSections[section]
+  const selected = useContext(DesktopSettingsContext) === section
+  const content = useRef<HTMLDivElement>(null)
+  const scrollPosition = useRef(0)
+
+  useLayoutEffect(() => {
+    if (selected && content.current) content.current.scrollTop = scrollPosition.current
+  }, [selected])
+
   return (
     <Tabs.Content
+      ref={content}
       value={section}
-      forceMount
-      className="scroll-y @container h-full min-w-0 flex-1 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring data-[state=inactive]:hidden"
+      onScroll={(event) => {
+        if (selected) scrollPosition.current = event.currentTarget.scrollTop
+      }}
+      className="scroll-y @container h-full min-w-0 flex-1 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
     >
       <div className="max-w-[54rem] px-4 py-5 @min-[500px]:px-8 @min-[500px]:py-7">
         <section aria-label={label}>

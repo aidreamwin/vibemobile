@@ -1,7 +1,8 @@
+import { memo } from 'react'
 import type { SessionSummary } from '@vibemobile/protocol'
 import SessionRow from './SessionRow'
 
-export default function SessionList({
+export default memo(function SessionList({
   sessions,
   providerName,
   onOpen,
@@ -18,11 +19,11 @@ export default function SessionList({
         <SessionRow
           key={session.id}
           session={session}
-          providerName={providerName}
-          onOpen={() => onOpen(session)}
-          onActions={() => onActions(session)}
+          providerName={providerName(session.provider)}
+          onOpen={onOpen}
+          onActions={onActions}
         />
       ))}
     </ul>
   )
-}
+})
