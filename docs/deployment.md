@@ -110,7 +110,7 @@ NSSM 是代持服务的：node 崩溃时它会立刻重试拉起，SCM 仍显示
 它靠 `.vibemobile\last-deploy.json` 记录的上次 commit 计算差集。**先构建、后
 重启**：构建失败时线上仍跑着上一个可用版本；只有健康检查通过才更新部署记录。
 
-## 方式三：PM2（Linux/macOS 后台常驻）
+## 方式三：PM2（Linux/macOS/Windows 后台常驻）
 
 推荐使用 [GitHub Release 一键安装](quick-install.md)。自动准备依赖、安装和启动，重复执行可升级已有部署。
 

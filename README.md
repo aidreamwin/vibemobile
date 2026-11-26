@@ -89,19 +89,49 @@ VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台�
 
 ### 一键安装（推荐）
 
-在需要管理的项目目录运行。
+在每台机器上打开终端，进入需要管理的项目目录。先安装 Hub，再按需添加远程 Runner。
+
+#### 1. 安装 Hub
+
+Linux / macOS
 
 ```sh
-# Hub：自动安装、构建并启动，输出地址和 PIN
 curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/hub-install.sh | sh
+```
 
-# Runner：输入 Hub 地址与设置页生成的连接令牌
+Windows PowerShell
+
+```powershell
+& ([scriptblock]::Create((curl.exe -LsSf 'https://github.com/aidreamwin/vibemobile/releases/latest/download/hub-install.ps1' | Out-String)))
+```
+
+首次运行会自动准备依赖、构建并启动 Hub 和本机 Runner。默认浏览器端口为 `3000`。终端会显示访问方式和 PIN，使用 Hub 所在机器的地址登录。
+
+#### 2. 添加远程 Runner
+
+登录 Hub，在「设置 → 执行机器 → 添加执行机」生成并复制连接令牌。在远程执行机上运行对应平台的命令。
+
+Linux / macOS
+
+```sh
 curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/runner-install.sh | sh
 ```
 
-重复执行同一命令即可交互升级。Windows PowerShell 命令、自定义目录与端口见 [一键安装与升级](docs/quick-install.md)。首次使用前按需登录代理 CLI。
+Windows PowerShell
 
-手动部署要求 **Node.js 20+**（推荐 22）和 npm。
+```powershell
+& ([scriptblock]::Create((curl.exe -LsSf 'https://github.com/aidreamwin/vibemobile/releases/latest/download/runner-install.ps1' | Out-String)))
+```
+
+按提示输入 Runner 可以访问的 Hub 地址和连接令牌，安装后回到 Hub 的执行机器列表确认已在线。
+
+#### 3. 升级
+
+再次运行对应角色的安装命令，出现 `Upgrade this installation? [y/N]` 时输入 `y` 确认升级，按 Enter 保留当前版本。升级会保留原有配置和状态数据。
+
+安装包从 [GitHub Releases](https://github.com/aidreamwin/vibemobile/releases) 下载。自定义安装目录、工作区、端口及 TLS 见 [一键安装与升级](docs/quick-install.md)。首次使用前按需登录代理 CLI。
+
+### Antigravity CLI（可选）
 
 在对应的 runner 上安装支持 ACP 的 **Antigravity CLI**（`agy`），然后启动或重启 runner。
 服务会在 `PATH` 和官方安装位置查找 CLI，也可以通过 `ANTIGRAVITY_BIN` 指定可执行文件。
@@ -112,7 +142,9 @@ curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/run
 工具审批沿用 CLI 规则。置顶、归档和重命名保存在当前 runner。
 容器部署需让 CLI、工作目录和登录凭据在 runner 容器内可访问。[Google 安装说明](https://antigravity.google/docs/getting-started?tab=cli) · [ACP 接口](https://antigravity.google/docs/ide/extensions/acp)
 
-### 生产
+### 从源码部署
+
+要求 **Node.js 20+**（推荐 22）和 npm。
 
 ```bash
 npm ci
@@ -136,7 +168,7 @@ docker compose logs -f
 完整步骤和验证判据见 [docs/deployment.md](docs/deployment.md)：
 
 - Windows：`scripts\windows\install-service.bat`
-- Linux/macOS：一键安装或使用 `npm run release` + `deploy/install.mjs`
+- Linux/macOS/Windows PM2：一键安装或使用 `npm run release` + `deploy/install.mjs`
 - 多机器：[docs/multi-runner.md](docs/multi-runner.md)
 
 ## 开发
@@ -164,6 +196,7 @@ node scripts/dev.mjs --server-port=5900 --codex-port=6901 --web-port=5902
 npm run lint           # Biome
 npm run typecheck      # 前后端 tsc（server 的 scripts/ 也包含在内）
 npm test               # vitest：server + web
+npm run test:deploy     # 安装、升级、交互输入和部署脚本
 npm run test:coverage  # 覆盖率报告
 npm run build:all      # 两端生产构建
 ```
@@ -195,6 +228,8 @@ separates the developer's mobile control surface from the code and execution
 environment running on a computer or server. It supports **Codex**, **Claude
 Code**, **OpenCode**, and **Google Antigravity CLI** with streaming output, approval sheets, file diffs, a
 persistent terminal, and image input.
+
+Install Hub from the latest GitHub Release, then add a remote Runner in Settings and run its installer on the remote machine. Both installers support interactive upgrades on repeated runs. See the [one-line installation guide](docs/quick-install.md) for Linux, macOS and Windows commands.
 
 The Node backend is not optional: `codex app-server` rejects WebSocket upgrades
 that carry an `Origin` header, and browsers always send one, so the backend acts
@@ -294,10 +329,12 @@ packages/protocol/src/
 | [docs/vision.md](docs/vision.md) | AI 原生、移动优先的开发协作理念与产品定位 |
 | [docs/architecture.md](docs/architecture.md) | 架构、数据流、provider 接缝、分页、图片、终端 |
 | [docs/deployment.md](docs/deployment.md) | 四种部署方式、环境变量、健康检查 |
+| [docs/quick-install.md](docs/quick-install.md) | Hub / Runner 一键安装、交互升级和常见问题 |
+| [docs/pm2-release.md](docs/pm2-release.md) | 手工发布包部署与 PM2 管理 |
 | [docs/limitations.md](docs/limitations.md) | 已知限制和行为边界 |
 | [docs/multi-runner.md](docs/multi-runner.md) | Hub / runner 多机器模式 |
 | [docs/hub-tls.md](docs/hub-tls.md) | 原生 TLS、私有 CA、Nginx |
-| [docs/releasing.md](docs/releasing.md) | 版本号、打包、Codex CLI 升级流程 |
+| [docs/releasing.md](docs/releasing.md) | 版本号、GitHub Actions 发布、打包与验收 |
 | [docs/error-reporting.md](docs/error-reporting.md) | 代理失败、重试与错误卡片 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发、测试、PR 约定 |
 | [SECURITY.md](SECURITY.md) | 威胁模型、漏洞报告、安全部署清单 |

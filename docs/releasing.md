@@ -18,8 +18,7 @@ VibeMobile 的后端和前端各自使用 `package.json` 里的 `version`：
 - 改了 `packages/protocol` 或两边都改 → 两个都抬。
 - 只改文档、注释、测试不算代码变更，不必抬。
 
-构建戳里的提交号和构建时间由构建脚本自动填入；**版本号是唯一靠人的一步**。
-不抬号，新构建和上一版在设置页里就分不出来。
+构建戳里的提交号和构建时间由构建脚本自动填入。维护者按改动范围更新版本号，再创建发布标签，使新旧构建可在设置页区分。
 
 ## 发布前检查
 
@@ -29,6 +28,7 @@ npm audit --audit-level=low   # 生产依赖和 devDependencies 都应为 0
 npm run lint
 npm run typecheck
 npm test
+npm run test:deploy
 npm run build:all
 ```
 
@@ -44,19 +44,63 @@ npm run test:approval
 涉及前端交互时，按 [CONTRIBUTING.md](../CONTRIBUTING.md) 的说明跑一次浏览器
 冒烟。CI 会执行 lint、typecheck、单测和两端构建。
 
-## 打包
+## GitHub Actions 自动发布
 
-GitHub Actions 的 [Release 工作流](../.github/workflows/release.yml) 在推送仓库级版本标签后自动检查代码、构建并发布 GitHub Release。也可在 Actions 页面指定已有标签手动触发。
+### 首次配置
 
-在 [公开仓库](https://github.com/aidreamwin/vibemobile) 的工作副本中提交变更并标记版本。
+在 GitHub 仓库的 **Settings → Actions → General → Actions permissions** 中启用 Actions，并允许工作流使用以下 GitHub 官方 Actions。
 
-```bash
-git push origin main
-git tag v0.1.62-0.1.103
-git push origin v0.1.62-0.1.103
+- `actions/checkout@v4`
+- `actions/setup-node@v4`
+- `actions/upload-artifact@v4`
+- `actions/download-artifact@v4`
+
+可以选择允许 GitHub 创建的 Actions，或将这四项加入许可列表。如果仓库受组织策略限制，在相应层级配置许可。发布作业使用 GitHub 提供的 `github.token`，并在工作流中声明了 `contents: write` 权限。[GitHub Actions 仓库设置](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
+
+### 发布一个新版本
+
+1. 确认前后端版本号、变更记录和发布前检查结果。将提交推送到 `main`，在 [CI](https://github.com/aidreamwin/vibemobile/actions/workflows/ci.yml) 中确认检查通过。
+2. 给同一提交创建仓库级版本标签，并推送标签。以服务端 `0.1.62`、前端 `0.1.103` 为例。
+
+   ```bash
+   git tag v0.1.62-0.1.103
+   git push origin refs/tags/v0.1.62-0.1.103
+   ```
+
+3. 在 [Release 工作流](https://github.com/aidreamwin/vibemobile/actions/workflows/release.yml) 中查看进度。`build` 作业执行 lint、类型检查、部署测试、单元测试、构建、打包及校验，`publish` 作业上传发布资产，完成后将 Release 公开并设为 Latest。
+
+已存在的标签可以通过 Actions → Release → Run workflow 手动触发。构建失败或草稿发布中断后可重新运行，已公开的 Release 会直接结束发布步骤。后续版本使用新的标签。
+
+### 发布资产
+
+每个完整 Release 包含以下 9 个资产。
+
+| 资产 | 用途 |
+| --- | --- |
+| `vibemobile-hub-*.tar.gz` | Hub 及 Web、本机 Runner 的完整部署包 |
+| `vibemobile-runner-*.tar.gz` | 远程 Runner 的部署包 |
+| `vibemobile-update-*.tar.gz` | Hub 手工升级包 |
+| `hub-install.sh`、`hub-install.ps1` | Linux/macOS 和 Windows 的 Hub 安装入口 |
+| `runner-install.sh`、`runner-install.ps1` | Linux/macOS 和 Windows 的 Runner 安装入口 |
+| `manifest.json` | 版本、提交号和资产清单 |
+| `SHA256SUMS` | 发布包及安装脚本的 SHA-256 校验和 |
+
+安装脚本内的包下载地址固定到该 Release 的标签。全部资产上传成功后，`releases/latest/download/` 下的安装命令会指向最新发布版本。
+
+### 发布后验收
+
+打开 [Latest Release](https://github.com/aidreamwin/vibemobile/releases/latest)，确认资产齐全，并检查两个安装入口能否下载。
+
+```sh
+curl -LsSf -o /dev/null https://github.com/aidreamwin/vibemobile/releases/latest/download/hub-install.sh
+curl -LsSf -o /dev/null https://github.com/aidreamwin/vibemobile/releases/latest/download/runner-install.sh
 ```
 
-Release 资产包括 Hub、Runner、Update 三类 tar.gz，`manifest.json`、`SHA256SUMS` 和两种角色的 `.sh`、`.ps1` 安装脚本。工作流根据当前 GitHub 仓库及标签生成下载地址，全部资产上传成功后发布为 Latest。用户通过 [一键安装命令](quick-install.md) 获取最新版本。
+在独立测试环境按照 [一键安装与升级](quick-install.md) 完成 Hub 首装并登录，添加远程 Runner 并确认在线。分别重复执行安装命令，验证拒绝升级时保留当前安装，确认升级后服务恢复且配置和状态数据仍可用。
+
+若 Actions 显示 `Startup failure` 并提示 `actions/... are not allowed`，检查上述 Actions 许可配置。若安装地址返回 `404`，确认 Release 已发布且对应安装脚本已上传。
+
+## 本地打包
 
 ```bash
 npm run release                       # 全部三类包
@@ -66,9 +110,9 @@ npm run release -- --skip-verify      # 跳过测试/构建（不推荐）
 npm run release -- --release-url=https://github.com/aidreamwin/vibemobile/releases/download/v0.1.62-0.1.103
 ```
 
-产物在 `release/`（已 gitignore），包含纯源码和安装脚本；`node_modules`、
-`dist` 和所有密钥都不会进入包。目标机执行 `npm ci` 和构建，这样 `node-pty`、
-Codex CLI、Claude CLI 都与目标平台匹配。
+默认生成三类源码压缩包、资产清单和校验和。传入 `--release-url` 后，同时生成指向指定下载目录的四个一键安装脚本。产物位于 `release/`（已加入 `.gitignore`）。
+
+压缩包包含目标机安装与更新所需的项目源码、依赖清单和部署脚本。目标机执行 `npm ci` 和构建，使 `node-pty`、Codex CLI、Claude CLI 与目标平台匹配。`node_modules`、`dist` 和部署密钥在打包时排除。
 
 安装与升级：
 
@@ -81,10 +125,10 @@ node deploy/update.mjs --target=/opt/vibemobile
 
 ## Git 标签
 
-建议的约定：
+建议使用以下版本标签。
 
-- 仓库级发布：`v<server版本>-<web版本>`，例如 `v0.1.21-0.1.35`；
-- 或者分别打 `server-v0.1.21` / `web-v0.1.35`。
+- 仓库级发布使用 `v<server版本>-<web版本>`，例如 `v0.1.21-0.1.35`，推送后触发 Release 工作流。
+- 单独标记前后端版本可使用 `server-v0.1.21` / `web-v0.1.35`。
 
 仓库里历史遗留的 `v1.0` 标签早于当前版本方案，不代表当前发布版本。发布时请
 在 GitHub Release 说明里写清两个 workspace 的版本号和主要变更，并同步更新
