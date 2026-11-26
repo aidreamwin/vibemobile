@@ -27,19 +27,24 @@ type LinkContext = Pick<MarkdownProps, 'cwd' | 'onOpenFile'>
 function Collapsible({
   title,
   subtitle,
+  meta,
   status,
   defaultOpen = false,
   desktop = false,
+  monospace = false,
   children,
 }: {
   title: string
   subtitle?: string
+  meta?: string
   status?: ItemStatus
   defaultOpen?: boolean
   desktop?: boolean
+  monospace?: boolean
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const stacked = !desktop || monospace || meta !== undefined
   return (
     <div
       className={
@@ -52,18 +57,30 @@ function Collapsible({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-center justify-between gap-2.5 text-left active:bg-secondary ${desktop ? 'min-h-8 px-3 py-1 hover:bg-secondary/70' : 'tap px-3.5 py-2.5'}`}
+        className={`flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left active:bg-secondary ${desktop ? 'min-h-11 hover:bg-secondary/70' : 'tap'}`}
       >
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          {status && <StatusDot status={status} />}
-          <div className={`min-w-0 flex-1 ${desktop ? 'flex items-center gap-2' : ''}`}>
-            <span className="block truncate font-mono text-[13px] font-medium text-foreground">{title}</span>
-            {subtitle && (
-              <span className={`block truncate text-xs text-muted-foreground ${desktop ? 'min-w-0' : 'mt-0.5'}`}>
-                {subtitle}
+        <div className={`flex min-w-0 flex-1 ${stacked ? 'flex-col gap-1' : 'items-center gap-3'}`}>
+          <div
+            className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 ${stacked ? '' : 'max-w-[60%] shrink-0'}`}
+          >
+            <div className="flex min-w-0 max-w-full items-center gap-2">
+              {status && <StatusDot status={status} />}
+              <span className="min-w-0 wrap-anywhere text-sm font-medium leading-5 text-foreground" title={title}>
+                {title}
               </span>
+            </div>
+            {meta && (
+              <span className="min-w-0 wrap-anywhere text-xs leading-5 tabular-nums text-muted-foreground">{meta}</span>
             )}
           </div>
+          {subtitle && (
+            <span
+              className={`block min-w-0 truncate text-xs leading-5 text-muted-foreground ${stacked && status ? 'pl-4' : ''} ${monospace ? 'font-mono' : ''}`}
+              title={subtitle}
+            >
+              {subtitle}
+            </span>
+          )}
         </div>
         <svg
           aria-hidden="true"
@@ -82,9 +99,9 @@ function Collapsible({
 }
 
 function Pre({ text }: { text: string }) {
-  if (!text.trim()) return <div className="px-3 py-2 text-[12px] text-muted-foreground/70">（无输出）</div>
+  if (!text.trim()) return <div className="px-3.5 py-2.5 text-[12px] text-muted-foreground/70">（无输出）</div>
   return (
-    <pre className="scroll-x max-h-80 px-3 py-2 font-mono text-[12px] leading-relaxed whitespace-pre text-foreground/90">
+    <pre className="scroll-x max-h-80 px-3.5 py-2.5 font-mono text-[12px] leading-relaxed whitespace-pre text-foreground/90">
       {text}
     </pre>
   )
@@ -114,6 +131,87 @@ function show(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+type ToolItem = Extract<AgentItem, { kind: 'tool' }>
+
+interface ReadFileInput {
+  params: Record<string, unknown>
+  pathKey: string
+  path: string
+}
+
+function readFileInput(input: unknown): ReadFileInput | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const params = input as Record<string, unknown>
+  for (const key of ['Path', 'file_path', 'filePath', 'path', 'file']) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim()) return { params, pathKey: key, path: value }
+  }
+  return null
+}
+
+function readFileRange(params: Record<string, unknown>): string | undefined {
+  const { StartLine: start, EndLine: end } = params
+  if (typeof start !== 'number' || !Number.isInteger(start) || start < 1) return undefined
+  if (typeof end !== 'number' || !Number.isInteger(end) || end < start) return `从第 ${start} 行`
+  return `第 ${start}${end > start ? `–${end}` : ''} 行`
+}
+
+const readParameterLabels = new Map([
+  ['StartLine', '起始行'],
+  ['EndLine', '结束行'],
+  ['offset', '偏移量'],
+  ['limit', '读取上限'],
+])
+
+function ReadFileDetails({ read }: { read: ReadFileInput }) {
+  const keys = new Set(['StartLine', 'EndLine', 'offset', 'limit', ...Object.keys(read.params)])
+  keys.delete(read.pathKey)
+  return (
+    <dl className="scroll-y flex max-h-80 flex-wrap items-start gap-x-6 gap-y-3 px-3.5 py-3">
+      <div className="w-full min-w-0">
+        <dt className="text-xs leading-5 text-muted-foreground">文件路径</dt>
+        <dd className="mt-0.5 wrap-anywhere whitespace-pre-wrap font-mono text-[13px] leading-relaxed">{read.path}</dd>
+      </div>
+      {[...keys]
+        .filter((key) => Object.hasOwn(read.params, key))
+        .map((key) => (
+          <div key={key} className="min-w-0 max-w-full">
+            <dt className="wrap-anywhere text-xs leading-5 text-muted-foreground">
+              {readParameterLabels.get(key) ?? key}
+            </dt>
+            <dd className="mt-0.5 wrap-anywhere whitespace-pre-wrap font-mono text-[13px] leading-relaxed">
+              {show(read.params[key])}
+            </dd>
+          </div>
+        ))}
+    </dl>
+  )
+}
+
+function ToolSection({ label, text }: { label: string; text: string }) {
+  return (
+    <div>
+      <div className="px-3.5 pt-2.5 text-xs font-medium text-muted-foreground">{label}</div>
+      <Pre text={text} />
+    </div>
+  )
+}
+
+function ToolDetails({ item, read }: { item: ToolItem; read: ReadFileInput | null }) {
+  if (item.input === undefined && !item.output && !item.error) return <Pre text="" />
+  return (
+    <div className="divide-y divide-border">
+      {read ? (
+        <ReadFileDetails read={read} />
+      ) : (
+        item.input !== undefined && <ToolSection label="参数" text={show(item.input)} />
+      )}
+      {item.output && <ToolSection label="输出" text={item.output} />}
+      {item.error && <ToolSection label="错误" text={item.error} />}
+    </div>
+  )
 }
 
 const ItemCard = memo(function ItemCard({
@@ -204,31 +302,35 @@ const ItemCard = memo(function ItemCard({
       )
     }
 
-    case 'command':
+    case 'command': {
+      const result =
+        item.exitCode != null && item.status !== 'running'
+          ? `exit ${item.exitCode}`
+          : { running: '执行中', done: '已完成', failed: '执行失败', declined: '已取消' }[item.status]
+      const duration = item.durationMs != null ? ` · ${(item.durationMs / 1000).toFixed(1)}s` : ''
       return (
         <Collapsible
           title="命令"
           desktop={desktop}
-          subtitle={[
-            // Status first: the command itself is long enough to be truncated,
-            // and the exit code is the part worth keeping visible.
-            item.status !== 'running' && item.exitCode != null
-              ? `exit ${item.exitCode}${item.durationMs ? ` · ${(item.durationMs / 1000).toFixed(1)}s` : ''}`
-              : item.cwd,
-            item.command,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
+          monospace
+          meta={`${result}${duration}`}
+          subtitle={item.command || item.cwd || undefined}
           status={item.status}
         >
+          {item.cwd && (
+            <div className="wrap-anywhere border-b border-border px-3.5 py-2.5 font-mono text-xs leading-relaxed text-muted-foreground">
+              {item.cwd}
+            </div>
+          )}
           {item.command && (
-            <pre className="border-b border-border px-3 py-2 font-mono text-[12px] whitespace-pre-wrap break-words">
+            <pre className="wrap-anywhere border-b border-border px-3.5 py-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap">
               {item.command}
             </pre>
           )}
           <Pre text={item.output} />
         </Collapsible>
       )
+    }
 
     case 'fileChange': {
       const paths = item.changes.map((change) => (item.label ? shortPath(change.path) : change.path))
@@ -236,9 +338,9 @@ const ItemCard = memo(function ItemCard({
         <Collapsible
           title={item.label ?? '修改'}
           desktop={desktop}
-          // Same reason as the command card: the paths are long, the count is
-          // the short fact that should survive truncation.
-          subtitle={`${paths.length} 个文件 · ${paths.join(', ') || '文件变更'}`}
+          monospace
+          meta={`${paths.length} 个文件`}
+          subtitle={paths.join(', ')}
           status={item.status}
         >
           <DiffView changes={item.changes} />
@@ -380,21 +482,31 @@ const ItemCard = memo(function ItemCard({
     // item falls to `default: return null` and the card silently vanishes —
     // the turn looks stalled with nothing to explain why.
     case 'tool': {
-      const sections: string[] = []
-      if (item.input !== undefined) sections.push(`参数\n${show(item.input)}`)
-      if (item.output) sections.push(`输出\n${item.output}`)
-      if (item.error) sections.push(`错误\n${item.error}`)
-      const subtitle = [
-        item.title && item.title !== item.name && item.title !== item.label ? item.title : null,
-        item.label ? null : item.name,
-        item.subagentType ? `子代理 ${item.subagentType}` : null,
-        item.childCount ? `${item.childCount} 次子调用` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ')
+      const isRead = item.label === '读取文件' || /^(read|read_file)$/i.test(item.name)
+      const read = isRead ? readFileInput(item.input) : null
+      const separator = read ? Math.max(read.path.lastIndexOf('/'), read.path.lastIndexOf('\\')) : -1
+      const subtitle = read
+        ? [read.path.slice(separator + 1) || read.path, separator > 0 ? read.path.slice(0, separator) : null]
+            .filter(Boolean)
+            .join(' · ')
+        : [
+            item.title && item.title !== item.name && item.title !== item.label ? item.title : null,
+            item.label ? null : item.name,
+            item.subagentType ? `子代理 ${item.subagentType}` : null,
+            item.childCount ? `${item.childCount} 次子调用` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
       return (
-        <Collapsible title={item.label ?? '工具'} subtitle={subtitle} status={item.status} desktop={desktop}>
-          <Pre text={sections.join('\n\n')} />
+        <Collapsible
+          title={isRead ? '读取文件' : (item.label ?? '工具')}
+          subtitle={subtitle}
+          meta={read ? readFileRange(read.params) : undefined}
+          monospace={isRead}
+          status={item.status}
+          desktop={desktop}
+        >
+          <ToolDetails item={item} read={read} />
         </Collapsible>
       )
     }
