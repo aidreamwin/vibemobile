@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,8 +33,36 @@ jobs:
       - name: Unit tests with coverage
         run: npm run test:coverage
 
+      - name: Deployment tests
+        run: npm run test:deploy
+
       - name: Build both workspaces
         run: npm run build:all
+
+      - name: Package latest main build
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          node scripts/release.mjs --kind=all --skip-verify \
+            --build-id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --release-url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/latest"
+
+      - name: Verify latest assets
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        working-directory: release
+        run: |
+          sha256sum -c SHA256SUMS
+          sh -n hub-install.sh
+          sh -n runner-install.sh
+
+      - name: Upload latest assets
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-assets
+          path: release/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
 
       - name: Upload coverage
         if: always()
@@ -44,4 +73,36 @@ jobs:
             apps/server/coverage
             apps/web/coverage
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 7
+
+  publish-latest:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    concurrency:
+      group: release-latest
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: latest-assets
+          path: release
+
+      - name: Publish latest prerelease
+        run: node scripts/publish-latest.mjs

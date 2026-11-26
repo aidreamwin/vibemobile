@@ -57,7 +57,18 @@ npm run test:approval
 
 可以选择允许 GitHub 创建的 Actions，或将这四项加入许可列表。如果仓库受组织策略限制，在相应层级配置许可。发布作业使用 GitHub 提供的 `github.token`，并在工作流中声明了 `contents: write` 权限。[GitHub Actions 仓库设置](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)
 
-### 发布一个新版本
+### 主分支滚动开发版（latest）
+
+每次推送 `main` 时，[CI 工作流](https://github.com/aidreamwin/vibemobile/actions/workflows/ci.yml) 在 lint、类型检查、单测、部署测试和构建通过后打包，`publish-latest` 作业更新标签 `latest` 对应的 GitHub 预发行版。也可在 Actions → CI → Run workflow 选择 `main` 手动重新构建。
+
+- 预发行版包含完整 Hub、Runner、Update 包和两种平台的安装脚本，标签指向该次构建的提交。
+- 发布作业串行更新 `latest`，已经落后于主分支的构建会跳过发布。每轮压缩包以提交号和构建 ID 命名，上传新压缩包后再更新安装入口，并保留上一轮的压缩包，方便安装过程中的并发下载。
+- 开发版设置为 Pre-release 并显式排除在 GitHub 的 Latest 正式发行版选择之外。正式安装使用 `releases/latest/download/`，开发测试显式使用 `releases/download/latest/`。
+- 滚动更新需要 `latest` 标签及其 Release 资产允许修改。启用禁止修改发布资产或移动标签的仓库策略时，滚动更新会被 GitHub 拒绝。[GitHub Release immutability](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)
+
+在 [latest 开发版](https://github.com/aidreamwin/vibemobile/releases/tag/latest) 查看当前主分支快照，通过 [一键安装与升级](quick-install.md) 中的开发版命令安装。
+
+### 发布一个新正式版本
 
 1. 确认前后端版本号、变更记录和发布前检查结果。将提交推送到 `main`，在 [CI](https://github.com/aidreamwin/vibemobile/actions/workflows/ci.yml) 中确认检查通过。
 2. 给同一提交创建仓库级版本标签，并推送标签。以服务端 `0.1.62`、前端 `0.1.103` 为例。
@@ -73,7 +84,7 @@ npm run test:approval
 
 ### 发布资产
 
-每个完整 Release 包含以下 9 个资产。
+每个正式版本以及 `latest` 开发版的当前构建均包含以下 9 个资产。`latest` 另保留上一轮的压缩包，当前构建以 `manifest.json` 为准。
 
 | 资产 | 用途 |
 | --- | --- |
@@ -85,15 +96,18 @@ npm run test:approval
 | `manifest.json` | 版本、提交号和资产清单 |
 | `SHA256SUMS` | 发布包及安装脚本的 SHA-256 校验和 |
 
-安装脚本内的包下载地址固定到该 Release 的标签。全部资产上传成功后，`releases/latest/download/` 下的安装命令会指向最新发布版本。
+安装脚本内的包下载地址固定到该次发布的压缩包，并校验 SHA-256。全部资产上传成功后，`releases/latest/download/` 下的安装命令指向最新正式发行版，`releases/download/latest/` 下的安装命令指向最新主分支开发版。
 
 ### 发布后验收
 
-打开 [Latest Release](https://github.com/aidreamwin/vibemobile/releases/latest)，确认资产齐全，并检查两个安装入口能否下载。
+打开 [最新正式发行版](https://github.com/aidreamwin/vibemobile/releases/latest) 和 [latest 开发版](https://github.com/aidreamwin/vibemobile/releases/tag/latest)，确认相应构建的资产齐全，并检查安装入口。
 
 ```sh
 curl -LsSf -o /dev/null https://github.com/aidreamwin/vibemobile/releases/latest/download/hub-install.sh
 curl -LsSf -o /dev/null https://github.com/aidreamwin/vibemobile/releases/latest/download/runner-install.sh
+
+curl -LsSf -o /dev/null https://github.com/aidreamwin/vibemobile/releases/download/latest/hub-install.sh
+curl -LsSf -o /dev/null https://github.com/aidreamwin/vibemobile/releases/download/latest/runner-install.sh
 ```
 
 在独立测试环境按照 [一键安装与升级](quick-install.md) 完成 Hub 首装并登录，添加远程 Runner 并确认在线。分别重复执行安装命令，验证拒绝升级时保留当前安装，确认升级后服务恢复且配置和状态数据仍可用。
@@ -128,6 +142,7 @@ node deploy/update.mjs --target=/opt/vibemobile
 建议使用以下版本标签。
 
 - 仓库级发布使用 `v<server版本>-<web版本>`，例如 `v0.1.21-0.1.35`，推送后触发 Release 工作流。
+- `latest` 标签由主分支 CI 自动更新到通过检查的构建提交。
 - 单独标记前后端版本可使用 `server-v0.1.21` / `web-v0.1.35`。
 
 仓库里历史遗留的 `v1.0` 标签早于当前版本方案，不代表当前发布版本。发布时请

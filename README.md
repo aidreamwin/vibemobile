@@ -131,6 +131,20 @@ Windows PowerShell
 
 安装包从 [GitHub Releases](https://github.com/aidreamwin/vibemobile/releases) 下载。自定义安装目录、工作区、端口及 TLS 见 [一键安装与升级](docs/quick-install.md)。首次使用前按需登录代理 CLI。
 
+#### 主分支开发版（latest）
+
+每次 `main` 通过 CI 检查后，自动更新 `latest` 预发行版。开发人员可以在 Hub 或 Runner 机器上显式安装该版本，用于体验主分支的新功能。
+
+```sh
+# Hub
+curl -LsSf https://github.com/aidreamwin/vibemobile/releases/download/latest/hub-install.sh | sh
+
+# Runner
+curl -LsSf https://github.com/aidreamwin/vibemobile/releases/download/latest/runner-install.sh | sh
+```
+
+默认一键安装命令获取正式发行版。主分支开发版的 Windows 安装命令、版本切换和升级说明见 [一键安装与升级](docs/quick-install.md)。
+
 ### Antigravity CLI（可选）
 
 在对应的 runner 上安装支持 ACP 的 **Antigravity CLI**（`agy`），然后启动或重启 runner。
@@ -229,7 +243,7 @@ environment running on a computer or server. It supports **Codex**, **Claude
 Code**, **OpenCode**, and **Google Antigravity CLI** with streaming output, approval sheets, file diffs, a
 persistent terminal, and image input.
 
-Install Hub from the latest GitHub Release, then add a remote Runner in Settings and run its installer on the remote machine. Both installers support interactive upgrades on repeated runs. See the [one-line installation guide](docs/quick-install.md) for Linux, macOS and Windows commands.
+Install Hub from the latest stable GitHub Release, then add a remote Runner in Settings and run its installer on the remote machine. Both installers support interactive upgrades on repeated runs. Developers can explicitly choose the rolling `latest` prerelease built from `main`. See the [one-line installation guide](docs/quick-install.md) for Linux, macOS and Windows commands.
 
 The Node backend is not optional: `codex app-server` rejects WebSocket upgrades
 that carry an `Origin` header, and browsers always send one, so the backend acts

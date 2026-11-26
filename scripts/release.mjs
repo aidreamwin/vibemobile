@@ -6,6 +6,7 @@
  *   npm run release -- --allow-dirty      # include uncommitted work
  *   npm run release -- --skip-verify      # skip tests/build (not recommended)
  *   npm run release -- --release-url=https://github.com/owner/repo/releases/download/v1.0.0
+ *   npm run release -- --build-id=123-1   # unique archive names for a rolling release
  *
  * Artifacts contain source only. `node_modules`, `dist` and every secret are
  * excluded, and the actual `npm ci` + build happens on the target machine so
@@ -26,7 +27,12 @@ const skipVerify = flag('skip-verify')
 const force = flag('force')
 const keepStage = flag('keep-stage')
 const releaseUrl = one(args['release-url'])
+const buildId = one(args['build-id'])
 const targets = ['linux-x64', 'win32-x64', 'linux-arm64']
+
+if (buildId !== undefined && (typeof buildId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(buildId))) {
+  fail('--build-id must contain 1–64 letters, digits, dots, underscores or hyphens')
+}
 
 let downloadBase
 if (releaseUrl !== undefined) {
@@ -131,9 +137,10 @@ if (!skipVerify) {
 fs.mkdirSync(outDir, { recursive: true })
 
 const artifacts = []
-const hubName = `vibemobile-hub-${serverVersion}-w${webVersion}-${commit}${dirtySuffix}.tar.gz`
-const updateName = `vibemobile-update-${serverVersion}-w${webVersion}-${commit}${dirtySuffix}.tar.gz`
-const runnerName = `vibemobile-runner-${serverVersion}-${commit}${dirtySuffix}.tar.gz`
+const archiveStamp = `${commit}${buildId ? `-b${buildId}` : ''}${dirtySuffix}`
+const hubName = `vibemobile-hub-${serverVersion}-w${webVersion}-${archiveStamp}.tar.gz`
+const updateName = `vibemobile-update-${serverVersion}-w${webVersion}-${archiveStamp}.tar.gz`
+const runnerName = `vibemobile-runner-${serverVersion}-${archiveStamp}.tar.gz`
 
 const writeHub = kind === 'all' || kind === 'hub'
 const writeUpdate = kind === 'all' || kind === 'update'
@@ -235,6 +242,7 @@ fs.writeFileSync(
       format: 1,
       generatedAt: new Date().toISOString(),
       commit,
+      ...(buildId ? { buildId } : {}),
       dirty,
       serverVersion,
       webVersion,
@@ -377,6 +385,7 @@ function writeReleaseJson(stage, contents) {
     serverVersion,
     webVersion,
     commit,
+    ...(buildId ? { buildId } : {}),
     dirty,
     packagedAt: new Date().toISOString(),
     packagedFrom: { platform: process.platform, arch: process.arch, node: process.versions.node },

@@ -1,6 +1,12 @@
 # 一键安装与升级
 
-Hub 提供统一的浏览器入口并自带本机 Runner。需要管理多台开发机器时，在其他机器上添加远程 Runner。以下命令从最新发布的 GitHub Release 下载并校验对应的部署包。[查看 Release 版本与资产](https://github.com/aidreamwin/vibemobile/releases)
+Hub 提供统一的浏览器入口并自带本机 Runner。需要管理多台开发机器时，在其他机器上添加远程 Runner。安装脚本从 GitHub Release 下载并校验对应的部署包。[查看 Release 版本与资产](https://github.com/aidreamwin/vibemobile/releases)
+
+| 安装版本 | 下载路径 | 适用场景 |
+| --- | --- | --- |
+| 正式发行版（默认） | `releases/latest/download/` | 常规安装与升级 |
+| 主分支开发版（latest） | `releases/download/latest/` | 体验主分支最新通过 CI 的构建 |
+| 指定正式版本 | `releases/download/<版本标签>/` | 固定到指定版本 |
 
 ## 安装前准备
 
@@ -9,7 +15,7 @@ Hub 提供统一的浏览器入口并自带本机 Runner。需要管理多台开
 - 安装器自动准备 Node.js 22+、PM2 和项目依赖。安装需要访问 GitHub Releases、npm registry，缺少 Node.js 时还需访问 nodejs.org。Linux 缺少 C++ 构建工具链时，安装器可通过 apt/dnf/yum/apk 准备依赖，普通用户可能需要 sudo。系统需能运行官方 Node.js 二进制。
 - 按需使用运行服务的用户登录 Codex、Claude Code 等代理 CLI。
 
-## 安装 Hub
+## 安装 Hub（默认正式发行版）
 
 在 Hub 机器上运行对应平台的命令。
 
@@ -29,7 +35,7 @@ curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/hub
 
 在受信任的局域网或 VPN 内使用。HTTPS 可在首次安装时通过 `--tls` 启用，也可配置 HTTPS 反向代理。详见 [Hub TLS 部署](hub-tls.md)。
 
-## 安装 Runner
+## 安装 Runner（默认正式发行版）
 
 1. 登录 Hub，在「设置 → 执行机器 → 添加执行机」填写名称，点击「生成令牌」，再点击「复制连接令牌」。令牌包含 Runner ID，只显示一次。
 2. 在远程 Runner 机器切换到项目目录，运行对应平台的命令。
@@ -57,6 +63,32 @@ curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/hub
 
 4. 安装器自动构建并启动 Runner。回到 Hub 执行机器列表，确认新执行机显示「在线」。Runner 主动连接 Hub，默认私有服务端口为 `5901`，无需为远程 Runner 开放入站端口。
 
+## 安装主分支开发版（latest）
+
+`main` 每次推送通过 CI 后自动打包并更新 `latest` 预发行版。安装器显示版本和提交号，便于确认测试的是哪一次构建。开发人员在对应的机器上选择以下命令。
+
+**Linux / macOS**
+
+```sh
+# Hub
+curl -LsSf https://github.com/aidreamwin/vibemobile/releases/download/latest/hub-install.sh | sh
+
+# Runner
+curl -LsSf https://github.com/aidreamwin/vibemobile/releases/download/latest/runner-install.sh | sh
+```
+
+**Windows PowerShell**
+
+```powershell
+# Hub
+& ([scriptblock]::Create((curl.exe -LsSf 'https://github.com/aidreamwin/vibemobile/releases/download/latest/hub-install.ps1' | Out-String)))
+
+# Runner
+& ([scriptblock]::Create((curl.exe -LsSf 'https://github.com/aidreamwin/vibemobile/releases/download/latest/runner-install.ps1' | Out-String)))
+```
+
+首次安装远程 Runner 时同样输入 Hub 地址与连接令牌。再次运行上述命令即可交互升级到更新的主分支构建。需要切回正式发行版时，执行前面的默认安装命令并确认版本切换。两个安装渠道共用已有安装配置与数据目录。
+
 ## 升级已有安装
 
 在原安装用户的终端中再次执行对应角色的安装命令。安装器识别已有安装后会显示当前版本、下载版本及确认提示。
@@ -71,7 +103,7 @@ Upgrade this installation? [y/N]
 - 安装器默认识别当前用户的安装目录和 PM2 应用 `vibemobile` / `vibemobile-runner`。
 - 自定义目录的旧 PM2 安装可使用 `--target=<原安装根目录>`，安装根目录包含 `vibemobile.env`。
 - `--yes` 用于无人值守升级。重复安装相同版本会复用已有构建。
-- 指定版本时将 URL 中的 `latest/download` 改为 `download/<版本标签>`。
+- 指定版本时将 URL 中的 `latest/download` 改为 `download/<版本标签>`。安装主分支开发版使用 `download/latest`。
 
 ## 自定义安装与无人值守升级
 
@@ -130,7 +162,7 @@ pm2 logs vibemobile-runner --lines 50
 
 | 现象 | 检查方式 |
 | --- | --- |
-| 安装脚本下载返回 HTTP `404` | 在 [GitHub Releases](https://github.com/aidreamwin/vibemobile/releases) 确认存在已发布版本，且包含对应安装脚本。维护者可查看 [发布流程](releasing.md)。 |
+| 安装脚本下载返回 HTTP `404` | 在 [GitHub Releases](https://github.com/aidreamwin/vibemobile/releases) 确认对应渠道已发布，正式版使用默认地址，主分支开发版使用 `download/latest`。维护者可查看 [发布流程](releasing.md)。 |
 | 提示 `Interactive input requires a terminal` | 在具备交互能力的终端运行。自动升级使用 `--yes`，Runner 无人值守安装使用 `--hub-url` 与 `--runner-token-file` 等选项。 |
 | 端口已被使用 | 通过 `--port`、`--runner-port`、`--codex-port`、`--opencode-port` 选择空闲且互不重复的端口。 |
 | 依赖安装或构建失败 | 检查 GitHub、npm registry、Node.js 下载源的网络连通性及系统构建工具链。 |
