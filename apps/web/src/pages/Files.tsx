@@ -1,7 +1,5 @@
 import {
   FolderOpen,
-  X,
-  Check,
   Eye,
   Code,
   Ellipsis,
@@ -11,14 +9,34 @@ import {
   Search,
   ArrowUpDown,
   FileImage,
+  FileCode2,
+  FileText,
+  ChevronRight,
+  ChevronLeft,
+  Folder,
+  LoaderCircle,
+  FileWarning,
+  WrapText,
 } from 'lucide-react'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
-import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
+import ToolbarRow from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FileContent, FileEntry } from '@vibemobile/protocol'
@@ -37,6 +55,7 @@ import { UnifiedDiff } from '../components/DiffView'
 import FileBody, { isRenderable } from '../components/FileBody'
 import ImageFilePreview from '../components/ImageFilePreview'
 import { isImageFile, isRasterImage } from '../lib/fileImage'
+import { fileReadError } from '../lib/fileErrors'
 import FileEditor, { MAX_EDIT_LINES } from '../components/FileEditor'
 import { useDocumentTitle } from '../lib/title'
 import DesktopFilePane, { type FilePaneView } from '../components/desktop/DesktopFilePane'
@@ -138,7 +157,10 @@ export default function Files({
   const [preview, setPreview] = useState(!line)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const searchDirectory = useRef<string | null>(null)
   const [sortByName, setSortByName] = useState(false)
+  const [wrap, setWrap] = useState(true)
+  const [discardOpen, setDiscardOpen] = useState(false)
 
   const [loading, setLoading] = useState(() =>
     view.kind === 'list' ? !getDirectorySnapshot(view.path) : !content && !rasterImage,
@@ -179,10 +201,11 @@ export default function Files({
   const filtering = view.kind === 'list' && Boolean(query)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  /** True until this mount's first fetch has answered — see the fallback below. */
-  const firstLoad = useRef(true)
-
   const key = viewKey(view)
+
+  useEffect(() => {
+    if (!visible) setDiscardOpen(false)
+  }, [visible])
 
   useEffect(() => {
     if (line) setPreview(false)
@@ -239,9 +262,10 @@ export default function Files({
     setEditBase(restoredDraft?.base)
     setSaveError(null)
     setError(null)
-    if (next.kind === 'list') {
+    if (next.kind === 'list' && next.path !== searchDirectory.current) {
       setQuery('')
       setSearchOpen(false)
+      searchDirectory.current = null
     }
     setView(next)
   }, [])
@@ -268,6 +292,15 @@ export default function Files({
   }
 
   function cancelEdit() {
+    if (dirty) {
+      setDiscardOpen(true)
+      return
+    }
+    discardEdit()
+  }
+
+  function discardEdit() {
+    setDiscardOpen(false)
     setSaveError(null)
     setDraft(content?.text ?? '')
     setEditBase(undefined)
@@ -331,12 +364,11 @@ export default function Files({
   // file and landing back on a remembered one are all the same path through
   // here — and 刷新 is just one more turn of `reload`.
   useEffect(() => {
-    if (!visible) return
+    if (!visible || editing) return
     if (view.kind === 'list' && !view.path) return
     if (view.kind === 'diff' && !defaultCwd) return
     if (rasterImage) {
       lastReload.current = reload
-      firstLoad.current = false
       setLoading(false)
       setError(null)
       return
@@ -366,20 +398,11 @@ export default function Files({
         }
       } catch (err) {
         if (cancelled) return
-        setError((err as Error).message)
+        setError(fileReadError(err))
         if (view.kind === 'file' && !getFileSnapshot(view.path)) setContent(null)
         if (view.kind === 'list' && !getDirectorySnapshot(view.path)) setEntries(EMPTY_ENTRIES)
-        // What this mount opened on can outlive itself: the agent renames and
-        // deletes files while this page sits in another tab. An empty pane
-        // under a red banner is a dead end nobody asked for, so only the first
-        // load of a mount falls back — after that the error is the answer to
-        // something the user just did, and hiding it would be the wrong move.
-        if (firstLoad.current && !fixedView && !cached && view.kind !== 'list') {
-          go({ kind: 'list', path: defaultCwd || '' })
-        }
       } finally {
         if (!cancelled) {
-          firstLoad.current = false
           setLoading(false)
         }
       }
@@ -388,7 +411,7 @@ export default function Files({
     return () => {
       cancelled = true
     }
-  }, [view, defaultCwd, fixedView, go, reload, visible, rasterImage])
+  }, [view, defaultCwd, fixedView, reload, visible, rasterImage, editing])
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
@@ -417,333 +440,331 @@ export default function Files({
     // where they were, rather than at the top the clamp left behind.
   }, [key, loading, editing, visible, filtering])
 
+  const discardDialog = (
+    <AlertDialog open={visible && discardOpen} onOpenChange={setDiscardOpen}>
+      <AlertDialogContent size="sm" className="w-[calc(100%-2rem)] rounded-xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle>
+          <AlertDialogDescription className="break-all">
+            {view.kind === 'file' ? view.name : '文件'} 的修改尚未保存。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="min-h-11">继续编辑</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" className="min-h-11" onClick={discardEdit}>
+            放弃修改
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
   if (embedded && fixedView) {
     return (
-      <DesktopFilePane
-        visible={visible}
-        view={fixedView}
-        root={defaultCwd}
-        line={line}
-        content={content}
-        diff={diff}
-        preview={preview}
-        loading={loading}
-        error={error}
-        scrollRef={scrollRef}
-        onScroll={onScroll}
-        onPreview={setPreview}
-        onOpenFile={
-          onOpenFileTab &&
-          ((ref) => onOpenFileTab(ref.path, ref.path.split(/[\\/]/).at(-1) || ref.path, ref.line ?? undefined))
-        }
-        onOpenDiff={onOpenDiffTab}
-        onRefresh={() => setReload((n) => n + 1)}
-        onEdit={beginEdit}
-        editBlockedBy={editBlockedBy}
-        imageRevision={reload}
-        editor={
-          editing
-            ? {
-                value: draft,
-                dirty,
-                saving,
-                error: saveError,
-                onChange: setDraft,
-                onCancel: cancelEdit,
-                onSave: () => void save(),
-              }
-            : undefined
-        }
-      />
+      <>
+        <DesktopFilePane
+          visible={visible}
+          view={fixedView}
+          root={defaultCwd}
+          line={line}
+          content={editing ? (content ?? editBase ?? null) : content}
+          diff={diff}
+          preview={preview}
+          loading={loading && !editing}
+          error={error}
+          scrollRef={scrollRef}
+          onScroll={onScroll}
+          onPreview={setPreview}
+          onOpenFile={
+            onOpenFileTab &&
+            ((ref) => onOpenFileTab(ref.path, ref.path.split(/[\\/]/).at(-1) || ref.path, ref.line ?? undefined))
+          }
+          onOpenDiff={onOpenDiffTab}
+          onRefresh={() => setReload((n) => n + 1)}
+          onEdit={beginEdit}
+          editBlockedBy={editBlockedBy}
+          imageRevision={reload}
+          editor={
+            editing
+              ? {
+                  value: draft,
+                  dirty,
+                  saving,
+                  error: saveError,
+                  onChange: setDraft,
+                  onCancel: cancelEdit,
+                  onSave: () => void save(),
+                }
+              : undefined
+          }
+        />
+        {discardDialog}
+      </>
     )
   }
 
   const backDirectory = view.kind === 'list' ? parentPath(view.path) : view.path ? parentPath(view.path) : defaultCwd
   const canGoBack =
     !fixedView && (view.kind !== 'list' || (view.path !== defaultCwd && isPathInside(backDirectory, defaultCwd)))
-  const fileTool = embedded
-    ? 'inline-flex size-7 items-center justify-center rounded-md hover:bg-secondary [&_svg]:size-4'
-    : 'tap rounded-xl'
+  const fileTool = 'tap shrink-0 rounded-xl text-muted-foreground active:bg-secondary'
+  const viewTitle =
+    view.kind === 'file'
+      ? view.name
+      : view.kind === 'list'
+        ? view.path.split(/[\\/]/).filter(Boolean).at(-1) || '文件'
+        : '工作区改动'
+  const directoryCount = loading ? '' : filtering ? `${visibleEntries.length} 个结果` : `${entries.length} 项`
+  const fileDetail =
+    view.kind === 'file'
+      ? [shortPath(parentPath(view.path), 1), content && formatBytes(content.bytes)].filter(Boolean).join(' · ')
+      : ''
+  const viewDetail =
+    view.kind === 'list'
+      ? [canGoBack ? shortPath(backDirectory, 1) : '工作区', directoryCount].filter(Boolean).join(' · ')
+      : fileDetail
+  const refresh = () => setReload((n) => n + 1)
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setQuery('')
+    searchDirectory.current = null
+  }
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
         <ToolbarRow compact={embedded}>
-          {/* While editing, the entire button cluster is replaced by 取消/保存.
-              That is the hard guarantee that a draft cannot be lost by a stray
-              tap: the back button, the diff, the refresh and the source/preview
-              switch are all gone, so the only two ways out are the two buttons
-              that know about the draft. */}
           {view.kind === 'file' && editing ? (
             <>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[15px] font-semibold text-foreground">{view.name}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {saving ? '保存中…' : dirty ? '已修改，尚未保存' : '没有改动'}
+              <div className="min-w-0 flex-1 pl-2">
+                <div className="truncate text-[15px] font-semibold text-foreground" title={view.name}>
+                  {view.name}
+                </div>
+                <div role="status" className={`text-[11px] ${dirty ? 'text-warning' : 'text-muted-foreground'}`}>
+                  {saving ? '保存中…' : dirty ? '未保存的修改' : '没有改动'}
                 </div>
               </div>
               <button
                 type="button"
                 onClick={cancelEdit}
                 disabled={saving}
-                className="tap shrink-0 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground disabled:opacity-40"
+                className="min-h-11 shrink-0 rounded-xl px-3 text-sm text-muted-foreground active:bg-secondary disabled:opacity-40"
                 aria-label="取消编辑"
-                title="取消编辑"
               >
-                <X aria-hidden="true" className="size-5" />
+                取消
               </button>
               <button
                 type="button"
                 onClick={() => void save()}
-                // Disabled when there is nothing to save as well as while a save
-                // is in flight: the second tap of an impatient double-tap would
-                // otherwise go out with the same `rev` and come back a 409.
                 disabled={saving || !dirty}
-                className="tap shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground disabled:opacity-40"
+                className="min-h-11 shrink-0 rounded-xl bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
                 aria-label="保存文件"
-                title="保存文件"
               >
-                <Check aria-hidden="true" className="size-5" />
+                {saving ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : '保存'}
               </button>
             </>
           ) : (
             <>
-              {!embedded && !canGoBack && <ToolbarIdentity icon={FolderOpen} label="文件" />}
-              {canGoBack && <h1 className="sr-only">文件</h1>}
-              {!embedded && <RunnerSelector compact />}
               {canGoBack ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    go({ kind: 'list', path: backDirectory })
-                  }}
-                  className="tap shrink-0 rounded-xl text-muted-foreground active:bg-white/5"
+                  onClick={() => go({ kind: 'list', path: backDirectory })}
+                  className={fileTool}
                   aria-label="上一级"
+                  title="上一级"
                 >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    className="h-5 w-5"
-                  >
-                    <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.8} />
                 </button>
-              ) : null}
-
+              ) : (
+                <div className="grid size-9 shrink-0 place-items-center text-foreground">
+                  <FolderOpen aria-hidden="true" className="size-5" strokeWidth={1.8} />
+                </div>
+              )}
               <div className="min-w-0 flex-1" title={view.path}>
-                {view.kind === 'list' ? (
-                  <div className="truncate font-mono text-[13px] font-medium text-foreground">
-                    {view.path === defaultCwd ? (
-                      <span className="text-muted-foreground">{shortPath(defaultCwd, 1)}</span>
-                    ) : (
-                      shortPath(view.path, 1)
-                    )}
-                  </div>
-                ) : (
-                  <div className="truncate text-[15px] font-semibold text-foreground">
-                    {view.kind === 'file' ? view.name : '工作区改动'}
-                  </div>
+                <h1 className="truncate text-[15px] font-semibold leading-tight text-foreground">{viewTitle}</h1>
+                {viewDetail && (
+                  <p className="mt-0.5 truncate text-[11px] leading-tight text-muted-foreground">{viewDetail}</p>
                 )}
               </div>
-
-              {view.kind === 'file' ? (
-                <>
-                  {content && isRenderable(view.path) && (
-                    <button
-                      type="button"
-                      onClick={() => setPreview(!preview)}
-                      aria-label={preview ? '查看源码' : '预览文件'}
-                      title={preview ? '查看源码' : '预览文件'}
-                      aria-pressed={preview}
-                      className={`${fileTool} shrink-0 ${preview ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
-                    >
-                      {preview ? (
-                        <Code aria-hidden="true" className="size-5" />
-                      ) : (
-                        <Eye aria-hidden="true" className="size-5" />
-                      )}
-                    </button>
+              {!embedded && !canGoBack && <RunnerSelector compact />}
+              {view.kind === 'file' && content && isRenderable(view.path) && (
+                <button
+                  type="button"
+                  onClick={() => setPreview(!preview)}
+                  aria-label={preview ? '查看源码' : '预览文件'}
+                  title={preview ? '查看源码' : '预览文件'}
+                  aria-pressed={preview}
+                  className={`${fileTool} ${preview ? 'bg-secondary text-foreground' : ''}`}
+                >
+                  {preview ? (
+                    <Code aria-hidden="true" className="size-5" />
+                  ) : (
+                    <Eye aria-hidden="true" className="size-5" />
                   )}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label="文件操作"
-                        title="文件操作"
-                        className={`${fileTool} shrink-0 text-muted-foreground active:bg-secondary`}
-                      >
-                        <Ellipsis aria-hidden="true" className="size-5" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-40 rounded-xl border-border p-1 shadow-xl">
-                      {content && !editBlockedBy && (
-                        <DropdownMenuItem onSelect={beginEdit} className="min-h-11 rounded-lg">
-                          <Pencil />
-                          编辑文件
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          if (onOpenDiffTab) onOpenDiffTab(view.path)
-                          else go({ kind: 'diff', path: view.path })
-                        }}
-                        className="min-h-11 rounded-lg"
-                      >
-                        <GitBranch />
-                        查看改动
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => setReload((n) => n + 1)} className="min-h-11 rounded-lg">
-                        <RefreshCw />
-                        刷新
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </>
-              ) : (
-                <>
+                </button>
+              )}
+              {view.kind === 'file' && content && !editBlockedBy && !error && (
+                <button type="button" onClick={beginEdit} className={fileTool} aria-label="编辑文件" title="编辑文件">
+                  <Pencil aria-hidden="true" className="size-5" strokeWidth={1.8} />
+                </button>
+              )}
+              {view.kind === 'list' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (searchOpen) closeSearch()
+                    else {
+                      searchDirectory.current = view.path
+                      setSearchOpen(true)
+                    }
+                  }}
+                  className={`${fileTool} ${searchOpen ? 'bg-secondary text-foreground' : ''}`}
+                  aria-label={searchOpen ? '关闭文件搜索' : '搜索文件'}
+                  aria-expanded={searchOpen}
+                >
+                  <Search aria-hidden="true" className="size-5" />
+                </button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" aria-label="文件操作" title="文件操作" className={fileTool}>
+                    <Ellipsis aria-hidden="true" className="size-5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44 rounded-xl border-border p-1 shadow-xl">
                   {view.kind === 'list' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setSearchOpen((open) => !open)}
-                        className={`tap shrink-0 rounded-xl ${searchOpen ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
-                        aria-label={searchOpen ? '关闭文件搜索' : '搜索文件'}
-                        aria-expanded={searchOpen}
-                      >
-                        <Search aria-hidden="true" className="size-5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSortByName((value) => !value)}
-                        className={`tap shrink-0 rounded-xl ${sortByName ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
-                        aria-label={sortByName ? '恢复文件排序' : '按名称排序'}
-                        aria-pressed={sortByName}
-                      >
-                        <ArrowUpDown aria-hidden="true" className="size-5" />
-                      </button>
-                    </>
+                    <DropdownMenuCheckboxItem
+                      checked={sortByName}
+                      onCheckedChange={setSortByName}
+                      className="min-h-11 rounded-lg"
+                    >
+                      <ArrowUpDown /> 按名称排序
+                    </DropdownMenuCheckboxItem>
+                  )}
+                  {view.kind === 'file' && !rasterImage && (!preview || !isRenderable(view.path)) && (
+                    <DropdownMenuCheckboxItem checked={wrap} onCheckedChange={setWrap} className="min-h-11 rounded-lg">
+                      <WrapText /> 自动换行
+                    </DropdownMenuCheckboxItem>
                   )}
                   {view.kind !== 'diff' && (
-                    <button
-                      type="button"
-                      onClick={() => go({ kind: 'diff', path: undefined })}
-                      className="tap shrink-0 rounded-xl text-muted-foreground active:bg-white/5"
-                      aria-label="查看改动"
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        const path = view.kind === 'file' ? view.path : undefined
+                        if (onOpenDiffTab) onOpenDiffTab(path)
+                        else go({ kind: 'diff', path })
+                      }}
+                      className="min-h-11 rounded-lg"
                     >
-                      <svg
-                        aria-hidden="true"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        className="h-5 w-5"
-                      >
-                        <path
-                          d="M6 3v12M6 21a3 3 0 100-6 3 3 0 000 6zM18 9a3 3 0 100-6 3 3 0 000 6zM18 9v3a6 6 0 01-6 6H9"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </button>
+                      <GitBranch />
+                      查看改动
+                    </DropdownMenuItem>
                   )}
-
-                  <button
-                    type="button"
-                    onClick={() => setReload((n) => n + 1)}
-                    className="tap shrink-0 rounded-xl text-muted-foreground active:bg-white/5"
-                    aria-label="刷新"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      className="h-5 w-5"
-                    >
-                      <path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </>
-              )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={refresh} className="min-h-11 rounded-lg">
+                    <RefreshCw />
+                    刷新
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
         </ToolbarRow>
         {view.kind === 'list' && searchOpen && (
-          <div className="flex items-center gap-2 px-4 pb-2">
-            <input
-              // biome-ignore lint/a11y/noAutofocus: the field is opened by an explicit search tap
-              autoFocus={visible}
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索当前目录…"
-              aria-label="搜索当前目录"
-              className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-secondary px-3 text-[16px] text-foreground placeholder:text-muted-foreground/60 focus:border-primary/60 focus:outline-none"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery('')}
-                className="tap rounded-xl px-2 text-xs text-muted-foreground"
-              >
-                清除
-              </button>
-            )}
+          <div className="flex items-center gap-2 px-3 pb-2">
+            <div className="relative min-w-0 flex-1">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                // biome-ignore lint/a11y/noAutofocus: the user explicitly opens file search.
+                autoFocus={visible}
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') closeSearch()
+                }}
+                placeholder="搜索当前目录"
+                aria-label="搜索当前目录"
+                className="h-11 w-full rounded-xl border border-border bg-secondary pl-9 pr-3 text-[16px] text-foreground placeholder:text-muted-foreground/70 focus:border-ring focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={closeSearch}
+              className="min-h-11 shrink-0 rounded-xl px-2 text-sm text-muted-foreground"
+            >
+              取消
+            </button>
           </div>
         )}
       </header>
-
-      <div ref={scrollRef} onScroll={onScroll} className="scroll-y min-h-0 flex-1">
-        {error && (
-          <div className="border-b border-destructive/50 bg-destructive/15 px-4 py-2 text-[12px] text-destructive">
-            {error}
+      {saveError && (
+        <div
+          role="alert"
+          className="shrink-0 border-b border-destructive/35 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+        >
+          {saveError}
+        </div>
+      )}
+      {view.kind === 'file' && !editing && editBlockedBy && (
+        <div className="shrink-0 border-b border-border bg-card px-4 py-2 text-xs text-muted-foreground">
+          {editBlockedBy}
+        </div>
+      )}
+      <div ref={scrollRef} onScroll={onScroll} className="scroll-y min-h-0 min-w-0 flex-1">
+        {editing && view.kind === 'file' ? (
+          <FileEditor
+            path={view.path}
+            value={draft}
+            onChange={setDraft}
+            disabled={saving}
+            visible={visible}
+            onSave={() => void save()}
+          />
+        ) : loading ? (
+          <div role="status" className="grid min-h-full place-content-center text-sm text-muted-foreground">
+            <span className="flex items-center gap-2">
+              <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
+              正在读取…
+            </span>
           </div>
-        )}
-
-        {/* A save failure is not a destination: it is a line about the draft
-            below it, so it sits above the editor and never replaces it. */}
-        {saveError && (
-          <div className="border-b border-destructive/50 bg-destructive/15 px-4 py-2 text-[12px] text-destructive">
-            {saveError}
+        ) : error ? (
+          <div className="grid min-h-full place-content-center justify-items-center gap-3 px-8 text-center">
+            <FileWarning aria-hidden="true" className="size-9 text-muted-foreground" strokeWidth={1.4} />
+            <p role="alert" className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={refresh}
+              className="min-h-11 rounded-xl border border-border px-5 text-sm text-foreground active:bg-secondary"
+            >
+              重试
+            </button>
           </div>
-        )}
-
-        {/* Why there is no 编辑 button. Said here rather than as a disabled
-            button in the header, because a greyed-out pencil on a phone explains
-            nothing and this is the only place with room for a sentence. */}
-        {view.kind === 'file' && !editing && editBlockedBy && (
-          <div className="border-b border-border bg-card px-4 py-1.5 text-[11px] text-muted-foreground">
-            {editBlockedBy}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="py-16 text-center text-sm text-muted-foreground/70">加载中…</div>
         ) : view.kind === 'list' ? (
           <DirectoryList entries={visibleEntries} filtered={Boolean(searchQuery)} onOpen={openEntry} />
         ) : view.kind === 'file' ? (
           rasterImage ? (
             <ImageFilePreview key={`${view.path}:${reload}`} path={view.path} refresh={reload > 0} />
           ) : (
-            content &&
-            (editing ? (
-              // `h-full` because the textarea owns its own scrolling: the outer
-              // container has to hand it a definite height, not grow to fit it.
-              <div className="h-full">
-                <FileEditor path={view.path} value={draft} onChange={setDraft} disabled={saving} visible={visible} />
-              </div>
-            ) : (
-              <FileBody content={content} path={view.path} line={line} preview={preview} visible={visible} />
-            ))
+            content && (
+              <FileBody
+                content={content}
+                path={view.path}
+                line={line}
+                preview={preview}
+                visible={visible}
+                wrap={wrap}
+              />
+            )
           )
         ) : (
           <UnifiedDiff diff={diff} />
         )}
       </div>
+      {discardDialog}
     </div>
   )
 }
@@ -758,12 +779,19 @@ const DirectoryList = memo(function DirectoryList({
   onOpen: (entry: FileEntry) => void
 }) {
   return (
-    <ul className="divide-y divide-border">
+    <ul className="divide-y divide-border/70 overflow-hidden px-3 py-1">
       {entries.map((entry) => (
         <DirectoryRow key={entry.path} entry={entry} onOpen={onOpen} />
       ))}
       {entries.length === 0 && (
-        <li className="py-16 text-center text-sm text-muted-foreground/70">{filtered ? '没有匹配的文件' : '空目录'}</li>
+        <li className="flex flex-col items-center gap-3 py-16 text-center text-sm text-muted-foreground">
+          {filtered ? (
+            <Search aria-hidden="true" className="size-8" strokeWidth={1.5} />
+          ) : (
+            <FolderOpen aria-hidden="true" className="size-8" strokeWidth={1.5} />
+          )}
+          {filtered ? '没有匹配的文件' : '空目录'}
+        </li>
       )}
     </ul>
   )
@@ -776,37 +804,35 @@ const DirectoryRow = memo(function DirectoryRow({
   entry: FileEntry
   onOpen: (entry: FileEntry) => void
 }) {
+  const directory = entry.type === 'directory'
+  const Icon = directory
+    ? Folder
+    : isImageFile(entry.path)
+      ? FileImage
+      : /\.(?:md|txt|log|rst)$/i.test(entry.path)
+        ? FileText
+        : FileCode2
   return (
-    <li className="[content-visibility:auto] [contain-intrinsic-block-size:auto_45px]">
+    <li className="[content-visibility:auto] [contain-intrinsic-block-size:auto_49px]">
       <button
         type="button"
         onClick={() => onOpen(entry)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-card"
+        className="flex min-h-12 w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left active:bg-secondary focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
       >
-        <span className={entry.type === 'directory' ? 'text-primary' : 'text-muted-foreground/70'}>
-          {entry.type === 'directory' ? (
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-              <path d="M3 7a2 2 0 012-2h3.6l2 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-            </svg>
-          ) : isImageFile(entry.path) ? (
-            <FileImage aria-hidden="true" className="size-5" strokeWidth={1.6} />
-          ) : (
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              className="h-5 w-5"
-            >
-              <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" strokeLinejoin="round" />
-              <path d="M14 3v5h5" strokeLinejoin="round" />
-            </svg>
-          )}
+        <span
+          className={`grid size-8 shrink-0 place-items-center rounded-lg ${directory ? 'bg-primary/10 text-primary' : 'bg-card text-muted-foreground'}`}
+        >
+          <Icon aria-hidden="true" className="size-5" strokeWidth={1.6} />
         </span>
-        <span className="min-w-0 flex-1 truncate text-[14px] text-foreground/90">{entry.name}</span>
-        {entry.type === 'file' && (
-          <span className="shrink-0 text-[11px] text-muted-foreground/70">{formatBytes(entry.size)}</span>
+        <span className="min-w-0 flex-1 truncate text-[14px] text-foreground" title={entry.name}>
+          {entry.name}
+        </span>
+        {directory ? (
+          <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {entry.size === 0 ? '0 B' : formatBytes(entry.size)}
+          </span>
         )}
       </button>
     </li>

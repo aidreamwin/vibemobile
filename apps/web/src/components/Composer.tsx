@@ -113,7 +113,7 @@ const EFFORT_AUTO = '__auto__'
  * tailwind-merge will not cancel across variant modifiers anyway. Measured:
  * with a bare `h-11` these render 36px. */
 const BARE_TRIGGER =
-  'h-11 gap-0 rounded-lg border-0 bg-transparent text-[13px] font-medium shadow-none focus-visible:ring-0 data-[size=default]:h-11 dark:bg-transparent dark:hover:bg-transparent [&>svg]:hidden'
+  'h-11 gap-0 rounded-lg border-0 bg-transparent text-[13px] font-medium shadow-none focus-visible:ring-2 data-[size=default]:h-11 dark:bg-transparent dark:hover:bg-secondary/50 [&>svg]:hidden'
 
 const DESKTOP_TRIGGER =
   'h-7 gap-1 rounded-md border-0 bg-transparent text-xs shadow-none data-[size=default]:h-7 dark:bg-transparent dark:hover:bg-secondary [&>svg]:size-3'
@@ -166,6 +166,7 @@ const Composer = memo(function Composer({
   const activeSlashRef = useRef<HTMLButtonElement>(null)
 
   const selectedModel = models.find((item) => item.id === model) ?? models[0]
+  const modelLabel = model ? models.find((item) => item.id === model)?.displayName || model : '默认模型'
   const effortOptions = selectedModel?.efforts ?? []
   const canSend = !disabled && (text.trim().length > 0 || images.length > 0)
   const triggerClass = desktop ? DESKTOP_TRIGGER : BARE_TRIGGER
@@ -509,7 +510,7 @@ const Composer = memo(function Composer({
         <textarea
           ref={textareaRef}
           data-workbench-composer={desktop ? '' : undefined}
-          aria-label={desktop ? '输入任务' : undefined}
+          aria-label="输入任务"
           aria-keyshortcuts={desktop ? 'Control+Enter Meta+Enter' : undefined}
           rows={1}
           value={text}
@@ -609,7 +610,11 @@ const Composer = memo(function Composer({
               warning glyph and colour -- the safe ones are the quiet default and
               should not compete for attention. */}
           <div className="relative shrink-0">
-            <span className="pointer-events-none absolute left-2 top-1/2 z-10 -translate-y-1/2">{permissionGlyph}</span>
+            <span
+              className={`pointer-events-none absolute left-2 top-1/2 z-10 -translate-y-1/2 ${desktop ? '' : 'max-[359px]:left-3.5'}`}
+            >
+              {permissionGlyph}
+            </span>
             <Select
               open={visible && openSelect === 'permission'}
               onOpenChange={(open) => setOpenSelect(open ? 'permission' : null)}
@@ -618,13 +623,21 @@ const Composer = memo(function Composer({
             >
               <SelectTrigger
                 aria-label="权限"
-                className={`${triggerClass} ${desktop ? 'w-fit pr-1 pl-6' : 'w-[6rem] px-0 pl-6'} ${
+                title={`权限：${PERMISSIONS[permission].label}`}
+                className={`${triggerClass} ${desktop ? 'w-fit pr-1 pl-6' : 'w-[6rem] px-0 pl-6 max-[359px]:w-11 max-[359px]:px-0'} ${
                   permissionWarns ? 'text-warning' : 'text-muted-foreground'
                 }`}
               >
-                <SelectValue />
+                <SelectValue>
+                  <span className={desktop ? '' : 'max-[359px]:sr-only'}>{PERMISSIONS[permission].label}</span>
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent position="popper" side="top" align="start">
+              <SelectContent
+                position="popper"
+                side="top"
+                align="start"
+                className={desktop ? undefined : '[&_[data-slot=select-item]]:min-h-11'}
+              >
                 {cards.map((card) => (
                   <SelectItem key={card} value={card}>
                     {PERMISSIONS[card].label}
@@ -651,14 +664,22 @@ const Composer = memo(function Composer({
             >
               <SelectTrigger
                 aria-label="模型"
+                title={modelLabel}
                 disabled={disabled || models.length === 0}
                 /* justify-end: the base is justify-between, which with the
                    chevron hidden would push the value to the left edge. */
-                className={`${triggerClass} min-w-0 px-2 text-foreground/90 disabled:opacity-50 ${desktop ? 'max-w-52 flex-initial justify-start' : 'flex-1 justify-end text-right'}`}
+                className={`${triggerClass} min-w-0 px-1.5 text-foreground/90 disabled:opacity-50 *:data-[slot=select-value]:min-w-0 ${desktop ? 'max-w-52 flex-initial justify-start' : `flex-1 justify-end text-right ${effortOptions.length === 0 ? 'pr-5' : ''}`}`}
               >
-                <SelectValue />
+                <SelectValue>
+                  <span className="block min-w-0 truncate">{modelLabel}</span>
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent position="popper" side="top" align="end" className="max-w-[75vw]">
+              <SelectContent
+                position="popper"
+                side="top"
+                align="end"
+                className={`max-w-[75vw] ${desktop ? '' : '[&_[data-slot=select-item]]:min-h-11'}`}
+              >
                 <SelectItem value={MODEL_DEFAULT}>默认模型</SelectItem>
                 {model && !models.some((item) => item.id === model) && <SelectItem value={model}>{model}</SelectItem>}
                 {models.map((item) => (
@@ -668,21 +689,27 @@ const Composer = memo(function Composer({
                 ))}
               </SelectContent>
             </Select>
-            <Select
-              open={visible && openSelect === 'effort'}
-              onOpenChange={(open) => setOpenSelect(open ? 'effort' : null)}
-              value={effort || EFFORT_AUTO}
-              onValueChange={(value) => onEffortChange(value === EFFORT_AUTO ? '' : value)}
-            >
-              <SelectTrigger
-                aria-label="思考强度"
-                disabled={disabled || effortOptions.length === 0}
-                className={`${triggerClass} shrink-0 pl-1 text-foreground/90 disabled:opacity-50 ${desktop ? 'w-auto px-1.5' : 'w-[3.5rem] pr-5'}`}
+            {(desktop || effortOptions.length > 0) && (
+              <Select
+                open={visible && openSelect === 'effort'}
+                onOpenChange={(open) => setOpenSelect(open ? 'effort' : null)}
+                value={effort || EFFORT_AUTO}
+                onValueChange={(value) => onEffortChange(value === EFFORT_AUTO ? '' : value)}
               >
-                <SelectValue placeholder="自动" />
-              </SelectTrigger>
-              <SelectContent position="popper" side="top" align="end">
-                {/* Radix renders an EMPTY trigger when `value` has no matching
+                <SelectTrigger
+                  aria-label="思考强度"
+                  disabled={disabled || effortOptions.length === 0}
+                  className={`${triggerClass} shrink-0 pl-1 text-foreground/90 disabled:opacity-50 ${desktop ? 'w-auto px-1.5' : 'w-[3.5rem] pr-5'}`}
+                >
+                  <SelectValue placeholder="自动" />
+                </SelectTrigger>
+                <SelectContent
+                  position="popper"
+                  side="top"
+                  align="end"
+                  className={desktop ? undefined : '[&_[data-slot=select-item]]:min-h-11'}
+                >
+                  {/* Radix renders an EMPTY trigger when `value` has no matching
                     item, and `effort` need not come from this model's list: it
                     is restored from the session (`.vibemobile/*-sessions.json`)
                     and can name a level the model on screen does not offer —
@@ -690,17 +717,18 @@ const Composer = memo(function Composer({
                     opened on another device. Same guard as the model select
                     above, and it has to stay the same or the chip loses half
                     its label. */}
-                {(desktop || effortOptions.length === 0) && <SelectItem value={EFFORT_AUTO}>自动</SelectItem>}
-                {effort && !effortOptions.includes(effort) && (
-                  <SelectItem value={effort}>{EFFORT_LABELS[effort] ?? effort}</SelectItem>
-                )}
-                {effortOptions.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {EFFORT_LABELS[item] ?? item}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  <SelectItem value={EFFORT_AUTO}>自动</SelectItem>
+                  {effort && !effortOptions.includes(effort) && (
+                    <SelectItem value={effort}>{EFFORT_LABELS[effort] ?? effort}</SelectItem>
+                  )}
+                  {effortOptions.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {EFFORT_LABELS[item] ?? item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {!desktop && <ChevronIcon />}
           </div>
 

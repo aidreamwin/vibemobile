@@ -35,7 +35,7 @@ export default function SessionListEmpty({
             {showArchived
               ? '归档的会话会出现在这里，可以再取消归档'
               : filter === 'all'
-                ? '点右下角 + 新建一个，让代理在项目目录里干活'
+                ? '选择新建会话，让代理在项目目录中执行任务'
                 : '切到「全部」看看其他代理的会话'}
           </p>
         </>

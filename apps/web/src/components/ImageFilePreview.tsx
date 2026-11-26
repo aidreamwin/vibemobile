@@ -78,7 +78,7 @@ export default function ImageFilePreview({
       </div>
       {dimensions && !failed && (
         <footer
-          className={`flex shrink-0 items-center justify-between gap-2 border-t border-border bg-card/60 px-3 text-xs text-muted-foreground ${desktop ? 'min-h-8' : 'min-h-12'}`}
+          className={`flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border bg-card/60 px-3 text-xs text-muted-foreground ${desktop ? 'min-h-8 py-1' : 'min-h-13 py-0.5'}`}
         >
           <span className="tabular-nums">
             {dimensions.width} × {dimensions.height}
@@ -91,7 +91,7 @@ export default function ImageFilePreview({
                 type="button"
                 aria-pressed={actualSize === mode}
                 onClick={() => setActualSize(mode)}
-                className={`${desktop ? 'h-6' : 'h-9'} rounded-md px-2.5 text-xs hover:text-foreground aria-pressed:bg-raised aria-pressed:text-foreground`}
+                className={`${desktop ? 'h-6' : 'h-11'} rounded-md px-2.5 text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-raised aria-pressed:text-foreground`}
               >
                 {mode ? '实际大小' : '适应窗口'}
               </button>

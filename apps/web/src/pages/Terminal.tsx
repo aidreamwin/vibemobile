@@ -1,6 +1,8 @@
-import { Terminal as TerminalIcon, RotateCcw } from 'lucide-react'
-import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
+import { Keyboard, Terminal as TerminalIcon, RotateCcw } from 'lucide-react'
+import ToolbarRow from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
+import Sheet from '../components/Sheet'
+import { Button } from '../components/ui/button'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -37,11 +39,11 @@ const MAX_BACKOFF = 8_000
 const KEYS: { label: string; seq: string }[] = [
   { label: 'Esc', seq: '\x1b' },
   { label: 'Tab', seq: '\t' },
+  { label: 'Ctrl+C', seq: '\x03' },
   { label: '↑', seq: '\x1b[A' },
   { label: '↓', seq: '\x1b[B' },
   { label: '←', seq: '\x1b[D' },
   { label: '→', seq: '\x1b[C' },
-  { label: 'Ctrl+C', seq: '\x03' },
   { label: 'Ctrl+D', seq: '\x04' },
   { label: 'Ctrl+Z', seq: '\x1a' },
   { label: '|', seq: '|' },
@@ -92,6 +94,8 @@ export default function TerminalPage({
   /** Flips once the first fit has produced a real geometry. */
   const [sized, setSized] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const [moreKeys, setMoreKeys] = useState(false)
+  const [confirmRestart, setConfirmRestart] = useState(false)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
 
@@ -175,7 +179,9 @@ export default function TerminalPage({
     observer.observe(container)
     window.addEventListener('orientationchange', syncSize)
 
-    if (visibleRef.current && container.clientHeight) term.focus()
+    if (visibleRef.current && container.clientHeight && (embedded || window.matchMedia('(pointer: fine)').matches)) {
+      term.focus()
+    }
 
     return () => {
       if (sizeFrame !== null) cancelAnimationFrame(sizeFrame)
@@ -185,7 +191,7 @@ export default function TerminalPage({
       term.dispose()
       termRef.current = null
     }
-  }, [send, setCtrl])
+  }, [send, setCtrl, embedded])
 
   // --------------------------------------------------------------- socket
 
@@ -315,7 +321,10 @@ export default function TerminalPage({
   // Keepalive: phones drop idle sockets aggressively, and a shell that looks
   // alive but is not is worse than one that reconnects.
   useEffect(() => {
-    if (!visible) termRef.current?.blur()
+    if (!visible) {
+      termRef.current?.blur()
+      setConfirmRestart(false)
+    }
   }, [visible])
 
   useEffect(() => {
@@ -356,7 +365,10 @@ export default function TerminalPage({
       {!embedded && (
         <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
           <ToolbarRow>
-            <ToolbarIdentity icon={TerminalIcon} label="终端" />
+            <h1 className="flex shrink-0 items-center gap-1.5 pl-1 text-sm font-semibold">
+              <TerminalIcon aria-hidden="true" className="size-4 text-muted-foreground" strokeWidth={1.8} />
+              终端
+            </h1>
             {visible && <RunnerSelector compact />}
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${
@@ -368,11 +380,27 @@ export default function TerminalPage({
               title={error ?? notice ?? shell ?? '正在启动 shell…'}
               className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
             >
-              {error ?? notice ?? shell?.split(/[\\/]/).pop() ?? '…'}
+              {status === 'connecting'
+                ? '连接中…'
+                : status === 'error'
+                  ? '连接失败'
+                  : status === 'exited'
+                    ? '已退出'
+                    : (notice ?? shell?.split(/[\\/]/).pop() ?? '已连接')}
             </span>
             <button
               type="button"
-              onClick={onReopen}
+              onClick={() => setMoreKeys((previous) => !previous)}
+              aria-label="更多终端按键"
+              aria-expanded={moreKeys}
+              title="更多终端按键"
+              className={`tap shrink-0 rounded-xl ${moreKeys ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-raised`}
+            >
+              <Keyboard aria-hidden="true" className="size-5" strokeWidth={1.8} />
+            </button>
+            <button
+              type="button"
+              onClick={() => (status === 'open' ? setConfirmRestart(true) : onReopen())}
               aria-label={status === 'open' ? '重开终端' : '重连终端'}
               title={status === 'open' ? '重开终端' : '重连终端'}
               className="tap shrink-0 rounded-xl text-muted-foreground active:bg-secondary"
@@ -383,36 +411,85 @@ export default function TerminalPage({
         </header>
       )}
 
+      {!embedded && (status === 'error' || status === 'exited') && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-3 py-2 text-xs text-muted-foreground"
+        >
+          <span className="min-w-0 flex-1 break-words">{error ?? '终端进程已退出'}</span>
+          <Button type="button" size="sm" variant="secondary" onClick={onReopen}>
+            重连
+          </Button>
+        </div>
+      )}
       <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden px-1 pt-1" />
 
       {/* Phone keyboards have no Esc/Ctrl/arrows — this row is what makes the
           terminal usable at all on a touch device. */}
       {!embedded && (
-        <div className="safe-bottom shrink-0 border-t border-border bg-card">
-          <div className="scroll-x flex gap-1.5 px-2 py-2">
+        <div className="shrink-0 border-t border-border bg-card">
+          <div className="grid grid-cols-6 gap-1.5 px-2 py-2">
             <button
               type="button"
               onClick={() => setCtrl(!ctrlArmed)}
               aria-pressed={ctrlArmed}
               aria-label={ctrlArmed ? '取消 Ctrl 组合键' : '按下 Ctrl 组合键'}
-              className={`min-h-11 shrink-0 rounded-lg px-3 py-2 text-[12px] ${
+              onPointerDown={(event) => event.preventDefault()}
+              disabled={status !== 'open'}
+              className={`min-h-11 rounded-lg px-1 py-2 text-[12px] disabled:opacity-50 ${
                 ctrlArmed ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
               }`}
             >
-              {ctrlArmed ? 'Ctrl · 已按下' : 'Ctrl'}
+              Ctrl
             </button>
-            {KEYS.map((key) => (
+            {KEYS.slice(0, 5).map((key) => (
               <button
                 type="button"
                 key={key.label}
                 onClick={() => send({ type: 'input', data: key.seq })}
-                className="min-h-11 shrink-0 rounded-lg bg-secondary px-3 py-2 font-mono text-[12px] text-foreground/90 active:bg-raised"
+                onPointerDown={(event) => event.preventDefault()}
+                disabled={status !== 'open'}
+                className="min-h-11 rounded-lg bg-secondary px-1 py-2 font-mono text-[12px] text-foreground/90 active:bg-raised disabled:opacity-50"
               >
                 {key.label}
               </button>
             ))}
           </div>
+          {moreKeys && (
+            <div className="grid grid-cols-4 gap-1.5 px-2 pb-2 min-[390px]:grid-cols-7">
+              {KEYS.slice(5).map((key) => (
+                <button
+                  type="button"
+                  key={key.label}
+                  onClick={() => send({ type: 'input', data: key.seq })}
+                  onPointerDown={(event) => event.preventDefault()}
+                  disabled={status !== 'open'}
+                  className="min-h-11 rounded-lg bg-secondary px-1 font-mono text-[12px] text-foreground/90 active:bg-raised disabled:opacity-50"
+                >
+                  {key.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+      )}
+      {!embedded && visible && confirmRestart && (
+        <Sheet title="重开终端" onClose={() => setConfirmRestart(false)}>
+          <div className="space-y-4 px-4 pt-2 pb-4">
+            <p className="text-sm leading-relaxed text-muted-foreground">当前终端内的进程会结束，并启动新的 Shell。</p>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-12 w-full"
+              onClick={() => {
+                setConfirmRestart(false)
+                onReopen()
+              }}
+            >
+              确认重开
+            </Button>
+          </div>
+        </Sheet>
       )}
     </div>
   )

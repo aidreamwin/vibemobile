@@ -83,12 +83,14 @@ export default function NewSessionSheet({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pickingDirectory, setPickingDirectory] = useState(false)
+  const selectedProvider = providers?.find((item) => item.id === provider)
   const cards = permissionCardsFor(provider, providers?.find((item) => item.id === provider)?.permissionModes)
   const selectedCard = cards.includes(cardPermission) ? cardPermission : 'ask'
 
   useEffect(() => {
     let cancelled = false
     setModelsLoading(true)
+    setModels([])
     // Model ids are provider-specific, so a selection made for the previous
     // agent is meaningless here and would otherwise be sent as-is. Reset to
     // "默认模型" and let the server choose.
@@ -148,24 +150,48 @@ export default function NewSessionSheet({
   }
 
   return (
-    <Sheet title="新建会话" onClose={onClose}>
+    <Sheet
+      title="新建会话"
+      onClose={onClose}
+      dismissable={!busy}
+      footer={
+        <>
+          {error && (
+            <p role="alert" className="mb-2 text-xs text-destructive">
+              {error}
+            </p>
+          )}
+          <Button
+            type="button"
+            onClick={create}
+            disabled={!cwd || busy || selectedProvider?.available === false}
+            className="tap h-auto w-full py-3 text-[15px]"
+          >
+            {busy ? '创建中…' : '开始'}
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-5 px-4 pt-2 pb-4">
         {/* Only offered when there is a real choice. A single-provider install
             should not grow a one-option radio group. */}
         {(providers?.length ?? 0) > 1 && (
           <Field label="代理">
-            <div className="space-y-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
               {providers?.map((p) => (
                 <Option
                   key={p.id}
                   selected={provider === p.id}
                   onClick={() => onProviderChange?.(p.id)}
                   label={p.displayName}
-                  hint={p.available ? (p.authenticated === false ? '未登录' : '可用') : (p.detail ?? '不可用')}
+                  hint={p.available ? (p.authenticated === false ? '未登录' : '可用') : '不可用'}
                   danger={!p.available || p.authenticated === false}
                 />
               ))}
             </div>
+            {selectedProvider?.detail && (!selectedProvider.available || selectedProvider.authenticated === false) && (
+              <p className="mt-1.5 text-xs leading-relaxed text-warning">{selectedProvider.detail}</p>
+            )}
           </Field>
         )}
 
@@ -197,9 +223,9 @@ export default function NewSessionSheet({
               value={model}
               onChange={setModel}
               disabled={modelsLoading}
-              ariaLabel="select model"
+              ariaLabel="选择模型"
               options={[
-                { value: '', label: 'Default model' },
+                { value: '', label: '默认模型' },
                 ...models.map((item) => ({ value: item.id, label: item.displayName || item.id })),
               ]}
             />
@@ -207,7 +233,8 @@ export default function NewSessionSheet({
             <Input
               value={model}
               onChange={(event) => setModel(event.target.value)}
-              placeholder="Model ID (optional)"
+              placeholder={modelsLoading ? '正在加载模型…' : '模型 ID（可选）'}
+              disabled={modelsLoading}
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
@@ -276,12 +303,6 @@ export default function NewSessionSheet({
             </Field>
           </>
         )}
-
-        {error && <div className="text-[12px] text-destructive">{error}</div>}
-
-        <Button type="button" onClick={create} disabled={!cwd || busy} className="tap h-auto w-full py-3 text-[15px]">
-          {busy ? '创建中…' : '开始'}
-        </Button>
       </div>
     </Sheet>
   )

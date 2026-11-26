@@ -6,11 +6,15 @@ import { useWorkbenchStore } from '../../lib/workbench'
 
 export default function InspectorPane({
   sessions,
+  loading,
+  error,
   threadId,
   onSelectSession,
   onSelectSessionId,
 }: {
   sessions: SessionSummary[]
+  loading: boolean
+  error: boolean
   threadId?: string
   onSelectSession: (session: SessionSummary) => void
   onSelectSessionId: (id: string) => void
@@ -92,12 +96,12 @@ export default function InspectorPane({
               活跃 Agent
             </span>
             <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-foreground">
-              {activeAgents.length}
+              {activeAgents.length || (loading ? '…' : error ? '–' : 0)}
             </span>
           </div>
           {activeAgents.length === 0 ? (
             <p className="rounded-lg border border-border/60 bg-background/40 px-2.5 py-2 text-[11px] text-muted-foreground">
-              所有 Agent 均处于空闲状态。
+              {loading ? '正在读取 Agent 状态…' : error ? '暂时无法读取 Agent 状态。' : '所有 Agent 均处于空闲状态。'}
             </p>
           ) : (
             <ul className="space-y-1">
@@ -110,7 +114,7 @@ export default function InspectorPane({
                   >
                     <span
                       className={`size-2 shrink-0 rounded-full ${
-                        agent.status === 'working' ? 'animate-pulse bg-success' : 'bg-warning'
+                        agent.status === 'working' ? 'motion-safe:animate-pulse bg-success' : 'bg-warning'
                       }`}
                     />
                     <span className="min-w-0 flex-1 truncate text-xs text-foreground">{agent.title || '未命名'}</span>
@@ -136,7 +140,7 @@ export default function InspectorPane({
                       step.status === 'completed'
                         ? 'bg-success'
                         : step.status === 'inProgress'
-                          ? 'animate-pulse bg-warning'
+                          ? 'motion-safe:animate-pulse bg-warning'
                           : 'bg-muted-foreground/40'
                     }`}
                   />

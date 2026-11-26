@@ -109,9 +109,9 @@ export function DesktopSettingsSection({ section, children }: { section: Setting
       }}
       className="scroll-y @container h-full min-w-0 flex-1 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
     >
-      <div className="max-w-[54rem] px-4 py-5 @min-[500px]:px-8 @min-[500px]:py-7">
+      <div className="max-w-[46rem] px-4 py-5 @min-[500px]:px-8 @min-[500px]:py-7">
         <section aria-label={label}>
-          <h2 className="mb-4 text-lg leading-none font-semibold tracking-tight text-foreground @min-[500px]:text-xl">
+          <h2 className="mb-4 text-lg leading-tight font-semibold tracking-tight text-foreground @min-[500px]:text-xl">
             {label}
           </h2>
           <div className="overflow-hidden divide-y divide-border/70 rounded-lg border border-border bg-card/45">

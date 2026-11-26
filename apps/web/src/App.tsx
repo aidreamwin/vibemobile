@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
+import { LoaderCircle, RotateCcw, WifiOff } from 'lucide-react'
 import { api, ApiError } from './lib/api'
 import { socket } from './lib/ws'
 import Sessions from './pages/Sessions'
@@ -202,7 +203,11 @@ export default function App() {
   }, [auth, loadWorkspace])
 
   if (auth === 'checking') {
-    return <div className="app-height flex items-center justify-center text-muted-foreground">连接中…</div>
+    return (
+      <div role="status" className="app-height flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> 连接中…
+      </div>
+    )
   }
 
   if (auth === 'offline') {
@@ -210,13 +215,21 @@ export default function App() {
     // that was asleep when the server restarted lands here, and the only thing
     // it can be told is the truth plus a way to try again.
     return (
-      <div className="app-height flex flex-col items-center justify-center gap-4 px-8 text-center">
+      <main className="app-height safe-top safe-bottom flex flex-col items-center justify-center gap-5 px-6 text-center">
         <div className="max-w-sm">
-          <h1 className="text-base font-semibold text-foreground">连不上服务器</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            请确认手机和电脑在同一个网络里，电脑上的服务已经启动，然后重试。
+          <span className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl bg-secondary text-muted-foreground">
+            <WifiOff aria-hidden="true" className="size-7" strokeWidth={1.6} />
+          </span>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">连不上服务器</h1>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            检查网络连接，确认开发机上的服务已启动，然后重试。
           </p>
-          {bootError && <p className="mt-2 wrap-break-word text-xs text-muted-foreground/70">{bootError}</p>}
+          <p className="mt-3 break-all font-mono text-xs text-muted-foreground">{window.location.host}</p>
+          {bootError && (
+            <p role="status" className="mt-1 wrap-break-word text-xs text-muted-foreground">
+              {bootError}
+            </p>
+          )}
         </div>
         <Button
           type="button"
@@ -226,16 +239,20 @@ export default function App() {
             setAuth('checking')
             setBootAttempt((attempt) => attempt + 1)
           }}
-          className="min-h-11 rounded-lg px-4 text-sm"
+          className="h-12 w-full max-w-xs rounded-xl text-sm"
         >
-          重试
+          <RotateCcw aria-hidden="true" className="size-4" /> 重试
         </Button>
         {/* The escape hatch for the one case the flag cannot cover: a server
             that reports a PIN but will not accept the session it is holding. */}
-        <button type="button" onClick={logout} className="text-xs text-muted-foreground underline underline-offset-2">
+        <button
+          type="button"
+          onClick={logout}
+          className="tap rounded-lg px-4 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        >
           去登录页
         </button>
-      </div>
+      </main>
     )
   }
 

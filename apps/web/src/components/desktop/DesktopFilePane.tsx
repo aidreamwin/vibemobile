@@ -5,6 +5,7 @@ import {
   Ellipsis,
   FileCode2,
   FileImage,
+  FileWarning,
   GitCompare,
   LoaderCircle,
   Pencil,
@@ -50,8 +51,8 @@ function PathBreadcrumbs({ path, root, diff }: { path: string | undefined; root:
       <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
       {parent && (
         <>
-          <span className="max-w-[45%] truncate text-muted-foreground">{parent}</span>
-          <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+          <span className="max-w-[45%] truncate text-muted-foreground @max-[320px]:hidden">{parent}</span>
+          <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground @max-[320px]:hidden" />
         </>
       )}
       <span className="min-w-0 truncate font-medium text-foreground">{current || '工作区'}</span>
@@ -121,10 +122,10 @@ export default function DesktopFilePane({
 
   return (
     <section
-      className="flex h-full min-w-0 flex-col bg-background"
+      className="@container flex h-full min-w-0 flex-col bg-background"
       aria-label={view.kind === 'file' ? '文件编辑器' : '文件改动'}
     >
-      <header className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-border bg-card/60 px-2.5 py-0.5">
+      <header className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 border-b border-border bg-card/60 px-2.5 py-0.5">
         <PathBreadcrumbs path={view.path} root={root} diff={view.kind === 'diff'} />
         {view.kind === 'file' &&
           (editor ? (
@@ -148,7 +149,12 @@ export default function DesktopFilePane({
                 onClick={editor.onSave}
                 className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-40"
               >
-                <Check aria-hidden="true" className="size-3.5" /> 保存
+                {editor.saving ? (
+                  <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
+                ) : (
+                  <Check aria-hidden="true" className="size-3.5" />
+                )}{' '}
+                保存
               </button>
             </div>
           ) : (
@@ -252,7 +258,8 @@ export default function DesktopFilePane({
             </span>
           </div>
         ) : error ? (
-          <div className="grid min-h-full place-content-center justify-items-center gap-2 px-6 text-center text-xs">
+          <div className="grid min-h-full place-content-center justify-items-center gap-3 px-6 text-center text-sm">
+            <FileWarning aria-hidden="true" className="size-9 text-muted-foreground" strokeWidth={1.4} />
             <p role="alert" className="max-w-md break-words text-muted-foreground">
               {error}
             </p>

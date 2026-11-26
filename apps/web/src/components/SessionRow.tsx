@@ -71,12 +71,10 @@ export default memo(function SessionRow({
                 <path d="M14.5 2.5l7 7-2 2-1.2-.6-3.3 3.3.4 3.6-1.6 1.6-4-4-4.3 4.3-1.4-1.4 4.3-4.3-4-4 1.6-1.6 3.6.4 3.3-3.3-.6-1.2z" />
               </svg>
             )}
-            {session.needsAttention && (
-              <span className="shrink-0 animate-pulse rounded-md bg-warning/20 px-2 py-0.5 text-xs font-semibold text-warning">
-                等待你
-              </span>
-            )}
-            <span className="min-w-0 flex-1 line-clamp-2 text-[15px] font-semibold leading-5 text-foreground">
+            <span
+              className="min-w-0 flex-1 line-clamp-2 text-[15px] font-semibold leading-5 text-foreground"
+              title={session.title || '未命名会话'}
+            >
               {session.title || '未命名会话'}
             </span>
             <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
@@ -97,6 +95,9 @@ export default memo(function SessionRow({
               {providerName}
             </span>
             {session.status !== 'idle' && <StatusPill status={session.status} />}
+            {session.needsAttention && session.status !== 'waitingApproval' && session.status !== 'waitingInput' && (
+              <span className="shrink-0 text-warning">· 等待你</span>
+            )}
             <span className="min-w-0 truncate font-mono text-[11px]">{shortPath(session.cwd, 1)}</span>
           </div>
         </button>
@@ -106,6 +107,7 @@ export default memo(function SessionRow({
           onClick={() => onActions(session)}
           className="tap w-11 shrink-0 text-muted-foreground active:bg-card"
           aria-label="更多操作"
+          title={`${session.title || '未命名会话'} · 更多操作`}
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="mx-auto h-5 w-5">
             <circle cx="12" cy="5" r="1.6" />

@@ -47,6 +47,27 @@ export default function ChatHeader({
   // The live plan block behaves like a `plan` item for this preference.
   const hidePlan = useDisplayPrefs((state) => state.prefs.hidePlan)
   const title = session?.title || '会话'
+  const statusLine = (
+    <div
+      className={`flex min-w-0 items-center text-[11px] text-muted-foreground ${embedded ? 'flex-1 gap-1.5' : 'gap-2 px-4'}`}
+    >
+      <span
+        className={`shrink-0 ${readOnly || status === 'waitingApproval' || status === 'waitingInput' ? 'text-warning font-medium' : status === 'working' ? 'text-success font-medium' : status === 'error' || (status === 'idle' && turnStatus === 'failed') ? 'text-destructive font-medium' : ''}`}
+      >
+        {readOnly
+          ? '只读'
+          : status === 'idle' && turnStatus === 'failed'
+            ? '本轮失败'
+            : (STATUS_LABEL[status] ?? status)}
+      </span>
+      {session?.cwd && (
+        <span className="min-w-0 flex-1 truncate font-mono" title={session.cwd}>
+          {shortPath(session.cwd, 2)}
+        </span>
+      )}
+      {!embedded && <UsageChip usage={usage} contextWindow={session?.contextWindow} provider={session?.provider} />}
+    </div>
+  )
   const planSteps = plan.map((step, i) => (
     <div key={`${step.step}-${i}`} className="flex items-center gap-2 text-[12px]">
       <span
@@ -74,7 +95,7 @@ export default function ChatHeader({
         className={
           embedded
             ? 'flex min-h-9 flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-0.5'
-            : 'flex items-center gap-2 px-3 py-2.5'
+            : 'flex items-center gap-1 px-2 pt-1'
         }
       >
         {!embedded && (
@@ -107,39 +128,9 @@ export default function ChatHeader({
               {title}
             </div>
           )}
-          <div
-            className={`flex min-w-0 items-center text-[11px] text-muted-foreground ${embedded ? 'flex-1 gap-1.5' : 'gap-2'}`}
-          >
-            <span
-              className={`shrink-0 ${
-                readOnly
-                  ? 'text-warning font-medium'
-                  : status === 'waitingApproval'
-                    ? 'text-warning font-medium'
-                    : status === 'working'
-                      ? 'text-success font-medium'
-                      : status === 'error' || (status === 'idle' && turnStatus === 'failed')
-                        ? 'text-destructive font-medium'
-                        : ''
-              }`}
-            >
-              {readOnly
-                ? '只读'
-                : status === 'idle' && turnStatus === 'failed'
-                  ? '本轮失败'
-                  : (STATUS_LABEL[status] ?? status)}
-            </span>
-            {session?.cwd && (
-              <span className="truncate font-mono" title={session.cwd}>
-                {shortPath(session.cwd, 2)}
-              </span>
-            )}
-            {!embedded && (
-              <UsageChip usage={usage} contextWindow={session?.contextWindow} provider={session?.provider} />
-            )}
-          </div>
+          {embedded && statusLine}
         </div>
-        <div className={`ml-auto flex shrink-0 items-center ${embedded ? 'gap-0.5' : 'gap-2'}`}>
+        <div className={`ml-auto flex shrink-0 items-center ${embedded ? 'gap-0.5' : 'gap-0'}`}>
           {embedded && (
             <UsageChip compact usage={usage} contextWindow={session?.contextWindow} provider={session?.provider} />
           )}
@@ -176,24 +167,23 @@ export default function ChatHeader({
           )}
         </div>
       </div>
+      {!embedded && <div className="min-h-7 pb-1">{statusLine}</div>}
 
-      {planSteps.length > 0 &&
-        !hidePlan &&
-        (embedded ? (
-          <details className="group border-t border-border/70">
-            <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 px-3 text-xs text-muted-foreground hover:bg-secondary/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <ChevronRight aria-hidden="true" className="size-3 group-open:rotate-90" />
-              <ListChecks aria-hidden="true" className="size-3.5" />
-              <span>执行计划</span>
-              <span className="tabular-nums">
-                {plan.filter((step) => step.status === 'completed').length}/{plan.length}
-              </span>
-            </summary>
-            <div className="scroll-y max-h-32 space-y-1 px-4 py-2">{planSteps}</div>
-          </details>
-        ) : (
-          <div className="border-t border-border px-3 py-2">{planSteps}</div>
-        ))}
+      {planSteps.length > 0 && !hidePlan && (
+        <details className="group border-t border-border/70">
+          <summary
+            className={`flex cursor-pointer list-none items-center gap-1.5 px-3 text-xs text-muted-foreground hover:bg-secondary/60 hover:text-foreground [&::-webkit-details-marker]:hidden ${embedded ? 'min-h-7' : 'min-h-11'}`}
+          >
+            <ChevronRight aria-hidden="true" className="size-3 group-open:rotate-90" />
+            <ListChecks aria-hidden="true" className="size-3.5" />
+            <span>执行计划</span>
+            <span className="tabular-nums">
+              {plan.filter((step) => step.status === 'completed').length}/{plan.length}
+            </span>
+          </summary>
+          <div className="scroll-y max-h-32 space-y-1 px-4 py-2">{planSteps}</div>
+        </details>
+      )}
     </header>
   )
 }

@@ -246,12 +246,16 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   const setSplitRatio = useWorkbenchStore((s) => s.setSplitRatio)
 
   const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [sessionsLoading, setSessionsLoading] = useState(true)
+  const [sessionsError, setSessionsError] = useState(false)
   const [connection, setConnection] = useState(socket.state)
   const [creatingSession, setCreatingSession] = useState(false)
   const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null)
   const [filesVisited, setFilesVisited] = useState(sidebarTab === 'files')
   const [recentPaneIds, setRecentPaneIds] = useState<string[]>([])
-  const sidebarDrag = useRef<{ x: number; width: number } | null>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const sidebarDrag = useRef<{ x: number; width: number; next: number } | null>(null)
+  const sidebarDragFrame = useRef<number | null>(null)
   const editorRef = useRef<HTMLElement>(null)
   const handledLocation = useRef<string | null>(null)
   const pendingPath = useRef<string | null>(null)
@@ -326,8 +330,31 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
     setCreatingSession(true)
   }, [projects.length, setSidebarTab])
   const focusComposer = useCallback(() => {
-    editorRef.current?.querySelector<HTMLTextAreaElement>('[data-workbench-composer]')?.focus()
+    editorRef.current
+      ?.querySelector<HTMLTextAreaElement>(
+        'section[data-pane="agent"]:not([hidden]):not([inert]) [data-workbench-composer]',
+      )
+      ?.focus()
   }, [])
+
+  const finishSidebarDrag = useCallback(
+    (save: boolean) => {
+      const drag = sidebarDrag.current
+      sidebarDrag.current = null
+      if (sidebarDragFrame.current !== null) cancelAnimationFrame(sidebarDragFrame.current)
+      sidebarDragFrame.current = null
+      if (drag && save && drag.next !== sidebarWidth) setSidebarWidth(drag.next)
+      sidebarRef.current?.style.removeProperty('--workbench-live-sidebar-width')
+    },
+    [setSidebarWidth, sidebarWidth],
+  )
+
+  useEffect(
+    () => () => {
+      if (sidebarDragFrame.current !== null) cancelAnimationFrame(sidebarDragFrame.current)
+    },
+    [],
+  )
   const handleCloseAllTabs = useCallback(
     (id: string) => {
       closeAllTabs(id)
@@ -397,6 +424,8 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   useEffect(() => {
     if (!needsSessions) return
     let cancelled = false
+    setSessionsLoading(true)
+    setSessionsError(false)
     const statuses = new Map<string, SessionSummary['status']>()
     const unsubscribe = socket.onEvent((event) => {
       if (event.kind !== 'session.status') return
@@ -411,7 +440,12 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
         if (cancelled) return
         setSessions(data.map((session) => ({ ...session, status: statuses.get(session.id) ?? session.status })))
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!cancelled) setSessionsError(true)
+      })
+      .finally(() => {
+        if (!cancelled) setSessionsLoading(false)
+      })
     return () => {
       cancelled = true
       unsubscribe()
@@ -423,6 +457,8 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
     const onKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey
       if (!mod || event.defaultPrevented || event.isComposing || event.altKey) return
+      // The terminal needs native Ctrl+B, Ctrl+K and other shell editing keys.
+      if (event.ctrlKey && event.target instanceof Element && event.target.closest('.xterm')) return
 
       const key = event.key.toLowerCase()
       if (key === 'k') {
@@ -578,8 +614,9 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
           </nav>
 
           <aside
+            ref={sidebarRef}
             aria-label="工作区侧边栏"
-            style={{ width: sidebarWidth }}
+            style={{ width: `var(--workbench-live-sidebar-width, ${sidebarWidth}px)` }}
             className={`${sidebarOpen ? 'flex' : 'hidden'} relative shrink-0 flex-col border-r border-border bg-[var(--workbench-sidebar)]`}
           >
             <div className="flex h-[38px] shrink-0 items-center justify-between gap-2 px-3">
@@ -622,16 +659,22 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
               aria-valuenow={sidebarWidth}
               onPointerDown={(event) => {
                 if (event.button !== 0) return
-                sidebarDrag.current = { x: event.clientX, width: sidebarWidth }
+                sidebarDrag.current = { x: event.clientX, width: sidebarWidth, next: sidebarWidth }
                 event.currentTarget.setPointerCapture(event.pointerId)
               }}
               onPointerMove={(event) => {
                 const drag = sidebarDrag.current
-                if (drag) setSidebarWidth(drag.width + event.clientX - drag.x)
+                if (!drag) return
+                drag.next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, drag.width + event.clientX - drag.x))
+                if (sidebarDragFrame.current !== null) return
+                sidebarDragFrame.current = requestAnimationFrame(() => {
+                  sidebarDragFrame.current = null
+                  sidebarRef.current?.style.setProperty('--workbench-live-sidebar-width', `${drag.next}px`)
+                })
               }}
-              onLostPointerCapture={() => {
-                sidebarDrag.current = null
-              }}
+              onPointerUp={() => finishSidebarDrag(true)}
+              onPointerCancel={() => finishSidebarDrag(false)}
+              onLostPointerCapture={() => finishSidebarDrag(false)}
               onKeyDown={(event) => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                 event.preventDefault()
@@ -725,6 +768,9 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
                       onFocusCapture={() => {
                         if (mixedSplit && activeTabId !== tab.id) setActiveTab(tab.id)
                       }}
+                      onPointerDownCapture={() => {
+                        if (mixedSplit && activeTabId !== tab.id) setActiveTab(tab.id)
+                      }}
                     >
                       <WorkbenchPane
                         tab={tab}
@@ -755,6 +801,8 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
 
           <InspectorPane
             sessions={sessions}
+            loading={sessionsLoading}
+            error={sessionsError}
             threadId={visibleAgent?.threadId}
             onSelectSession={handleSelectSession}
             onSelectSessionId={handleSelectSessionId}
@@ -789,6 +837,8 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
 
         <CommandPalette
           sessions={sessions}
+          sessionsLoading={sessionsLoading}
+          sessionsError={sessionsError}
           onSelectSession={handleSelectSession}
           onCreateSession={projects.length ? createSession : undefined}
           onFocusComposer={visibleAgent ? focusComposer : undefined}

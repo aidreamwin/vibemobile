@@ -136,24 +136,9 @@ const ItemCard = memo(function ItemCard({
         // A column with `items-end` rather than a right-justified row: the
         // timestamp and copy action sit under the bubble, on its trailing
         // edge, without stretching the bubble to the full width.
-        <div
-          className={
-            desktop
-              ? 'group rounded-lg border border-border border-l-2 border-l-primary/50 bg-card px-3.5 pb-3 pt-2'
-              : 'my-1 flex flex-col items-end'
-          }
-        >
-          {desktop && (
-            <div className="mb-1 flex min-h-6 items-center justify-between gap-2 text-xs">
-              <span className="font-medium text-foreground">你</span>
-              <span className="flex items-center gap-1.5 text-muted-foreground">
-                {sentAt ? <span className="tabular-nums">{formatClock(sentAt)}</span> : null}
-                {item.text ? <CopyButton getText={() => item.text} label="复制消息" /> : null}
-              </span>
-            </div>
-          )}
+        <div className="my-1 flex min-w-0 flex-col items-end">
           <div
-            className={`whitespace-pre-wrap text-foreground ${desktop ? 'text-sm leading-relaxed wrap-break-word' : 'max-w-[85%] rounded-2xl rounded-tr-xs border border-white/10 bg-[#22242d] px-4 py-2.5 text-[15px] leading-relaxed shadow-sm'}`}
+            className={`max-w-[85%] wrap-break-word rounded-2xl rounded-tr-xs border border-white/10 bg-[#22242d] px-4 py-2.5 leading-relaxed whitespace-pre-wrap text-foreground shadow-sm ${desktop ? 'text-sm' : 'text-[15px]'}`}
           >
             {/* Images above the text, matching the order both agents record
                 them in — the picture is what the caption is about. */}
@@ -178,7 +163,7 @@ const ItemCard = memo(function ItemCard({
             ) : null}
             {item.text}
           </div>
-          {!desktop && (
+          {(sentAt || item.text) && (
             <div className="mt-1 flex items-center gap-1 pr-0.5">
               {sentAt ? (
                 <span className="text-[10px] leading-none text-muted-foreground/70">{formatClock(sentAt)}</span>

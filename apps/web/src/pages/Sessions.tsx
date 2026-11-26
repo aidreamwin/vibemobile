@@ -1,4 +1,15 @@
-import { Bot, Code2, MessagesSquare, Orbit, Sparkles, Terminal, type LucideIcon } from 'lucide-react'
+import {
+  Bot,
+  ChevronDown,
+  Code2,
+  MessagesSquare,
+  Orbit,
+  Plus,
+  Sparkles,
+  Terminal,
+  TriangleAlert,
+  type LucideIcon,
+} from 'lucide-react'
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -454,6 +465,9 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
   const filterVisual = FILTER_ICON[filter] ?? FILTER_ICON.all
   const FilterIcon = filterVisual.icon
   const filterTone = filterVisual.tone
+  const unavailable = providers.filter(
+    (provider) => !provider.available && (filter === 'all' || provider.id === filter),
+  )
 
   useEffect(() => {
     onSessionsChange?.(sessions)
@@ -562,6 +576,17 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
               <path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+          {!embedded && (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              disabled={projects.length === 0}
+              className="tap shrink-0 rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
+              aria-label="新建会话"
+            >
+              <Plus aria-hidden="true" className="size-5" strokeWidth={2.2} />
+            </button>
+          )}
         </ToolbarRow>
 
         {/* Second row, only while searching: this is the field the magnifier
@@ -611,16 +636,29 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
           </div>
         )}
 
-        {providers
-          .filter((p) => !p.available)
-          .map((p) => (
-            <div key={p.id} className="border-t border-border bg-warning/15 px-4 py-1.5 text-[11px] text-warning">
-              <span className="font-medium">{p.displayName}</span> · {p.detail ?? '不可用'}
+        {unavailable.length > 0 && (
+          <details className="group border-t border-border bg-warning/5 text-warning">
+            <summary className="tap flex w-full cursor-pointer list-none items-center justify-between gap-2 px-4 text-xs [&::-webkit-details-marker]:hidden">
+              <TriangleAlert aria-hidden="true" className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                {unavailable.length === 1
+                  ? `${unavailable[0].displayName} 不可用`
+                  : `${unavailable.length} 个代理不可用`}
+              </span>
+              <ChevronDown aria-hidden="true" className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="space-y-2 px-4 pb-3 text-xs leading-relaxed">
+              {unavailable.map((provider) => (
+                <p key={provider.id}>
+                  {provider.displayName} · {provider.detail ?? '不可用'}
+                </p>
+              ))}
             </div>
-          ))}
+          </details>
+        )}
       </header>
 
-      <div ref={listRef} onScroll={rememberScroll} className="scroll-y min-h-0 flex-1 pb-20">
+      <div ref={listRef} onScroll={rememberScroll} className="scroll-y min-h-0 flex-1 pb-2">
         {error && (
           <div className="border-b border-destructive/50 bg-destructive/15 px-4 py-2 text-[12px] text-destructive">
             {error}
@@ -644,31 +682,29 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
         </button>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setCreating(true)}
-        disabled={projects.length === 0}
-        /* text-primary-foreground, not text-white: --primary is oklch(0.922),
+      {embedded && (
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          disabled={projects.length === 0}
+          /* text-primary-foreground, not text-white: --primary is oklch(0.922),
            so white-on-white would leave the + invisible. */
-        className={
-          embedded
-            ? 'mx-3 mb-3 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40'
-            : 'tap fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-30 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-xl shadow-black/50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40'
-        }
-        aria-label="新建会话"
-      >
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          className={embedded ? 'h-4 w-4' : 'h-6 w-6'}
+          className="mx-3 mb-3 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="新建会话"
         >
-          <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-        </svg>
-        {embedded && <span>新建 Agent 会话</span>}
-      </button>
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            className="h-4 w-4"
+          >
+            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+          </svg>
+          <span>新建 Agent 会话</span>
+        </button>
+      )}
 
       {creating && (
         <NewSessionSheet

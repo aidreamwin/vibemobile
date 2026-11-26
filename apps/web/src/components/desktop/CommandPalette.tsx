@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Dialog } from 'radix-ui'
 import {
   Bot,
@@ -28,6 +28,8 @@ interface CommandItem {
 
 export default function CommandPalette({
   sessions,
+  sessionsLoading,
+  sessionsError,
   onSelectSession,
   onCreateSession,
   onFocusComposer,
@@ -35,6 +37,8 @@ export default function CommandPalette({
   container,
 }: {
   sessions: SessionSummary[]
+  sessionsLoading: boolean
+  sessionsError: boolean
   onSelectSession: (session: SessionSummary) => void
   onCreateSession?: () => void
   onFocusComposer?: () => void
@@ -54,7 +58,8 @@ export default function CommandPalette({
 
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [remote, setRemote] = useState<{ query: string; sessions: SessionSummary[] } | null>(null)
+  const [remote, setRemote] = useState<{ query: string; sessions: SessionSummary[]; error?: boolean } | null>(null)
+  const resultsId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
   const pendingCommand = useRef<(() => void) | null>(null)
@@ -70,7 +75,9 @@ export default function CommandPalette({
         .then(({ data }) => {
           if (active) setRemote({ query: needle, sessions: data })
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (active) setRemote({ query: needle, sessions: [], error: true })
+        })
     }, 250)
     return () => {
       active = false
@@ -201,6 +208,10 @@ export default function CommandPalette({
     setOpen(false)
   }
 
+  const searching = needle && remote?.query !== needle
+  const resultError = needle ? remote?.query === needle && remote.error : sessionsError
+  const loading = searching || (!needle && sessionsLoading)
+
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal container={container}>
@@ -234,10 +245,10 @@ export default function CommandPalette({
               execute(items[selectedIndex])
             }
           }}
-          className="fixed top-[14vh] left-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
+          className="fixed top-[min(14vh,100px)] left-1/2 z-50 flex max-h-[76vh] w-[calc(100%-2rem)] max-w-[560px] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
         >
           <Dialog.Title className="sr-only">命令面板</Dialog.Title>
-          <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-4 py-3.5">
             <Search className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
             <input
               ref={inputRef}
@@ -248,6 +259,11 @@ export default function CommandPalette({
                 setSelectedIndex(0)
               }}
               aria-label="搜索会话或命令"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={true}
+              aria-controls={resultsId}
+              aria-activedescendant={items[selectedIndex] ? `${resultsId}-${selectedIndex}` : undefined}
               placeholder="搜索 Agent 会话或输入命令…"
               className="min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
             />
@@ -256,16 +272,29 @@ export default function CommandPalette({
             </kbd>
           </div>
 
-          <ul className="scroll-y max-h-80 p-1.5">
+          <div
+            id={resultsId}
+            role="listbox"
+            aria-label="搜索结果"
+            aria-busy={Boolean(loading)}
+            className="scroll-y min-h-0 flex-1 p-1.5"
+          >
             {items.length === 0 ? (
-              <li className="px-3 py-8 text-center text-xs text-muted-foreground">没有匹配的结果</li>
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                {loading ? '正在搜索…' : resultError ? '暂时无法搜索会话，请修改关键词重试。' : '没有匹配的结果'}
+              </div>
             ) : (
               items.map((item, idx) => (
-                <li key={item.id}>
+                <div key={item.id} role="presentation">
                   <button
                     type="button"
+                    id={`${resultsId}-${idx}`}
+                    role="option"
+                    aria-selected={idx === selectedIndex}
+                    tabIndex={-1}
                     ref={idx === selectedIndex ? highlighted : undefined}
-                    onMouseEnter={() => setSelectedIndex(idx)}
+                    onMouseMove={() => setSelectedIndex(idx)}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => execute(item)}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors ${
                       idx === selectedIndex
@@ -284,10 +313,19 @@ export default function CommandPalette({
                       <kbd className="font-mono text-[10px] text-muted-foreground">{item.shortcut}</kbd>
                     )}
                   </button>
-                </li>
+                </div>
               ))
             )}
-          </ul>
+          </div>
+          <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <span role="status">
+              {loading ? '正在读取会话…' : resultError ? '会话列表暂时不可用' : `${items.length} 项结果`}
+            </span>
+            <span aria-hidden="true" className="flex items-center gap-2">
+              <kbd className="workbench-key">↑ ↓</kbd> 选择
+              <kbd className="workbench-key">↵</kbd> 打开
+            </span>
+          </footer>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

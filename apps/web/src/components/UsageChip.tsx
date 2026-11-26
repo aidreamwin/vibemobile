@@ -33,7 +33,7 @@ export default function UsageChip({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="View context usage"
+        aria-label="查看上下文用量"
         className={`shrink-0 rounded-md border-0 px-1.5 py-0.5 font-mono text-[10px] leading-tight text-muted-foreground ${compact ? 'min-h-6 hover:bg-secondary' : 'tap bg-transparent'}`}
       >
         {usage
@@ -44,12 +44,12 @@ export default function UsageChip({
       </button>
 
       {open && (
-        <Sheet title="Usage" onClose={() => setOpen(false)}>
+        <Sheet title="上下文用量" onClose={() => setOpen(false)}>
           <div className="px-4 pb-6">
             {window ? (
               <>
                 <div className="mb-1 flex items-baseline justify-between text-[12px]">
-                  <span className="text-muted-foreground">Context used</span>
+                  <span className="text-muted-foreground">已用上下文</span>
                   <span className="font-mono text-foreground">
                     {usage ? `${formatTokens(promptTokens)} / ${formatTokens(window)}` : `— / ${formatTokens(window)}`}
                   </span>
@@ -62,29 +62,29 @@ export default function UsageChip({
                 </div>
               </>
             ) : (
-              <Row label="Context" value={usage ? formatTokens(promptTokens) : 'Waiting for usage'} />
+              <Row label="上下文" value={usage ? formatTokens(promptTokens) : '等待用量数据'} />
             )}
 
             {usage && (
               <div className="mt-3 divide-y divide-border">
                 <Row
-                  label="Cached"
+                  label="缓存命中"
                   value={cachedTokens > 0 ? `${formatTokens(cachedTokens)} · ${cachedPercent}%` : '—'}
                 />
-                <Row label="Output" value={formatTokens(outputTokens)} />
-                {reasoningOutputTokens > 0 && <Row label="Reasoning" value={formatTokens(reasoningOutputTokens)} />}
-                {typeof sessionTokens === 'number' && <Row label="Session total" value={formatTokens(sessionTokens)} />}
+                <Row label="输出" value={formatTokens(outputTokens)} />
+                {reasoningOutputTokens > 0 && <Row label="推理输出" value={formatTokens(reasoningOutputTokens)} />}
+                {typeof sessionTokens === 'number' && <Row label="会话累计" value={formatTokens(sessionTokens)} />}
               </div>
             )}
 
             <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
               {usage
                 ? provider === 'codex'
-                  ? 'Reported by Codex for the latest request.'
+                  ? 'Codex 当前请求的统计数据。'
                   : provider === 'claude'
-                    ? 'Reported by Claude for the latest response.'
-                    : 'Reported by the backend for the latest request.'
-                : 'The model window is known; current usage will appear after the next request.'}
+                    ? 'Claude 最新回复的统计数据。'
+                    : '执行机最新请求的统计数据。'
+                : '发送下一条消息后，将显示当前用量。'}
             </p>
           </div>
         </Sheet>

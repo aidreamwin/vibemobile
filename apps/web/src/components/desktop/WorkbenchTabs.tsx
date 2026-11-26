@@ -7,7 +7,7 @@ import { isImageFile } from '../../lib/fileImage'
 function TabStatusDot({ tab }: { tab: WorkbenchTab }) {
   if (tab.kind !== 'chat' || !tab.status || tab.status === 'idle') return null
   if (tab.status === 'working') {
-    return <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-success" title="执行中" />
+    return <span className="size-1.5 shrink-0 motion-safe:animate-pulse rounded-full bg-success" title="执行中" />
   }
   if (tab.status === 'waitingApproval' || tab.status === 'waitingInput') {
     return <span className="size-1.5 shrink-0 rounded-full bg-warning" title="等待处理" />
@@ -164,9 +164,9 @@ export default function WorkbenchTabs({
                         onSelect(tab.id)
                       }
                     }}
-                    className={`group flex h-7 max-w-[200px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors select-none ${
+                    className={`workbench-tab group relative flex h-[30px] max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors select-none ${
                       isActive
-                        ? 'bg-[var(--workbench-selection)] text-foreground shadow-xs'
+                        ? 'bg-[var(--workbench-selection)] font-medium text-foreground'
                         : isSecondary
                           ? 'bg-secondary/50 text-foreground/85 ring-1 ring-border/70'
                           : 'text-muted-foreground hover:bg-secondary/40 hover:text-foreground'
@@ -183,7 +183,7 @@ export default function WorkbenchTabs({
                         e.stopPropagation()
                         onClose(tab.id)
                       }}
-                      className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 opacity-0 transition-opacity hover:bg-raised hover:text-foreground group-hover:opacity-100 focus:opacity-100"
+                      className={`ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-raised hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 ${isActive || isSecondary ? 'opacity-100' : 'opacity-0'}`}
                     >
                       <X className="size-3" strokeWidth={1.75} />
                     </button>

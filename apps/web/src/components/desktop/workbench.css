@@ -52,6 +52,15 @@
   font: 500 10px/15px var(--font-mono);
 }
 
+.workbench-tab[aria-selected='true']::after {
+  position: absolute;
+  inset: auto 9px 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--primary);
+  content: '';
+}
+
 .workbench-editor {
   container: workbench-editor / inline-size;
 }

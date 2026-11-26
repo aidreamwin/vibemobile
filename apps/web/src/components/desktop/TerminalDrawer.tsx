@@ -20,8 +20,8 @@ const TerminalPane = memo(function TerminalPane({
     [id, onStatusChange],
   )
   return (
-    <div className={active ? 'h-full w-full' : 'hidden h-full w-full'}>
-      <TerminalPage terminalKey={id} embedded onStatusChange={reportStatus} />
+    <div hidden={!active} inert={!active} className="h-full w-full">
+      <TerminalPage terminalKey={id} embedded visible={active} onStatusChange={reportStatus} />
     </div>
   )
 })
@@ -131,8 +131,8 @@ export default function TerminalDrawer() {
 
       {/* Terminal tab bar */}
       <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border bg-[var(--workbench-toolbar)] px-2.5">
-        <div className="scroll-x flex min-w-0 flex-1 items-center gap-1">
-          {terminals.map((term) => {
+        <div role="tablist" aria-label="终端标签" className="scroll-x flex min-w-0 flex-1 items-center gap-1">
+          {terminals.map((term, index) => {
             const active = term.id === activeTerminalId
             const meta = statusMap[term.id]
             return (
@@ -140,11 +140,23 @@ export default function TerminalDrawer() {
                 key={term.id}
                 role="tab"
                 aria-selected={active}
-                tabIndex={0}
+                tabIndex={active ? 0 : -1}
                 onClick={() => setActiveTerminal(term.id)}
                 onKeyDown={(e) => {
-                  if (e.target !== e.currentTarget) return
-                  if (e.key === 'Enter' || e.key === ' ') {
+                  if (e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return
+                  const targetIndex = {
+                    ArrowLeft: (index + terminals.length - 1) % terminals.length,
+                    ArrowRight: (index + 1) % terminals.length,
+                    Home: 0,
+                    End: terminals.length - 1,
+                  }[e.key]
+                  if (targetIndex !== undefined) {
+                    e.preventDefault()
+                    const target =
+                      e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]')[targetIndex]
+                    setActiveTerminal(terminals[targetIndex].id)
+                    target?.focus()
+                  } else if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     setActiveTerminal(term.id)
                   }
@@ -158,6 +170,7 @@ export default function TerminalDrawer() {
                 <TerminalIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
                 <span>{term.title}</span>
                 <span
+                  title={meta?.status === 'open' ? '已连接' : meta?.status === 'connecting' ? '连接中' : '未连接'}
                   className={`size-1.5 rounded-full ${
                     meta?.status === 'open'
                       ? 'bg-success'
@@ -174,7 +187,8 @@ export default function TerminalDrawer() {
                       e.stopPropagation()
                       removeTerminal(term.id)
                     }}
-                    className="flex size-4 items-center justify-center rounded text-muted-foreground/70 opacity-0 transition-opacity hover:bg-raised hover:text-foreground group-hover:opacity-100"
+                    tabIndex={active ? 0 : -1}
+                    className={`flex size-5 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-raised hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 ${active ? 'opacity-100' : 'opacity-0'}`}
                   >
                     <X className="size-3" strokeWidth={1.75} />
                   </button>
@@ -182,6 +196,9 @@ export default function TerminalDrawer() {
               </div>
             )
           })}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={addTerminal}
@@ -191,9 +208,6 @@ export default function TerminalDrawer() {
           >
             <Plus className="size-3.5" strokeWidth={1.75} />
           </button>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={toggleTerminalMaximized}
@@ -210,7 +224,7 @@ export default function TerminalDrawer() {
           <button
             type="button"
             onClick={() => setTerminalOpen(false)}
-            title="收起终端 (⌘J)"
+            title={`收起终端 (${/Mac|iPhone|iPad/i.test(navigator.platform) ? '⌘' : 'Ctrl+'}J)`}
             aria-label="收起终端"
             className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
@@ -232,7 +246,7 @@ export default function TerminalDrawer() {
               <TerminalPane
                 key={term.id}
                 id={term.id}
-                active={term.id === activeTerminalId}
+                active={terminalOpen && term.id === activeTerminalId}
                 onStatusChange={reportStatus}
               />
             ))}

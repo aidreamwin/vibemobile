@@ -1,4 +1,4 @@
-import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
+import ToolbarRow from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import AgentProfilesSection from '../components/AgentProfilesSection'
 import CodexGlobalSection from '../components/CodexGlobalSection'
@@ -94,11 +94,14 @@ function MobileSettingsLayout({ children }: { children: React.ReactNode; hub: bo
     <>
       <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
         <ToolbarRow>
-          <ToolbarIdentity icon={SettingsIcon} label="设置" />
+          <h1 className="flex min-w-0 flex-1 items-center gap-2.5 pl-2 text-base font-semibold tracking-tight">
+            <SettingsIcon aria-hidden="true" className="size-5 text-muted-foreground" strokeWidth={1.8} />
+            设置
+          </h1>
           <RunnerSelector compact />
         </ToolbarRow>
       </header>
-      <div className="scroll-y min-h-0 flex-1 px-3.5 pb-8">
+      <div className="scroll-y min-h-0 flex-1 px-3.5 pb-6">
         <div className="mx-auto max-w-2xl">{children}</div>
       </div>
     </>
@@ -1176,8 +1179,8 @@ function Section({ section, children }: { section: SettingsSectionId; children: 
 
   const { label } = settingsSections[section]
   return (
-    <section className="mt-6" aria-label={label}>
-      <h2 className="px-1 pb-2 text-xs font-medium text-muted-foreground">{label}</h2>
+    <section className="mt-6 first:mt-4" aria-label={label}>
+      <h2 className="px-1 pb-2 text-[13px] font-medium text-muted-foreground">{label}</h2>
       <div className="surface-list overflow-hidden divide-y divide-border/70 shadow-sm">{children}</div>
     </section>
   )
@@ -1205,10 +1208,10 @@ function InfoRow({
           aria-label={`${label}详情`}
           aria-haspopup="dialog"
           aria-expanded={open}
-          className={`flex min-w-0 flex-1 items-center gap-3 text-left transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${desktop ? 'min-h-10 px-3 hover:bg-secondary/60' : 'min-h-14 px-4'}`}
+          className={`flex min-w-0 flex-1 items-center gap-3 text-left transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${desktop ? 'min-h-11 px-3 hover:bg-secondary/60' : 'min-h-14 px-4'}`}
         >
           <span
-            className={`font-medium text-foreground/90 ${desktop ? 'min-w-0 truncate text-[13px]' : 'shrink-0 text-sm'}`}
+            className={`font-medium text-foreground/90 ${desktop ? 'min-w-0 truncate text-sm' : 'shrink-0 text-sm'}`}
             title={desktop ? label : undefined}
           >
             {label}

@@ -513,7 +513,9 @@ const DesktopSessionRow = memo(function DesktopSessionRow({
           </span>
         </span>
       </button>
-      <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div
+        className={`flex shrink-0 items-center gap-0.5 pr-1 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${selected || secondary ? 'opacity-100' : 'opacity-0'}`}
+      >
         <button
           type="button"
           title="分屏打开"

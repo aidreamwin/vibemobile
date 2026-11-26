@@ -36,8 +36,9 @@ export function SourcePreviewToggle({ preview, onChange }: { preview: boolean; o
         <button
           key={String(mode)}
           type="button"
+          aria-pressed={mode === preview}
           onClick={() => onChange(mode)}
-          className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+          className={`min-h-11 rounded-md px-2 py-1 text-xs transition-colors ${
             mode === preview ? 'bg-raised text-foreground' : 'text-muted-foreground'
           }`}
         >
@@ -134,7 +135,7 @@ function TextFileBody({
               >
                 <span
                   aria-hidden="true"
-                  className={`w-11 shrink-0 select-none pr-2.5 text-right ${desktop ? 'sticky left-0 z-1 border-r border-border bg-background text-muted-foreground/65' : 'text-muted-foreground/50'}`}
+                  className={`w-11 shrink-0 select-none pr-2.5 text-right ${!wrap ? 'sticky left-0 z-1 border-r border-border bg-background' : ''} ${desktop ? 'text-muted-foreground/80' : 'text-muted-foreground/75'}`}
                 >
                   {number}
                 </span>
