@@ -118,8 +118,7 @@ const BARE_TRIGGER =
 const DESKTOP_TRIGGER =
   'h-7 gap-1 rounded-md border-0 bg-transparent text-xs shadow-none data-[size=default]:h-7 dark:bg-transparent dark:hover:bg-secondary [&>svg]:size-3'
 
-const DESKTOP_COMPOSER_FRAME =
-  'workbench-chat-composer mx-auto w-full max-w-[58rem] shrink-0 px-4 pb-4 pt-2 lg:max-w-[59rem] lg:px-6'
+const DESKTOP_COMPOSER_FRAME = 'workbench-chat-composer w-full min-w-0 shrink-0 px-4 pb-4 pt-2 lg:px-6'
 
 // Session views can be evicted from the cache while a prompt is being edited.
 // Keep the prompt and attachments with their session.

@@ -884,7 +884,7 @@ function ChatView({
           onScroll={onScroll}
           className={`scroll-y h-full ${embedded ? 'workbench-chat-scroll px-4 py-5 lg:px-6' : 'px-3.5 py-4'}`}
         >
-          <div className={embedded ? 'mx-auto max-w-4xl' : undefined}>
+          <div className={embedded ? 'w-full min-w-0' : undefined}>
             {items.length === 0 && !loading && (
               <div className={`text-center text-sm text-muted-foreground ${embedded ? 'px-3 pt-14' : 'mt-16'}`}>
                 {readOnly
@@ -983,7 +983,7 @@ function ChatView({
       )}
 
       {visible && desktopApprovals.length > 0 && (
-        <div className="scroll-y mx-auto max-h-[35%] w-full max-w-[58rem] shrink-0 space-y-2 px-4 pt-2 lg:max-w-[59rem] lg:px-6">
+        <div className="workbench-chat-scroll scroll-y max-h-[35%] w-full min-w-0 shrink-0 space-y-2 px-4 pt-2 lg:px-6">
           {desktopApprovals.map((approval) => (
             <ApprovalSheet key={approval.requestId} approval={approval} inline />
           ))}
