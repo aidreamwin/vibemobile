@@ -38,6 +38,10 @@ function buildInfoPlugin(builtAt: number | null): Plugin {
 // 界面一切正常但跑的是部署的旧构建产物。
 // 真要对着已部署的服务调前端，显式设 VIBEMOBILE_BACKEND 即可。
 const BACKEND = process.env.VIBEMOBILE_BACKEND ?? 'http://127.0.0.1:5800'
+const backendUrl = new URL(BACKEND)
+// 本地 HTTP Hub 用 Host 校验浏览器 Origin。转发时保留预览地址，避免 POST 和 WebSocket 被拒绝。
+const changeOrigin =
+  backendUrl.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(backendUrl.hostname)
 
 export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss(), buildInfoPlugin(command === 'build' ? Date.now() : null)],
@@ -54,12 +58,12 @@ export default defineConfig(({ command }) => ({
     // 于是两个进程抢同一个端口，谁收到连接是不确定的。
     strictPort: true,
     proxy: {
-      '/api': { target: BACKEND, changeOrigin: true },
-      '/ws': { target: BACKEND, ws: true, changeOrigin: true },
+      '/api': { target: BACKEND, changeOrigin },
+      '/ws': { target: BACKEND, ws: true, changeOrigin },
       '/r': {
         target: BACKEND,
         ws: true,
-        changeOrigin: true,
+        changeOrigin,
         bypass: (req) => (/^\/r\/[^/]+\/(api|ws)(\/|\?|$)/.test(req.url ?? '') ? undefined : req.url),
       },
     },

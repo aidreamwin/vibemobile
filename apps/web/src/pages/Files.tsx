@@ -28,12 +28,9 @@ import { UnifiedDiff } from '../components/DiffView'
 import FileBody, { isRenderable } from '../components/FileBody'
 import FileEditor, { MAX_EDIT_LINES } from '../components/FileEditor'
 import { useDocumentTitle } from '../lib/title'
+import DesktopFilePane, { type FilePaneView } from '../components/desktop/DesktopFilePane'
 
-type View =
-  | { kind: 'list'; path: string }
-  | { kind: 'file'; path: string; name: string }
-  /** `path` is absent for the whole-workspace diff. */
-  | { kind: 'diff'; path: string | undefined }
+type View = { kind: 'list'; path: string } | FilePaneView
 
 /**
  * Where the file browser was left, remembered across a trip to another tab.
@@ -62,7 +59,7 @@ const offsets = new Map<string, number>()
  * being pushed into `localStorage`: it belongs to this browsing session, not to
  * the device, and a stale draft restored a week later would be a trap.
  */
-let lastDraft: { path: string; text: string } | null = null
+const drafts = new Map<string, string>()
 
 /** Which screen a scroll offset belongs to. */
 function viewKey(view: View): string {
@@ -82,25 +79,36 @@ function inWorkspace(view: View, root: string): boolean {
   return Boolean(view.path) && isPathInside(view.path, root)
 }
 
-export default function Files() {
+export interface FilesProps {
+  embedded?: boolean
+  fixedView?: FilePaneView
+  line?: number
+  onOpenFileTab?: (path: string, name: string, line?: number) => void
+  onOpenDiffTab?: (path?: string) => void
+}
+
+export default function Files({ embedded = false, fixedView, line, onOpenFileTab, onOpenDiffTab }: FilesProps = {}) {
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoaded = useWorkspaceStore((state) => state.loaded)
   // Picked up from the last visit to this page, if there was one — which is the
   // whole point: the root of the workspace is the fallback, not the default.
-  const [view, setView] = useState<View>(() => lastView ?? { kind: 'list', path: '' })
+  const [browserView, setView] = useState<View>(() => lastView ?? { kind: 'list', path: '' })
+  const view = fixedView ?? browserView
   useDocumentTitle(
-    view.kind === 'file'
-      ? view.name
-      : view.kind === 'list'
-        ? view.path.split(/[\\/]/).filter(Boolean).pop() || '文件'
-        : '改动',
+    embedded
+      ? ''
+      : view.kind === 'file'
+        ? view.name
+        : view.kind === 'list'
+          ? view.path.split(/[\\/]/).filter(Boolean).pop() || '文件'
+          : '改动',
   )
 
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [content, setContent] = useState<FileContent | null>(null)
   const [diff, setDiff] = useState('')
   // Markdown opens rendered; the header's code/eye button flips it back.
-  const [preview, setPreview] = useState(true)
+  const [preview, setPreview] = useState(!line)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [sortByName, setSortByName] = useState(false)
@@ -112,13 +120,9 @@ export default function Files() {
 
   // Editing state lives here rather than inside `FileEditor`, because three
   // things outside it need to know: the header (which buttons to draw), the
-  // scroll memory (below), and the unmount cleanup that parks a dirty draft.
-  const [editing, setEditing] = useState(
-    () => Boolean(lastDraft) && lastView?.kind === 'file' && lastView.path === lastDraft!.path,
-  )
-  const [draft, setDraft] = useState(() =>
-    lastDraft && lastView?.kind === 'file' && lastView.path === lastDraft.path ? lastDraft.text : '',
-  )
+  // scroll memory (below), and the draft that survives a tab switch.
+  const [editing, setEditing] = useState(() => view.kind === 'file' && drafts.has(view.path))
+  const [draft, setDraft] = useState(() => (view.kind === 'file' ? (drafts.get(view.path) ?? '') : ''))
   const [saving, setSaving] = useState(false)
   /**
    * Kept apart from `error` on purpose. `error` is the page-level fetch banner,
@@ -145,33 +149,30 @@ export default function Files() {
   const key = viewKey(view)
 
   useEffect(() => {
-    lastView = view
-  }, [view])
+    if (line) setPreview(false)
+  }, [line])
+
+  useEffect(() => {
+    if (!fixedView) lastView = view
+  }, [view, fixedView])
 
   const dirty = editing && content !== null && draft !== content.text
 
   /** Files the editor will not open, with the reason to show instead of a button. */
   const editBlockedBy = useMemo(() => {
     if (!content) return null
-    if (content.truncated) return '文件太大，无法在手机上编辑'
-    if (content.text.split('\n').length > MAX_EDIT_LINES) return `超过 ${MAX_EDIT_LINES} 行，请在电脑上编辑`
-    return null
-  }, [content])
-
-  // Parked on the way out, restored by the initial state above. `dirty` is what
-  // decides whether there is anything to park: leaving a clean file must not
-  // leave a draft behind that would reopen the editor for a file the user only
-  // read.
-  useEffect(() => {
-    return () => {
-      if (!dirty) {
-        lastDraft = null
-        return
-      }
-      const path = view.kind === 'file' ? view.path : null
-      lastDraft = path ? { path, text: draft } : null
+    if (content.truncated) return embedded ? '文件过大，仅可预览' : '文件太大，无法在手机上编辑'
+    if (content.text.split('\n').length > MAX_EDIT_LINES) {
+      return embedded ? `文件超过 ${MAX_EDIT_LINES} 行，仅可预览` : `超过 ${MAX_EDIT_LINES} 行，请在电脑上编辑`
     }
-  }, [dirty, draft, view])
+    return null
+  }, [content, embedded])
+
+  useEffect(() => {
+    if (view.kind !== 'file') return
+    if (dirty) drafts.set(view.path, draft)
+    else if (!editing || content) drafts.delete(view.path)
+  }, [content, dirty, draft, editing, view])
 
   // Closing the tab or pulling to refresh is the one exit that cannot be
   // captured; this at least makes the browser ask.
@@ -186,7 +187,7 @@ export default function Files() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [dirty])
 
-  function go(next: View) {
+  const go = useCallback((next: View) => {
     // `loading` moves in the same tick as the view on purpose: the fetch below
     // only starts after the render that shows the new screen, and without this
     // that render would carry the *previous* screen's rows or file body.
@@ -197,7 +198,7 @@ export default function Files() {
       setSearchOpen(false)
     }
     setView(next)
-  }
+  }, [])
 
   function beginEdit() {
     if (!content) return
@@ -213,7 +214,7 @@ export default function Files() {
   }
 
   async function save() {
-    if (!content || view.kind !== 'file') return
+    if (!content || view.kind !== 'file' || !dirty || saving) return
     setSaving(true)
     setSaveError(null)
     try {
@@ -223,7 +224,7 @@ export default function Files() {
       // it rather than kept as typed.
       setContent(saved)
       setDraft(saved.text)
-      lastDraft = null
+      drafts.delete(view.path)
       setEditing(false)
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -248,6 +249,7 @@ export default function Files() {
   // deliberately still a reset to the root: that is a different workspace, not
   // a return to this one.
   useEffect(() => {
+    if (fixedView) return
     if (!defaultCwd) {
       if (workspaceLoaded) setLoading(false)
       return
@@ -255,7 +257,7 @@ export default function Files() {
     if (inWorkspace(view, defaultCwd)) return
     setContent(null)
     go({ kind: 'list', path: defaultCwd })
-  }, [defaultCwd, workspaceLoaded, view])
+  }, [defaultCwd, fixedView, go, workspaceLoaded, view])
 
   // One fetcher, keyed on the view itself, so entering a directory, opening a
   // file and landing back on a remembered one are all the same path through
@@ -288,7 +290,7 @@ export default function Files() {
         // under a red banner is a dead end nobody asked for, so only the first
         // load of a mount falls back — after that the error is the answer to
         // something the user just did, and hiding it would be the wrong move.
-        if (firstLoad.current) go({ kind: 'list', path: defaultCwd || '' })
+        if (firstLoad.current && !fixedView) go({ kind: 'list', path: defaultCwd || '' })
       } finally {
         firstLoad.current = false
         if (!cancelled) setLoading(false)
@@ -298,7 +300,7 @@ export default function Files() {
     return () => {
       cancelled = true
     }
-  }, [view, defaultCwd, reload])
+  }, [view, defaultCwd, fixedView, go, reload])
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
@@ -319,7 +321,7 @@ export default function Files() {
   // page for one frame first.
   useLayoutEffect(() => {
     const el = scrollRef.current
-    if (!el || loading) return
+    if (!el || loading || editing) return
     // Absent means "never seen" — a directory opened for the first time starts
     // at the top, which is what `0` here does.
     el.scrollTop = offsets.get(key) ?? 0
@@ -327,13 +329,56 @@ export default function Files() {
     // where they were, rather than at the top the clamp left behind.
   }, [key, loading, editing])
 
+  if (embedded && fixedView) {
+    return (
+      <DesktopFilePane
+        view={fixedView}
+        root={defaultCwd}
+        line={line}
+        content={content}
+        diff={diff}
+        preview={preview}
+        loading={loading}
+        error={error}
+        scrollRef={scrollRef}
+        onScroll={onScroll}
+        onPreview={setPreview}
+        onOpenFile={
+          onOpenFileTab &&
+          ((ref) => onOpenFileTab(ref.path, ref.path.split(/[\\/]/).at(-1) || ref.path, ref.line ?? undefined))
+        }
+        onOpenDiff={onOpenDiffTab}
+        onRefresh={() => setReload((n) => n + 1)}
+        onEdit={beginEdit}
+        editBlockedBy={editBlockedBy}
+        editor={
+          editing
+            ? {
+                value: draft,
+                dirty,
+                saving,
+                error: saveError,
+                onChange: setDraft,
+                onCancel: cancelEdit,
+                onSave: () => void save(),
+              }
+            : undefined
+        }
+      />
+    )
+  }
+
   const backDirectory = view.kind === 'list' ? parentPath(view.path) : view.path ? parentPath(view.path) : defaultCwd
-  const canGoBack = view.kind !== 'list' || (view.path !== defaultCwd && isPathInside(backDirectory, defaultCwd))
+  const canGoBack =
+    !fixedView && (view.kind !== 'list' || (view.path !== defaultCwd && isPathInside(backDirectory, defaultCwd)))
+  const fileTool = embedded
+    ? 'inline-flex size-7 items-center justify-center rounded-md hover:bg-secondary [&_svg]:size-4'
+    : 'tap rounded-xl'
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
-        <ToolbarRow>
+        <ToolbarRow compact={embedded}>
           {/* While editing, the entire button cluster is replaced by 取消/保存.
               That is the hard guarantee that a draft cannot be lost by a stray
               tap: the back button, the diff, the refresh and the source/preview
@@ -373,9 +418,9 @@ export default function Files() {
             </>
           ) : (
             <>
-              {!canGoBack && <ToolbarIdentity icon={FolderOpen} label="文件" />}
+              {!embedded && !canGoBack && <ToolbarIdentity icon={FolderOpen} label="文件" />}
               {canGoBack && <h1 className="sr-only">文件</h1>}
-              <RunnerSelector compact />
+              {!embedded && <RunnerSelector compact />}
               {canGoBack ? (
                 <button
                   type="button"
@@ -423,7 +468,7 @@ export default function Files() {
                       aria-label={preview ? '查看源码' : '预览文件'}
                       title={preview ? '查看源码' : '预览文件'}
                       aria-pressed={preview}
-                      className={`tap shrink-0 rounded-xl ${preview ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
+                      className={`${fileTool} shrink-0 ${preview ? 'bg-secondary text-foreground' : 'text-muted-foreground'} active:bg-secondary`}
                     >
                       {preview ? (
                         <Code aria-hidden="true" className="size-5" />
@@ -438,7 +483,7 @@ export default function Files() {
                         type="button"
                         aria-label="文件操作"
                         title="文件操作"
-                        className="tap shrink-0 rounded-xl text-muted-foreground active:bg-secondary"
+                        className={`${fileTool} shrink-0 text-muted-foreground active:bg-secondary`}
                       >
                         <Ellipsis aria-hidden="true" className="size-5" />
                       </button>
@@ -451,7 +496,10 @@ export default function Files() {
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem
-                        onSelect={() => go({ kind: 'diff', path: view.path })}
+                        onSelect={() => {
+                          if (onOpenDiffTab) onOpenDiffTab(view.path)
+                          else go({ kind: 'diff', path: view.path })
+                        }}
                         className="min-h-11 rounded-lg"
                       >
                         <GitBranch />
@@ -591,11 +639,15 @@ export default function Files() {
               <li key={entry.path}>
                 <button
                   type="button"
-                  onClick={() =>
-                    entry.type === 'directory'
-                      ? go({ kind: 'list', path: entry.path })
-                      : go({ kind: 'file', path: entry.path, name: entry.name })
-                  }
+                  onClick={() => {
+                    if (entry.type === 'directory') {
+                      go({ kind: 'list', path: entry.path })
+                    } else if (onOpenFileTab) {
+                      onOpenFileTab(entry.path, entry.name)
+                    } else {
+                      go({ kind: 'file', path: entry.path, name: entry.name })
+                    }
+                  }}
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-card"
                 >
                   <span className={entry.type === 'directory' ? 'text-primary' : 'text-muted-foreground/70'}>
@@ -636,10 +688,10 @@ export default function Files() {
             // `h-full` because the textarea owns its own scrolling: the outer
             // container has to hand it a definite height, not grow to fit it.
             <div className="h-full">
-              <FileEditor value={draft} onChange={setDraft} disabled={saving} />
+              <FileEditor path={view.path} value={draft} onChange={setDraft} disabled={saving} />
             </div>
           ) : (
-            <FileBody content={content} path={view.path} preview={preview} />
+            <FileBody content={content} path={view.path} line={line} preview={preview} />
           ))
         ) : (
           <UnifiedDiff diff={diff} />

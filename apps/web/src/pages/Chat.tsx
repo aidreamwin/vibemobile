@@ -1,11 +1,12 @@
 import { RetryBanner } from '../components/RetryBanner'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { AgentInput, AgentItem, ModelInfo, SessionSummary } from '@vibemobile/protocol'
+import { useStore } from 'zustand'
+import type { AgentInput, AgentItem, ModelInfo, SessionStatus, SessionSummary } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { socket } from '../lib/ws'
 import { useApprovalStore } from '../lib/approvals'
-import { loadTranscript, mergeTurnTimes, prependTranscriptItems, resyncTranscript, useChatStore } from '../lib/store'
+import { createChatStore, registerChatStore } from '../lib/store'
 import {
   downloadMarkdown,
   markdownFilename,
@@ -17,12 +18,13 @@ import { indexTurns } from '../lib/turnIndex'
 import { exportTurns } from '../lib/transcriptPages'
 import { useDocumentTitle } from '../lib/title'
 import { Button } from '../components/ui/button'
+import ApprovalSheet from '../components/ApprovalSheet'
 import ChatHeader from '../components/ChatHeader'
 import ChatItemList from '../components/ChatItemList'
 import ChatLoadError from '../components/ChatLoadError'
 import ChatOverlays from '../components/ChatOverlays'
 import Composer, { type TurnOptions } from '../components/Composer'
-import Sheet from '../components/Sheet'
+import Sheet, { SheetPresentation } from '../components/Sheet'
 import ConnectionBanner from '../components/ConnectionBanner'
 import { PERMISSIONS, permissionCardFor, permissionCardsFor, type PermissionCard } from '../lib/permission'
 import { retryInput } from '../lib/retry'
@@ -35,12 +37,35 @@ type ExportChoice =
   | { kind: 'session' }
   | { kind: 'turn'; id: string; items: AgentItem[]; label: string; cursor?: string }
 
-export default function Chat() {
-  const { threadId } = useParams<{ threadId: string }>()
+export interface ChatProps {
+  threadId?: string
+  embedded?: boolean
+  showPaneTitle?: boolean
+  onSessionMeta?: (session: SessionSummary, status: SessionStatus) => void
+  onOpenFileTab?: (ref: FileRef) => void
+  onSelectSession?: (id: string) => void
+  onExit?: () => void
+}
+
+export default function Chat({
+  threadId: propThreadId,
+  embedded = false,
+  showPaneTitle = false,
+  onSessionMeta,
+  onOpenFileTab,
+  onSelectSession,
+  onExit,
+}: ChatProps = {}) {
+  const params = useParams<{ threadId: string }>()
+  const threadId = propThreadId ?? params.threadId
+  const chatStore = useMemo(() => createChatStore(threadId ?? null), [threadId])
+  useEffect(() => {
+    if (embedded && threadId) return registerChatStore(threadId, chatStore)
+  }, [chatStore, embedded, threadId])
   const navigate = useNavigate()
 
   const [session, setSession] = useState<SessionSummary | null>(null)
-  useDocumentTitle(session?.title || '对话')
+  useDocumentTitle(embedded ? '' : session?.title || '对话')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [showDiff, setShowDiff] = useState(false)
@@ -84,18 +109,18 @@ export default function Chat() {
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [olderError, setOlderError] = useState<string | null>(null)
 
-  const items = useChatStore((s) => s.items)
-  const streams = useChatStore((s) => s.streams)
-  const status = useChatStore((s) => s.status)
-  const turnId = useChatStore((s) => s.turnId)
-  const turnStatus = useChatStore((s) => s.turnStatus)
-  const retryNotice = useChatStore((s) => s.retryNotice)
-  const plan = useChatStore((s) => s.plan)
-  const diff = useChatStore((s) => s.diff)
+  const items = useStore(chatStore, (s) => s.items)
+  const streams = useStore(chatStore, (s) => s.streams)
+  const status = useStore(chatStore, (s) => s.status)
+  const turnId = useStore(chatStore, (s) => s.turnId)
+  const turnStatus = useStore(chatStore, (s) => s.turnStatus)
+  const retryNotice = useStore(chatStore, (s) => s.retryNotice)
+  const plan = useStore(chatStore, (s) => s.plan)
+  const diff = useStore(chatStore, (s) => s.diff)
   const approvals = useApprovalStore((s) => s.pending)
-  const usage = useChatStore((s) => s.usage)
-  const commands = useChatStore((s) => s.commands)
-  const turnTimes = useChatStore((s) => s.turnTimes)
+  const usage = useStore(chatStore, (s) => s.usage)
+  const commands = useStore(chatStore, (s) => s.commands)
+  const turnTimes = useStore(chatStore, (s) => s.turnTimes)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
@@ -168,7 +193,7 @@ export default function Chat() {
     initialScrollPending.current = true
     pinnedToBottom.current = true
     setIsAtBottom(true)
-    useChatStore.getState().reset(threadId)
+    chatStore.getState().reset(threadId)
 
     // Resume first: the transcript is readable straight from disk, but the
     // backend only forwards live events for threads it has re-attached to.
@@ -238,12 +263,12 @@ export default function Chat() {
         // without it a phone that reloaded mid-turn can watch but not stop.
         const open = [...transcript.turns].reverse().find((turn) => turn.status === 'inProgress')
         indexTurns(threadId, transcript.turns)
-        mergeTurnTimes(threadId, transcript.turns)
-        loadTranscript(threadId, items, {
+        chatStore.getState().mergeTurnTimes(threadId, transcript.turns)
+        chatStore.getState().loadTranscript(threadId, items, {
           turnId: open?.id ?? null,
           turnStatus: open ? 'inProgress' : (transcript.turns.at(-1)?.status ?? null),
         })
-        useChatStore.setState({ status: transcript.session.status })
+        chatStore.setState({ status: transcript.session.status })
         if (!viewingReadOnly) {
           socket.subscribe(threadId)
           subscribed = true
@@ -268,15 +293,15 @@ export default function Chat() {
       if (loadedThread.current === threadId) loadedThread.current = null
       if (threadId && subscribed) socket.unsubscribe(threadId)
     }
-  }, [threadId, loadAttempt])
+  }, [chatStore, threadId, loadAttempt])
 
   // -------------------------------------------------------------- events
 
   useEffect(() => {
     return socket.onEvent((event) => {
-      if (!readOnly) useChatStore.getState().applyEvent(event)
+      if (!readOnly) chatStore.getState().applyEvent(event)
     })
-  }, [readOnly])
+  }, [chatStore, readOnly])
 
   // ---------------------------------------------------------- re-sync
 
@@ -305,7 +330,7 @@ export default function Chat() {
       // fetched the same snapshot, and racing it would only duplicate the GET.
       if (!reconnected || loadedThread.current !== threadId) return
 
-      const before = new Set(useChatStore.getState().items.map((item) => item.id))
+      const before = new Set(chatStore.getState().items.map((item) => item.id))
       void api
         .session(threadId, { items: PAGE_ITEMS })
         .then((transcript) => {
@@ -314,8 +339,8 @@ export default function Chat() {
           const open = [...transcript.turns].reverse().find((turn) => turn.status === 'inProgress')
           const gap = transcript.hasMore && before.size > 0 && !items.some((item) => before.has(item.id))
           indexTurns(threadId, transcript.turns)
-          mergeTurnTimes(threadId, transcript.turns)
-          resyncTranscript(
+          chatStore.getState().mergeTurnTimes(threadId, transcript.turns)
+          chatStore.getState().resyncTranscript(
             threadId,
             items,
             {
@@ -324,7 +349,7 @@ export default function Chat() {
             },
             gap ? before : undefined,
           )
-          useChatStore.setState({ status: transcript.session.status })
+          chatStore.setState({ status: transcript.session.status })
           setSession(transcript.session)
 
           // A session that was short when it was opened can grow past the
@@ -351,7 +376,7 @@ export default function Chat() {
       cancelled = true
       unsubscribe()
     }
-  }, [threadId, readOnly])
+  }, [chatStore, threadId, readOnly])
 
   // -------------------------------------------------------- older history
 
@@ -370,7 +395,7 @@ export default function Chat() {
       // The response can land after the user opened another conversation;
       // `prependTranscriptItems` also checks, but everything else here would
       // write the old session's cursor into the new one.
-      if (useChatStore.getState().threadId !== threadId || olderCursorRef.current !== cursor) return
+      if (loadedThread.current !== threadId || olderCursorRef.current !== cursor) return
 
       // Measured at the last moment before the DOM grows, not when the request
       // was sent: a slow page must not undo the scrolling the reader did while
@@ -380,8 +405,8 @@ export default function Chat() {
 
       const items: AgentItem[] = transcript.turns.flatMap((turn) => turn.items)
       indexTurns(threadId, transcript.turns)
-      mergeTurnTimes(threadId, transcript.turns)
-      const added = prependTranscriptItems(threadId, items)
+      chatStore.getState().mergeTurnTimes(threadId, transcript.turns)
+      const added = chatStore.getState().prependTranscriptItems(threadId, items)
       // Nothing added means the page was entirely already on screen (a stale
       // cursor, or a turn that started while paging shifted the window):
       // there is no new content to hold the position for.
@@ -405,12 +430,12 @@ export default function Chat() {
     } finally {
       // If the reader switched conversations mid-request, that load already
       // reset these — and a new page fetch may already be running.
-      if (useChatStore.getState().threadId === threadId) {
+      if (loadedThread.current === threadId) {
         loadingOlderRef.current = false
         setLoadingOlder(false)
       }
     }
-  }, [threadId])
+  }, [chatStore, threadId])
 
   // Restore the reading position before the browser paints the taller
   // transcript. `useLayoutEffect`, not `useEffect`: the prepend is a visible
@@ -657,27 +682,45 @@ export default function Chat() {
     [models],
   )
 
+  useEffect(() => {
+    if (session && onSessionMeta) onSessionMeta(session, status)
+  }, [session, status, onSessionMeta])
+
   const forkAndContinue = useCallback(async () => {
     if (!threadId || forking) return
     setForking(true)
     setForkError(null)
     try {
       const forked = await api.forkSession(threadId)
-      navigate(`/chat/${forked.id}`, { replace: true })
+      if (onSelectSession) onSelectSession(forked.id)
+      else navigate(`/chat/${forked.id}`, { replace: true })
     } catch (err) {
       setForkError((err as Error).message)
       setForking(false)
     }
-  }, [threadId, forking, navigate])
+  }, [threadId, forking, navigate, onSelectSession])
 
   // --------------------------------------------------------------- render
 
   // Stable across renders: it is a memo dependency of every message card, and
   // a fresh closure would re-parse the whole transcript on each delta frame.
-  const showFile = useCallback((ref: FileRef) => setOpenFile(ref), [])
+  const showFile = useCallback(
+    (ref: FileRef) => {
+      if (onOpenFileTab) onOpenFileTab(ref)
+      else setOpenFile(ref)
+    },
+    [onOpenFileTab],
+  )
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-muted-foreground">加载中…</div>
+    return (
+      <div
+        role="status"
+        className={`h-full flex items-center justify-center text-muted-foreground ${embedded ? 'text-sm' : ''}`}
+      >
+        加载中…
+      </div>
+    )
   }
 
   if (loadError) {
@@ -690,13 +733,14 @@ export default function Chat() {
         forkError={forkError}
         onFork={forkAndContinue}
         onRetry={() => setLoadAttempt((attempt) => attempt + 1)}
-        onBack={() => navigate('/')}
+        onBack={onExit ?? (() => navigate('/'))}
       />
     )
   }
 
-  return (
-    <div className="h-full flex flex-col overflow-hidden">
+  const desktopApprovals = embedded && !readOnly ? approvals.filter((approval) => approval.threadId === threadId) : []
+  const conversation = (
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <ChatHeader
         session={session}
         readOnly={readOnly}
@@ -706,6 +750,8 @@ export default function Chat() {
         plan={plan}
         hasDiff={Boolean(diff)}
         downloading={exporting}
+        embedded={embedded}
+        showPaneTitle={showPaneTitle}
         onDownload={requestSessionExport}
         onBack={() => navigate('/')}
         onShowDiff={() => setShowDiff(true)}
@@ -720,15 +766,20 @@ export default function Chat() {
 
       {/* ---- transcript ---- */}
       <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} onScroll={onScroll} className="scroll-y h-full px-3.5 py-4">
-          {items.length === 0 && !loading && (
-            <div className="mt-16 text-center text-sm text-muted-foreground">
-              {readOnly
-                ? '还没有可查看的历史消息。'
-                : `还没有消息。在下面输入任务，代理会在 ${session?.cwd ?? '工作目录'} 中执行。`}
-            </div>
-          )}
-          {/* Above the transcript, at the very top, because that is where the
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className={`scroll-y h-full ${embedded ? 'px-4 py-5 lg:px-6' : 'px-3.5 py-4'}`}
+        >
+          <div className={embedded ? 'mx-auto max-w-4xl' : undefined}>
+            {items.length === 0 && !loading && (
+              <div className={`text-center text-sm text-muted-foreground ${embedded ? 'px-3 pt-14' : 'mt-16'}`}>
+                {readOnly
+                  ? '还没有可查看的历史消息。'
+                  : `还没有消息。在下面输入任务，代理会在 ${session?.cwd ?? '工作目录'} 中执行。`}
+              </div>
+            )}
+            {/* Above the transcript, at the very top, because that is where the
               missing turns would have been — a notice at the bottom would read
               as "the conversation ends here", which is the one thing it must
               not say. It cannot be dismissed and there is nothing to tap: a
@@ -737,26 +788,28 @@ export default function Chat() {
               (The loading and retry pills are OUTSIDE the scroller: they come
               and go while the reader is at the top, and growing the content
               there would move the lines under their thumb.) */}
-          {hasOlder && !olderCursor && (
-            <div className="mb-3 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-center text-[11px] text-muted-foreground">
-              以上还有更早的记录（未加载）
-            </div>
-          )}
-          <ChatItemList
-            items={items}
-            streams={streams}
-            turnTimes={turnTimes}
-            cwd={session?.cwd}
-            threadId={threadId ?? ''}
-            running={
-              turnStatus === 'inProgress' ||
-              status === 'working' ||
-              status === 'waitingApproval' ||
-              status === 'waitingInput'
-            }
-            onOpenFile={showFile}
-            onDownloadTurn={requestTurnExport}
-          />
+            {hasOlder && !olderCursor && (
+              <div className="mb-3 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-center text-[11px] text-muted-foreground">
+                以上还有更早的记录（未加载）
+              </div>
+            )}
+            <ChatItemList
+              items={items}
+              streams={streams}
+              turnTimes={turnTimes}
+              cwd={session?.cwd}
+              threadId={threadId ?? ''}
+              running={
+                turnStatus === 'inProgress' ||
+                status === 'working' ||
+                status === 'waitingApproval' ||
+                status === 'waitingInput'
+              }
+              onOpenFile={showFile}
+              onDownloadTurn={requestTurnExport}
+              desktop={embedded}
+            />
+          </div>
         </div>
 
         {(loadingOlder || olderError) && (
@@ -781,7 +834,7 @@ export default function Chat() {
           <button
             type="button"
             onClick={scrollToBottom}
-            className="tap absolute bottom-3 right-4 z-20 flex items-center gap-1.5 rounded-full border border-border bg-secondary/90 px-3.5 py-2 text-xs font-medium text-primary shadow-xl backdrop-blur-md transition-all"
+            className={`absolute bottom-3 right-4 z-20 flex items-center gap-1.5 border border-border bg-secondary/90 px-3.5 text-xs font-medium text-primary shadow-xl backdrop-blur-md transition-all ${embedded ? 'rounded-md py-1.5' : 'tap rounded-full py-2'}`}
           >
             <span>跳转至最新</span>
             <svg
@@ -803,7 +856,7 @@ export default function Chat() {
           <span className="text-xs text-muted-foreground">重新提交上一条指令</span>
           <Button
             variant="outline"
-            className="min-h-11 shrink-0"
+            className={embedded ? 'h-7 shrink-0 text-xs' : 'min-h-11 shrink-0'}
             disabled={retrying}
             onClick={() => void retryLastPrompt()}
           >
@@ -817,11 +870,20 @@ export default function Chat() {
         </div>
       )}
 
+      {desktopApprovals.length > 0 && (
+        <div className="scroll-y mx-auto max-h-[35%] w-full max-w-[58rem] shrink-0 space-y-2 px-4 pt-2 lg:max-w-[59rem] lg:px-6">
+          {desktopApprovals.map((approval) => (
+            <ApprovalSheet key={approval.requestId} approval={approval} inline />
+          ))}
+        </div>
+      )}
+
       <Composer
         onSend={send}
         onStop={stop}
         running={running}
         disabled={readOnly}
+        desktopSessionId={embedded ? threadId : undefined}
         models={models}
         model={turnModel}
         effort={turnEffort}
@@ -849,7 +911,8 @@ export default function Chat() {
         onCloseFile={() => setOpenFile(null)}
         onOpenFile={showFile}
         readOnly={readOnly}
-        approvals={approvals}
+        approvals={embedded ? [] : approvals}
+        desktop={embedded}
         showDiff={showDiff}
         diff={diff}
         onCloseDiff={() => setShowDiff(false)}
@@ -865,7 +928,7 @@ export default function Chat() {
               type="button"
               variant="secondary"
               onClick={() => void runExport('conversation')}
-              className="tap h-auto w-full py-3.5 text-[15px]"
+              className={embedded ? 'h-8 w-full justify-start text-sm' : 'tap h-auto w-full py-3.5 text-[15px]'}
             >
               仅对话内容
             </Button>
@@ -873,21 +936,24 @@ export default function Chat() {
               type="button"
               variant="outline"
               onClick={() => void runExport('full')}
-              className="tap h-auto w-full py-3.5 text-[15px]"
+              className={embedded ? 'h-8 w-full justify-start text-sm' : 'tap h-auto w-full py-3.5 text-[15px]'}
             >
               完整记录（含思考、工具调用等）
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setExportChoice(null)}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              取消
-            </Button>
+            {!embedded && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setExportChoice(null)}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                取消
+              </Button>
+            )}
           </div>
         </Sheet>
       )}
     </div>
   )
+  return embedded ? <SheetPresentation centered>{conversation}</SheetPresentation> : conversation
 }

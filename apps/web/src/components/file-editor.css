@@ -1,0 +1,93 @@
+.file-editor {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--foreground);
+}
+
+.file-editor-gutter {
+  flex-shrink: 0;
+  overflow: hidden;
+  min-width: 2.75rem;
+  border-inline-end: 1px solid var(--border);
+  color: var(--muted-foreground);
+  text-align: end;
+  user-select: none;
+}
+
+.file-editor-numbers {
+  margin: 0;
+  padding: 0.75rem 0.625rem;
+  font: inherit;
+}
+
+.file-editor-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-editor-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Matching metrics keep the mirror aligned with the native cursor and selection. */
+.file-editor-text {
+  margin: 0;
+  border: 0;
+  padding: 0.75rem;
+  font: inherit;
+  font-variant-ligatures: none;
+  letter-spacing: normal;
+  text-align: start;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.file-editor-highlight :is(.hljs-emphasis, .hljs-strong) {
+  font-style: normal;
+  font-weight: inherit;
+}
+
+.file-editor-input {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+}
+
+.file-editor[data-highlighted='true'] .file-editor-input {
+  color: transparent;
+  caret-color: var(--foreground);
+}
+
+.file-editor[data-highlighted='true'] .file-editor-input::selection {
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
+  color: transparent;
+}
+
+@media (forced-colors: active) {
+  .file-editor-highlight {
+    display: none;
+  }
+
+  .file-editor[data-highlighted='true'] .file-editor-input {
+    color: CanvasText;
+    caret-color: CanvasText;
+  }
+
+  .file-editor[data-highlighted='true'] .file-editor-input::selection {
+    background: Highlight;
+    color: HighlightText;
+  }
+}

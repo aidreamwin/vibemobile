@@ -29,28 +29,40 @@ function Collapsible({
   subtitle,
   status,
   defaultOpen = false,
+  desktop = false,
   children,
 }: {
   title: string
   subtitle?: string
   status?: ItemStatus
   defaultOpen?: boolean
+  desktop?: boolean
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <div
+      className={
+        desktop
+          ? 'overflow-hidden rounded-lg border border-border bg-card/50'
+          : 'overflow-hidden rounded-xl border border-border bg-card shadow-sm'
+      }
+    >
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="tap flex w-full items-center justify-between gap-2.5 px-3.5 py-2.5 text-left active:bg-secondary"
+        className={`flex w-full items-center justify-between gap-2.5 text-left active:bg-secondary ${desktop ? 'min-h-8 px-3 py-1 hover:bg-secondary/70' : 'tap px-3.5 py-2.5'}`}
       >
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {status && <StatusDot status={status} />}
-          <div className="min-w-0 flex-1">
+          <div className={`min-w-0 flex-1 ${desktop ? 'flex items-center gap-2' : ''}`}>
             <span className="block truncate font-mono text-[13px] font-medium text-foreground">{title}</span>
-            {subtitle && <span className="mt-0.5 block text-xs text-muted-foreground truncate">{subtitle}</span>}
+            {subtitle && (
+              <span className={`block truncate text-xs text-muted-foreground ${desktop ? 'min-w-0' : 'mt-0.5'}`}>
+                {subtitle}
+              </span>
+            )}
           </div>
         </div>
         <svg
@@ -108,6 +120,7 @@ const ItemCard = memo(function ItemCard({
   item,
   streamText,
   sentAt,
+  desktop = false,
   cwd,
   onOpenFile,
 }: {
@@ -115,6 +128,7 @@ const ItemCard = memo(function ItemCard({
   streamText?: string
   /** When this turn's prompt was sent, for the clock under a user bubble. */
   sentAt?: number | null
+  desktop?: boolean
 } & LinkContext) {
   switch (item.kind) {
     case 'message':
@@ -122,8 +136,25 @@ const ItemCard = memo(function ItemCard({
         // A column with `items-end` rather than a right-justified row: the
         // timestamp and copy action sit under the bubble, on its trailing
         // edge, without stretching the bubble to the full width.
-        <div className="my-1 flex flex-col items-end">
-          <div className="max-w-[85%] rounded-2xl rounded-tr-xs bg-[#22242d] border border-white/10 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-foreground shadow-sm">
+        <div
+          className={
+            desktop
+              ? 'group rounded-lg border border-border border-l-2 border-l-primary/50 bg-card px-3.5 pb-3 pt-2'
+              : 'my-1 flex flex-col items-end'
+          }
+        >
+          {desktop && (
+            <div className="mb-1 flex min-h-6 items-center justify-between gap-2 text-xs">
+              <span className="font-medium text-foreground">你</span>
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                {sentAt ? <span className="tabular-nums">{formatClock(sentAt)}</span> : null}
+                {item.text ? <CopyButton getText={() => item.text} label="复制消息" /> : null}
+              </span>
+            </div>
+          )}
+          <div
+            className={`whitespace-pre-wrap text-foreground ${desktop ? 'text-sm leading-relaxed wrap-break-word' : 'max-w-[85%] rounded-2xl rounded-tr-xs border border-white/10 bg-[#22242d] px-4 py-2.5 text-[15px] leading-relaxed shadow-sm'}`}
+          >
             {/* Images above the text, matching the order both agents record
                 them in — the picture is what the caption is about. */}
             {item.images?.length ? (
@@ -147,19 +178,21 @@ const ItemCard = memo(function ItemCard({
             ) : null}
             {item.text}
           </div>
-          <div className="mt-1 flex items-center gap-1 pr-0.5">
-            {sentAt ? (
-              <span className="text-[10px] leading-none text-muted-foreground/70">{formatClock(sentAt)}</span>
-            ) : null}
-            {/* Nothing to copy for an image-only prompt; the button would be a
+          {!desktop && (
+            <div className="mt-1 flex items-center gap-1 pr-0.5">
+              {sentAt ? (
+                <span className="text-[10px] leading-none text-muted-foreground/70">{formatClock(sentAt)}</span>
+              ) : null}
+              {/* Nothing to copy for an image-only prompt; the button would be a
                 no-op, so it is not drawn. */}
-            {item.text ? (
-              // No className override: the default is the same button the
-              // turn's copy action uses, so the two read as one control even
-              // though one sits under a bubble and the other under a turn.
-              <CopyButton getText={() => item.text} label="复制消息" />
-            ) : null}
-          </div>
+              {item.text ? (
+                // No className override: the default is the same button the
+                // turn's copy action uses, so the two read as one control even
+                // though one sits under a bubble and the other under a turn.
+                <CopyButton getText={() => item.text} label="复制消息" />
+              ) : null}
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-foreground">
@@ -180,7 +213,7 @@ const ItemCard = memo(function ItemCard({
       // permanently stuck “思考中” card.
       if (!totalText) return null
       return (
-        <Collapsible title="思考过程" subtitle={`${sectionCount} 段 · ${totalText.length} 字`} defaultOpen={false}>
+        <Collapsible title="思考过程" subtitle={`${sectionCount} 段 · ${totalText.length} 字`} desktop={desktop}>
           <Pre text={totalText} />
         </Collapsible>
       )
@@ -190,6 +223,7 @@ const ItemCard = memo(function ItemCard({
       return (
         <Collapsible
           title="命令"
+          desktop={desktop}
           subtitle={[
             // Status first: the command itself is long enough to be truncated,
             // and the exit code is the part worth keeping visible.
@@ -216,6 +250,7 @@ const ItemCard = memo(function ItemCard({
       return (
         <Collapsible
           title={item.label ?? '修改'}
+          desktop={desktop}
           // Same reason as the command card: the paths are long, the count is
           // the short fact that should survive truncation.
           subtitle={`${paths.length} 个文件 · ${paths.join(', ') || '文件变更'}`}
@@ -228,7 +263,7 @@ const ItemCard = memo(function ItemCard({
 
     case 'mcpTool':
       return (
-        <Collapsible title="MCP" subtitle={`${item.server} · ${item.tool}`} status={item.status}>
+        <Collapsible title="MCP" subtitle={`${item.server} · ${item.tool}`} status={item.status} desktop={desktop}>
           <Pre text={JSON.stringify({ arguments: item.args, result: item.result, error: item.error }, null, 2)} />
         </Collapsible>
       )
@@ -248,6 +283,7 @@ const ItemCard = memo(function ItemCard({
       const rows = (item.results ?? []).map(searchResultLine).filter((row) => row !== null)
       return (
         <Collapsible
+          desktop={desktop}
           title="搜索"
           subtitle={[
             title,
@@ -372,7 +408,7 @@ const ItemCard = memo(function ItemCard({
         .filter(Boolean)
         .join(' · ')
       return (
-        <Collapsible title={item.label ?? '工具'} subtitle={subtitle} status={item.status}>
+        <Collapsible title={item.label ?? '工具'} subtitle={subtitle} status={item.status} desktop={desktop}>
           <Pre text={sections.join('\n\n')} />
         </Collapsible>
       )

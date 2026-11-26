@@ -10,12 +10,12 @@ import { COMPACT_PREFS, DISPLAY_OPTIONS, useDisplayPrefs } from '../lib/displayP
  * Checked means hidden. Everything starts unchecked, and the choice lives in
  * localStorage without a runner suffix, so it survives switching runners.
  */
-export default function DisplaySettings() {
+export default function DisplaySettings({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false)
   const prefs = useDisplayPrefs((state) => state.prefs)
   const toggle = useDisplayPrefs((state) => state.toggle)
   const reset = useDisplayPrefs((state) => state.reset)
-  const compact = useDisplayPrefs((state) => state.compact)
+  const applyCompactPreset = useDisplayPrefs((state) => state.compact)
   const isCompact = DISPLAY_OPTIONS.every(({ key }) => prefs[key] === COMPACT_PREFS[key])
 
   return (
@@ -25,7 +25,7 @@ export default function DisplaySettings() {
         onClick={() => setOpen(true)}
         title="显示设置"
         aria-label="显示设置"
-        className="tap shrink-0 rounded-xl text-muted-foreground/60 active:bg-secondary"
+        className={`shrink-0 text-muted-foreground/60 active:bg-secondary ${compact ? 'grid size-6 place-items-center rounded-md hover:bg-secondary [&_svg]:size-3.5' : 'tap rounded-xl'}`}
       >
         <SlidersHorizontal aria-hidden="true" className="size-[18px]" strokeWidth={1.7} />
       </button>
@@ -71,7 +71,7 @@ export default function DisplaySettings() {
               <Button
                 type="button"
                 variant="ghost"
-                onClick={compact}
+                onClick={applyCompactPreset}
                 aria-pressed={isCompact}
                 className="tap h-auto flex-1 py-3 text-[14px] text-muted-foreground aria-pressed:text-primary"
               >

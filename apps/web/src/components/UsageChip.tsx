@@ -9,10 +9,12 @@ export default function UsageChip({
   usage,
   contextWindow,
   provider,
+  compact = false,
 }: {
   usage: Usage | null
   contextWindow?: number
   provider?: ProviderId
+  compact?: boolean
 }) {
   const [open, setOpen] = useState(false)
   if (!usage && !contextWindow) return null
@@ -32,9 +34,13 @@ export default function UsageChip({
         type="button"
         onClick={() => setOpen(true)}
         aria-label="View context usage"
-        className="tap shrink-0 rounded-md border-0 bg-transparent px-1.5 py-0.5 font-mono text-[10px] leading-tight text-muted-foreground"
+        className={`shrink-0 rounded-md border-0 px-1.5 py-0.5 font-mono text-[10px] leading-tight text-muted-foreground ${compact ? 'min-h-6 hover:bg-secondary' : 'tap bg-transparent'}`}
       >
-        {usage ? (percent === null ? formatTokens(promptTokens) : `${percent}% · ${formatTokens(promptTokens)}`) : `— / ${formatTokens(window)}`}
+        {usage
+          ? percent === null
+            ? formatTokens(promptTokens)
+            : `${percent}% · ${formatTokens(promptTokens)}`
+          : `— / ${formatTokens(window)}`}
       </button>
 
       {open && (
@@ -61,7 +67,10 @@ export default function UsageChip({
 
             {usage && (
               <div className="mt-3 divide-y divide-border">
-                <Row label="Cached" value={cachedTokens > 0 ? `${formatTokens(cachedTokens)} · ${cachedPercent}%` : '—'} />
+                <Row
+                  label="Cached"
+                  value={cachedTokens > 0 ? `${formatTokens(cachedTokens)} · ${cachedPercent}%` : '—'}
+                />
                 <Row label="Output" value={formatTokens(outputTokens)} />
                 {reasoningOutputTokens > 0 && <Row label="Reasoning" value={formatTokens(reasoningOutputTokens)} />}
                 {typeof sessionTokens === 'number' && <Row label="Session total" value={formatTokens(sessionTokens)} />}

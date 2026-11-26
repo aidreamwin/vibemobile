@@ -59,6 +59,38 @@ describe('the rendered form of a file', () => {
     expect(isRenderable('D:/x/md')).toBe(false)
   })
 
+  it.each([
+    ['settings.JSON', '{"name": "demo"}', 'hljs-attr'],
+    ['script.py', 'def greet():\n    return "hi"', 'hljs-keyword'],
+    ['main.c', '#include <stdio.h>', 'hljs-meta'],
+    ['main.cpp', 'namespace demo {}', 'hljs-keyword'],
+    ['app.js', 'const text = "hello"', 'hljs-keyword'],
+  ])('highlights source in %s using its file extension', (name, source, tokenClass) => {
+    const html = renderToStaticMarkup(<FileBody content={file(source)} path={`D:/x/${name}`} />)
+    expect(html).toContain(tokenClass)
+  })
+
+  it('highlights both pieces of a multiline comment and keeps CRLF line targets', () => {
+    const source = '/* first line\r\nstill a comment */\r\n\r\nconst value = 3'
+    const html = renderToStaticMarkup(<FileBody content={file(source)} path="D:/x/app.js" line={2} />)
+    expect(rows(html)).toBe(4)
+    expect(html).toMatch(/class="[^"]*\bhljs-comment\b[^"]*">\/\* first line/)
+    expect(html).toMatch(/class="[^"]*\bhljs-comment\b[^"]*">still a comment \*\//)
+    expect(html).toContain('bg-warning/20')
+    expect(html).not.toContain('\r')
+  })
+
+  it('escapes code containing HTML and uses plain source for unknown extensions', () => {
+    const source = 'const text = "<em>literal</em>"'
+    const highlighted = renderToStaticMarkup(<FileBody content={file(source)} path="D:/x/app.js" />)
+    const plain = renderToStaticMarkup(<FileBody content={file(source)} path="D:/x/app.custom" />)
+    expect(highlighted).toContain('hljs-string')
+    expect(highlighted).not.toContain('<em>literal</em>')
+    expect(highlighted).toContain('&lt;em&gt;literal&lt;/em&gt;')
+    expect(plain).not.toContain('hljs-')
+    expect(plain).toContain('&lt;em&gt;literal&lt;/em&gt;')
+  })
+
   it('carries the server\u2019s truncation notice through', () => {
     const html = renderToStaticMarkup(
       <FileBody content={file('abc', { truncated: true, bytes: 4096 })} path="D:/x/a.ts" />,

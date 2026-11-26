@@ -9,6 +9,7 @@ import { Button } from './components/ui/button'
 import { useWorkspaceStore } from './lib/workspace'
 import { pathAfterScope, runnerId, runnerSwitchUrl } from './lib/runner'
 import { routeTitle, useDocumentTitle } from './lib/title'
+import { useIsDesktop } from './lib/viewport'
 
 // The landing page stays eager; everything else is fetched when its route is
 // opened. That keeps xterm (Terminal) and react-markdown (Chat / Files) out of
@@ -18,6 +19,7 @@ const Chat = lazy(() => import('./pages/Chat'))
 const Files = lazy(() => import('./pages/Files'))
 const Terminal = lazy(() => import('./pages/Terminal'))
 const Settings = lazy(() => import('./pages/Settings'))
+const DesktopWorkbenchShell = lazy(() => import('./components/desktop/DesktopWorkbenchShell'))
 
 function PageFallback({ full = false }: { full?: boolean }) {
   return (
@@ -35,9 +37,10 @@ export default function App() {
   /** Bumped by the retry button; the effect below re-runs on it. */
   const [bootAttempt, setBootAttempt] = useState(0)
   const location = useLocation()
+  const isDesktop = useIsDesktop()
   // A runner prefix is part of every path under /r/<id>; the title is the same
   // page either way. Pages with real content override this below.
-  useDocumentTitle(routeTitle(pathAfterScope(location.pathname)))
+  useDocumentTitle(isDesktop && auth === 'authed' ? null : routeTitle(pathAfterScope(location.pathname)))
   const loadWorkspace = useWorkspaceStore((state) => state.load)
 
   useEffect(() => {
@@ -164,6 +167,14 @@ export default function App() {
           />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+      </Suspense>
+    )
+  }
+
+  if (isDesktop) {
+    return (
+      <Suspense fallback={<PageFallback full />}>
+        <DesktopWorkbenchShell onLogout={() => setAuth('anonymous')} />
       </Suspense>
     )
   }

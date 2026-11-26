@@ -1,4 +1,99 @@
+import { createContext, useContext, useRef, type ReactNode } from 'react'
+import { Dialog } from 'radix-ui'
 import { Sheet as SheetRoot, SheetContent, SheetHeader, SheetTitle } from './ui/sheet'
+
+const SheetPresentationContext = createContext<{ centered: boolean; container?: HTMLElement | null }>({
+  centered: false,
+})
+
+export function SheetPresentation({
+  centered,
+  container,
+  children,
+}: {
+  centered: boolean
+  container?: HTMLElement | null
+  children: ReactNode
+}) {
+  const inherited = useContext(SheetPresentationContext)
+  return (
+    <SheetPresentationContext.Provider
+      value={{ centered, container: container === undefined ? inherited.container : container }}
+    >
+      {children}
+    </SheetPresentationContext.Provider>
+  )
+}
+
+interface SheetProps {
+  title?: string
+  label?: string
+  closeLabel?: string
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+  dismissable?: boolean
+  className?: string
+}
+
+function CenteredSheet({
+  title,
+  label,
+  closeLabel = '取消',
+  onClose,
+  children,
+  footer,
+  dismissable = true,
+}: SheetProps) {
+  const { container } = useContext(SheetPresentationContext)
+  const previousFocus = useRef(typeof document === 'undefined' ? null : document.activeElement)
+
+  return (
+    <Dialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open && dismissable) onClose()
+      }}
+    >
+      <Dialog.Portal container={container}>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed top-1/2 left-1/2 z-50 flex max-h-[min(80dvh,48rem)] w-[calc(100%-3rem)] max-w-xl -translate-1/2 flex-col overflow-hidden rounded-xl border border-input bg-popover text-popover-foreground shadow-2xl"
+          onCloseAutoFocus={(event) => {
+            const trigger = previousFocus.current
+            if (trigger instanceof HTMLElement && trigger.isConnected) {
+              event.preventDefault()
+              trigger.focus({ preventScroll: true })
+            }
+          }}
+          onEscapeKeyDown={(event) => {
+            if (!dismissable) event.preventDefault()
+          }}
+          onInteractOutside={(event) => {
+            if (!dismissable) event.preventDefault()
+          }}
+        >
+          <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2">
+            <Dialog.Title className={title ? 'flex-1 truncate text-sm font-semibold' : 'sr-only'}>
+              {title ?? label ?? '操作面板'}
+            </Dialog.Title>
+            {title && dismissable && (
+              <Dialog.Close
+                className="ml-auto inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                aria-label="关闭"
+              >
+                {closeLabel}
+              </Dialog.Close>
+            )}
+          </div>
+          <div className="scroll-y min-h-0 pt-2 [&_.tap]:min-h-8 [&_.tap]:min-w-8 [&_.tap]:py-1.5">{children}</div>
+          {footer && <div className="shrink-0 border-t border-border px-4 py-3">{footer}</div>}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
 
 /**
  * Bottom sheet — the mobile-native alternative to a centred dialog, since the
@@ -15,7 +110,12 @@ import { Sheet as SheetRoot, SheetContent, SheetHeader, SheetTitle } from './ui/
  * non-dismissable sheet therefore has no route to closing at all, which is
  * exactly the intent.
  */
-export default function Sheet({
+export default function Sheet(props: SheetProps) {
+  const { centered } = useContext(SheetPresentationContext)
+  return centered ? <CenteredSheet {...props} /> : <MobileSheet {...props} />
+}
+
+function MobileSheet({
   title,
   label,
   closeLabel = '取消',
@@ -24,18 +124,7 @@ export default function Sheet({
   footer,
   dismissable = true,
   className = '',
-}: {
-  title?: string
-  /** Accessible name for a sheet that draws its own heading instead of using
-   *  `title`; without it a screen reader hears the generic fallback. */
-  label?: string
-  closeLabel?: string
-  onClose: () => void
-  children: React.ReactNode
-  footer?: React.ReactNode
-  dismissable?: boolean
-  className?: string
-}) {
+}: SheetProps) {
   return (
     <SheetRoot
       open

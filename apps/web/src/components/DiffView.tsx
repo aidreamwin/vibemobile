@@ -28,15 +28,22 @@ const lineClass: Record<DiffLine['kind'], string> = {
   context: 'text-muted-foreground',
 }
 
-function DiffBody({ text }: { text: string }) {
-  const lines = useMemo<DiffLine[]>(() => text.split('\n').map((raw) => ({ kind: classify(raw), text: raw })), [text])
+function DiffBody({ text, desktop = false }: { text: string; desktop?: boolean }) {
+  const lines = useMemo<DiffLine[]>(
+    () => text.split(/\r?\n/).map((raw) => ({ kind: classify(raw), text: raw })),
+    [text],
+  )
 
   if (!text.trim()) {
     return <div className="px-3 py-2 text-[12px] text-muted-foreground/70">（无差异内容）</div>
   }
 
   return (
-    <pre className="scroll-x max-h-96 font-mono text-[11px] leading-[1.5]">
+    <pre
+      className={
+        desktop ? 'scroll-x font-mono text-xs leading-[1.7]' : 'scroll-x max-h-96 font-mono text-[11px] leading-[1.5]'
+      }
+    >
       {lines.map((line, i) => (
         <div key={i} className={`px-3 whitespace-pre ${lineClass[line.kind]}`}>
           {line.text || ' '}
@@ -79,7 +86,7 @@ const DiffView = memo(function DiffView({ changes }: { changes: FileChange[] }) 
 export default DiffView
 
 /** Render a whole unified diff, split into per-file sections. */
-export const UnifiedDiff = memo(function UnifiedDiff({ diff }: { diff: string }) {
+export const UnifiedDiff = memo(function UnifiedDiff({ diff, desktop = false }: { diff: string; desktop?: boolean }) {
   const files = useMemo(() => {
     if (!diff.trim()) return []
     const sections: { header: string; body: string }[] = []
@@ -101,14 +108,21 @@ export const UnifiedDiff = memo(function UnifiedDiff({ diff }: { diff: string })
 
   return (
     <div className="divide-y divide-border">
-      {files.map((file, i) => (
-        <div key={i}>
-          <div className="truncate bg-secondary px-3 py-1.5 font-mono text-[11px] text-foreground/90">
-            {file.header.replace(/^diff --git /, '')}
+      {files.map((file, i) => {
+        const header = file.header.replace(/^diff --git /, '')
+        const label = desktop ? header.replace(/^a\/(.+) b\/\1$/, '$1') : header
+        return (
+          <div key={i}>
+            <div
+              title={desktop ? label : undefined}
+              className={`truncate px-3 py-1.5 font-mono text-[11px] text-foreground/90 ${desktop ? 'sticky top-0 z-1 border-b border-border bg-card font-medium' : 'bg-secondary'}`}
+            >
+              {label}
+            </div>
+            <DiffBody text={file.body} desktop={desktop} />
           </div>
-          <DiffBody text={file.body} />
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 })

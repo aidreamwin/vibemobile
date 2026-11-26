@@ -3,6 +3,7 @@ import type { FileRef } from '../lib/fileLink'
 import ApprovalSheet from './ApprovalSheet'
 import { UnifiedDiff } from './DiffView'
 import FileViewer from './FileViewer'
+import Sheet from './Sheet'
 import { Button } from './ui/button'
 
 /** The overlays that sit above the chat: file viewer, approvals, diff. */
@@ -14,6 +15,7 @@ export default function ChatOverlays({
   approvals,
   showDiff,
   diff,
+  desktop = false,
   onCloseDiff,
 }: {
   openFile: FileRef | null
@@ -23,6 +25,7 @@ export default function ChatOverlays({
   approvals: ApprovalRequest[]
   showDiff: boolean
   diff: string
+  desktop?: boolean
   onCloseDiff: () => void
 }) {
   return (
@@ -33,7 +36,13 @@ export default function ChatOverlays({
 
       {!readOnly && approvals.map((approval) => <ApprovalSheet key={approval.requestId} approval={approval} />)}
 
-      {showDiff && (
+      {showDiff && desktop && (
+        <Sheet title="本轮文件改动" onClose={onCloseDiff}>
+          <UnifiedDiff diff={diff} />
+        </Sheet>
+      )}
+
+      {showDiff && !desktop && (
         <div className="fixed inset-0 z-40 flex flex-col bg-background">
           <header className="safe-top flex shrink-0 items-center gap-2 border-b border-border px-2 py-2">
             <Button

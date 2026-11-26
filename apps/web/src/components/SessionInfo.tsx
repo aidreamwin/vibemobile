@@ -10,10 +10,12 @@ export default function SessionInfo({
   provider,
   onDownload,
   downloading,
+  compact = false,
 }: {
   provider?: ProviderId
   onDownload: () => void
   downloading: boolean
+  compact?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [supplier, setSupplier] = useState<ReturnType<typeof currentProvider>>(null)
@@ -72,7 +74,7 @@ export default function SessionInfo({
         <button
           type="button"
           aria-label="会话运行信息"
-          className="tap shrink-0 rounded-xl text-muted-foreground/60 active:bg-secondary data-[state=open]:text-primary"
+          className={`shrink-0 text-muted-foreground/60 active:bg-secondary data-[state=open]:text-primary ${compact ? 'grid size-6 place-items-center rounded-md hover:bg-secondary [&_svg]:size-3.5' : 'tap rounded-xl'}`}
         >
           <Info aria-hidden="true" className="size-[18px]" strokeWidth={1.7} />
         </button>

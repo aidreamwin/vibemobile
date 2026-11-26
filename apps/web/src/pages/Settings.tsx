@@ -2,7 +2,13 @@ import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import AgentProfilesSection from '../components/AgentProfilesSection'
 import CodexGlobalSection from '../components/CodexGlobalSection'
-import { useCallback, useEffect, useState } from 'react'
+import DesktopSettingsLayout, {
+  DesktopSettingsSection,
+  settingsSections,
+  useDesktopSettings,
+  type SettingsSectionId,
+} from '../components/desktop/DesktopSettingsLayout'
+import { useCallback, useEffect, useId, useState } from 'react'
 import {
   ArrowUpCircle,
   ChevronRight,
@@ -31,9 +37,10 @@ import { runnerId, runnerSwitchUrl } from '../lib/runner'
 import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
 import { WEB_BUILD, buildLabel, builtAtLabel, halvesDiverge, serverRestartPending, uptimeLabel } from '../lib/build'
 import { socket, type ConnectionState } from '../lib/ws'
+import { useWorkbenchStore } from '../lib/workbench'
 import { useWorkspaceStore } from '../lib/workspace'
 import DirectoryPickerSheet from '../components/DirectoryPickerSheet'
-import Sheet from '../components/Sheet'
+import Sheet, { SheetPresentation } from '../components/Sheet'
 import Field from '../components/Field'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -80,7 +87,23 @@ type RunnerSheet =
   | { kind: 'rotate'; runner: RunnerInfo }
   | { kind: 'delete'; runner: RunnerInfo }
 
-export default function Settings({ onLogout }: { onLogout: () => void }) {
+function MobileSettingsLayout({ children }: { children: React.ReactNode; hub: boolean }) {
+  return (
+    <>
+      <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
+        <ToolbarRow>
+          <ToolbarIdentity icon={SettingsIcon} label="设置" />
+          <RunnerSelector compact />
+        </ToolbarRow>
+      </header>
+      <div className="scroll-y min-h-0 flex-1 px-3.5 pb-8">
+        <div className="mx-auto max-w-2xl">{children}</div>
+      </div>
+    </>
+  )
+}
+
+export default function Settings({ onLogout, embedded = false }: { onLogout: () => void; embedded?: boolean }) {
   const projects = useWorkspaceStore((state) => state.projects)
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoading = useWorkspaceStore((state) => state.loading)
@@ -272,30 +295,40 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
         .join(' · ')
   // The Hub's own default runner is not editable; only stored credentials are.
   const managedRunners = runners.filter((runner) => runner.managed === true)
+  const Layout = embedded ? DesktopSettingsLayout : MobileSettingsLayout
+  const logoutButton = (
+    <button
+      type="button"
+      onClick={logout}
+      disabled={busy}
+      className={
+        embedded
+          ? 'flex min-h-10 w-full items-center gap-2 px-3 text-left text-[13px] text-destructive hover:bg-destructive/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:opacity-50'
+          : 'tap mt-8 min-h-12 w-full gap-2 rounded-2xl border border-border text-sm text-destructive active:bg-destructive/10 disabled:opacity-50'
+      }
+    >
+      <LogOut aria-hidden="true" className="size-4" />
+      {busy ? '退出中…' : '退出登录'}
+    </button>
+  )
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
-        <ToolbarRow>
-          <ToolbarIdentity icon={SettingsIcon} label="设置" />
-          <RunnerSelector compact />
-        </ToolbarRow>
-      </header>
-
-      <div className="scroll-y min-h-0 flex-1 px-3.5 pb-8">
-        <div className="mx-auto max-w-2xl">
+    <SheetPresentation centered={embedded}>
+      <div className="h-full flex flex-col overflow-hidden">
+        <Layout hub={hub}>
           <AgentsSection />
+          {embedded && <WorkbenchSection />}
 
           <SystemUpdateSection runnerName={runners.find((runner) => runner.id === runnerId)?.name} />
 
-          <Section title="工作区">
-            <div className="flex min-w-0 items-center pl-4 pr-1">
+          <Section section="workspace">
+            <div className={`flex min-w-0 items-center ${embedded ? 'px-3' : 'pl-4 pr-1'}`}>
               <button
                 type="button"
                 onClick={() => (projects.length ? setPickingDirectory(true) : void loadWorkspace())}
                 disabled={workspaceLoading}
                 aria-label="选择工作目录"
-                className="flex min-h-16 min-w-0 flex-1 items-center gap-3 py-3 text-left disabled:opacity-60"
+                className={`flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-60 ${embedded ? 'min-h-12 py-1.5 hover:text-primary' : 'min-h-16 py-3'}`}
               >
                 <FolderOpen className="size-5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
@@ -337,9 +370,12 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
           </Section>
 
           {hub && (
-            <Section title="远程执行机">
+            <Section section="runners">
               {managedRunners.map((runner) => (
-                <div key={runner.id} className="flex min-h-14 min-w-0 items-center gap-2 py-2 pl-4 pr-1">
+                <div
+                  key={runner.id}
+                  className={`flex min-w-0 items-center gap-2 ${embedded ? 'min-h-10 px-3' : 'min-h-14 py-2 pl-4 pr-1'}`}
+                >
                   <span
                     aria-hidden="true"
                     className={`size-1.5 shrink-0 rounded-full ${runner.online ? 'bg-success' : 'bg-muted-foreground'}`}
@@ -357,14 +393,14 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
                       setRunnerSheetError(null)
                       setRunnerSheet({ kind: 'menu', runner })
                     }}
-                    className="tap w-11 shrink-0 text-muted-foreground active:bg-secondary"
+                    className={`shrink-0 text-muted-foreground active:bg-secondary ${embedded ? 'grid size-7 place-items-center rounded-md hover:bg-secondary' : 'tap w-11'}`}
                     aria-label={`${runner.name} 的操作`}
                   >
                     <MoreVertical aria-hidden="true" className="mx-auto size-5" />
                   </button>
                 </div>
               ))}
-              <div className="px-3 py-2.5">
+              <div className={embedded ? 'px-1.5 py-1' : 'px-3 py-2.5'}>
                 <Button
                   type="button"
                   variant="ghost"
@@ -373,7 +409,11 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
                     setRunnerSheetError(null)
                     setRunnerSheet({ kind: 'create' })
                   }}
-                  className="tap h-11 w-full justify-start rounded-xl text-sm text-primary"
+                  className={
+                    embedded
+                      ? 'h-8 w-full justify-start rounded-md text-[13px] text-primary'
+                      : 'tap h-11 w-full justify-start rounded-xl text-sm text-primary'
+                  }
                 >
                   <Plus aria-hidden="true" className="size-4" /> 添加执行机
                 </Button>
@@ -381,7 +421,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
             </Section>
           )}
 
-          <Section title="系统">
+          <Section section="system">
             <InfoRow label="连接" value={<span className={CONN_TEXT[conn].tone}>{CONN_TEXT[conn].label}</span>}>
               <Detail label="访问地址">
                 <code>{location.host}</code>
@@ -417,7 +457,7 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
             )}
           </Section>
 
-          <Section title="安全">
+          <Section section="security">
             <InfoRow label="连接保护" value={location.protocol === 'https:' ? 'HTTPS' : 'HTTP'}>
               <p>登录凭据通过 httpOnly Cookie 保存。公网访问应使用 HTTPS 反向代理。</p>
             </InfoRow>
@@ -427,218 +467,217 @@ export default function Settings({ onLogout }: { onLogout: () => void }) {
                 setLogoutAllError(null)
                 setLogoutAllOpen(true)
               }}
-              className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left text-sm text-destructive transition-colors active:bg-destructive/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              className={`flex w-full items-center justify-between gap-3 text-left text-destructive transition-colors active:bg-destructive/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${embedded ? 'min-h-10 px-3 text-[13px] hover:bg-destructive/10' : 'min-h-14 px-4 text-sm'}`}
             >
               登出所有设备
               <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground/60" />
             </button>
+            {embedded && logoutButton}
           </Section>
 
-          <Section title="关于">
-            <div className="flex min-h-14 items-center px-4 py-3 text-sm font-medium text-foreground/90">
+          <Section section="about">
+            <div
+              className={`flex items-center font-medium text-foreground/90 ${embedded ? 'min-h-10 px-3 text-[13px]' : 'min-h-14 px-4 py-3 text-sm'}`}
+            >
               dyb出品，必属精品！
             </div>
           </Section>
 
-          <button
-            type="button"
-            onClick={logout}
-            disabled={busy}
-            className="tap mt-8 min-h-12 w-full gap-2 rounded-2xl border border-border text-sm text-destructive active:bg-destructive/10 disabled:opacity-50"
-          >
-            <LogOut aria-hidden="true" className="size-4" />
-            {busy ? '退出中…' : '退出登录'}
-          </button>
-        </div>
-      </div>
+          {!embedded && logoutButton}
+        </Layout>
 
-      {pickingDirectory && (
-        <DirectoryPickerSheet
-          projects={projects}
-          initialPath={defaultCwd}
-          title="全局工作目录"
-          onClose={() => setPickingDirectory(false)}
-          onSelect={(cwd) => {
-            setDefaultCwd(cwd)
-            setPickingDirectory(false)
-          }}
-        />
-      )}
-
-      {logoutAllOpen && (
-        <Sheet title="登出所有设备" onClose={() => setLogoutAllOpen(false)} dismissable={!logoutAllBusy}>
-          <div className="space-y-4 px-4 pt-2 pb-4">
-            <p className="text-[13px] text-foreground/85">
-              所有设备（包括当前设备）的登录态都会立即失效，需要重新输入 PIN。
-            </p>
-            {logoutAllError && <p className="text-[12px] text-destructive">{logoutAllError}</p>}
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={logoutAllBusy}
-              onClick={() => void logoutAll()}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              {logoutAllBusy ? '处理中…' : '确认登出所有设备'}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={logoutAllBusy}
-              onClick={() => setLogoutAllOpen(false)}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              取消
-            </Button>
-          </div>
-        </Sheet>
-      )}
-
-      {runnerSheet?.kind === 'create' && (
-        <Sheet title="添加执行机" onClose={closeRunnerSheet}>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              void createRunner()
+        {pickingDirectory && (
+          <DirectoryPickerSheet
+            projects={projects}
+            initialPath={defaultCwd}
+            title="全局工作目录"
+            onClose={() => setPickingDirectory(false)}
+            onSelect={(cwd) => {
+              setDefaultCwd(cwd)
+              setPickingDirectory(false)
             }}
-            className="space-y-4 px-4 pt-2 pb-4"
-          >
-            <Field label="名称">
-              <Input
-                autoFocus
-                value={runnerName}
-                onChange={(event) => setRunnerName(event.target.value)}
-                placeholder="例如：办公室机器"
-                className="h-auto py-3 text-[15px]"
-              />
-            </Field>
-            {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
-            <Button
-              type="submit"
-              disabled={runnerBusy || !runnerName.trim()}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              {runnerBusy ? '生成中…' : '生成令牌'}
-            </Button>
-          </form>
-        </Sheet>
-      )}
+          />
+        )}
 
-      {runnerSheet?.kind === 'secret' && (
-        <Sheet title={runnerSheet.source === 'created' ? '执行机已添加' : '令牌已刷新'} onClose={closeRunnerSheet}>
-          <div className="space-y-4 px-4 pt-2 pb-4">
-            <p className="text-[12px] text-warning">令牌只显示这一次，关闭后无法再次查看；丢失只能在列表里刷新。</p>
-            <pre className="scroll-x rounded-xl border border-border bg-secondary/60 p-3 text-[12px] leading-relaxed text-foreground/90">
-              <code>{runnerEnvBlock(runnerSheet.id, runnerSheet.token)}</code>
-            </pre>
-            {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
-            <Button type="button" onClick={() => void copyRunnerEnv()} className="tap h-auto w-full py-3.5 text-[15px]">
-              {runnerCopied ? '已复制' : '复制 ID 和令牌'}
-            </Button>
-            <p className="text-[12px] text-muted-foreground">
-              把这两行写进执行机的 .env.runner，然后运行 <code>docker compose -f docker-compose.runner.yml up -d</code>
-              。
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={closeRunnerSheet}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              完成
-            </Button>
-          </div>
-        </Sheet>
-      )}
+        {logoutAllOpen && (
+          <Sheet title="登出所有设备" onClose={() => setLogoutAllOpen(false)} dismissable={!logoutAllBusy}>
+            <div className="space-y-4 px-4 pt-2 pb-4">
+              <p className="text-[13px] text-foreground/85">
+                所有设备（包括当前设备）的登录态都会立即失效，需要重新输入 PIN。
+              </p>
+              {logoutAllError && <p className="text-[12px] text-destructive">{logoutAllError}</p>}
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={logoutAllBusy}
+                onClick={() => void logoutAll()}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                {logoutAllBusy ? '处理中…' : '确认登出所有设备'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={logoutAllBusy}
+                onClick={() => setLogoutAllOpen(false)}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                取消
+              </Button>
+            </div>
+          </Sheet>
+        )}
 
-      {runnerSheet?.kind === 'menu' && (
-        <Sheet title={runnerSheet.runner.name} label="执行机操作" onClose={closeRunnerSheet}>
-          <div className="space-y-2 px-4 pt-2 pb-4">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setRunnerSheet({ kind: 'rotate', runner: runnerSheet.runner })}
-              className="tap h-auto w-full py-3.5 text-[15px]"
+        {runnerSheet?.kind === 'create' && (
+          <Sheet title="添加执行机" onClose={closeRunnerSheet}>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                void createRunner()
+              }}
+              className="space-y-4 px-4 pt-2 pb-4"
             >
-              刷新令牌
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => setRunnerSheet({ kind: 'delete', runner: runnerSheet.runner })}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              删除执行机
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={closeRunnerSheet}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              取消
-            </Button>
-          </div>
-        </Sheet>
-      )}
+              <Field label="名称">
+                <Input
+                  autoFocus
+                  value={runnerName}
+                  onChange={(event) => setRunnerName(event.target.value)}
+                  placeholder="例如：办公室机器"
+                  className="h-auto py-3 text-[15px]"
+                />
+              </Field>
+              {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
+              <Button
+                type="submit"
+                disabled={runnerBusy || !runnerName.trim()}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                {runnerBusy ? '生成中…' : '生成令牌'}
+              </Button>
+            </form>
+          </Sheet>
+        )}
 
-      {runnerSheet?.kind === 'rotate' && (
-        <Sheet title="刷新令牌" onClose={closeRunnerSheet}>
-          <div className="space-y-4 px-4 pt-2 pb-4">
-            <p className="text-[13px] text-foreground/85">
-              「{runnerSheet.runner.name}」的旧令牌会立即失效，正在连接的执行机会断开。需要在执行机上更新
-              VIBEMOBILE_RUNNER_TOKEN 并重启容器。
-            </p>
-            {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={runnerBusy}
-              onClick={() => void rotateRunnerToken(runnerSheet.runner)}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              {runnerBusy ? '刷新中…' : '确认刷新'}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={closeRunnerSheet}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              取消
-            </Button>
-          </div>
-        </Sheet>
-      )}
+        {runnerSheet?.kind === 'secret' && (
+          <Sheet title={runnerSheet.source === 'created' ? '执行机已添加' : '令牌已刷新'} onClose={closeRunnerSheet}>
+            <div className="space-y-4 px-4 pt-2 pb-4">
+              <p className="text-[12px] text-warning">令牌只显示这一次，关闭后无法再次查看；丢失只能在列表里刷新。</p>
+              <pre className="scroll-x rounded-xl border border-border bg-secondary/60 p-3 text-[12px] leading-relaxed text-foreground/90">
+                <code>{runnerEnvBlock(runnerSheet.id, runnerSheet.token)}</code>
+              </pre>
+              {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
+              <Button
+                type="button"
+                onClick={() => void copyRunnerEnv()}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                {runnerCopied ? '已复制' : '复制 ID 和令牌'}
+              </Button>
+              <p className="text-[12px] text-muted-foreground">
+                把这两行写进执行机的 .env.runner，然后运行{' '}
+                <code>docker compose -f docker-compose.runner.yml up -d</code>。
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeRunnerSheet}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                完成
+              </Button>
+            </div>
+          </Sheet>
+        )}
 
-      {runnerSheet?.kind === 'delete' && (
-        <Sheet title="删除执行机" onClose={closeRunnerSheet} dismissable={false}>
-          <div className="space-y-4 px-4 pt-2 pb-4">
-            <p className="text-[13px] text-foreground/85">
-              删除「{runnerSheet.runner.name}」后，它的连接会立即断开，令牌同时作废。
-            </p>
-            {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={runnerBusy}
-              onClick={() => void deleteRunner(runnerSheet.runner)}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              {runnerBusy ? '删除中…' : '确认删除'}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={closeRunnerSheet}
-              className="tap h-auto w-full py-3.5 text-[15px]"
-            >
-              取消
-            </Button>
-          </div>
-        </Sheet>
-      )}
-    </div>
+        {runnerSheet?.kind === 'menu' && (
+          <Sheet title={runnerSheet.runner.name} label="执行机操作" onClose={closeRunnerSheet}>
+            <div className="space-y-2 px-4 pt-2 pb-4">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setRunnerSheet({ kind: 'rotate', runner: runnerSheet.runner })}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                刷新令牌
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => setRunnerSheet({ kind: 'delete', runner: runnerSheet.runner })}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                删除执行机
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={closeRunnerSheet}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                取消
+              </Button>
+            </div>
+          </Sheet>
+        )}
+
+        {runnerSheet?.kind === 'rotate' && (
+          <Sheet title="刷新令牌" onClose={closeRunnerSheet}>
+            <div className="space-y-4 px-4 pt-2 pb-4">
+              <p className="text-[13px] text-foreground/85">
+                「{runnerSheet.runner.name}」的旧令牌会立即失效，正在连接的执行机会断开。需要在执行机上更新
+                VIBEMOBILE_RUNNER_TOKEN 并重启容器。
+              </p>
+              {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={runnerBusy}
+                onClick={() => void rotateRunnerToken(runnerSheet.runner)}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                {runnerBusy ? '刷新中…' : '确认刷新'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeRunnerSheet}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                取消
+              </Button>
+            </div>
+          </Sheet>
+        )}
+
+        {runnerSheet?.kind === 'delete' && (
+          <Sheet title="删除执行机" onClose={closeRunnerSheet} dismissable={false}>
+            <div className="space-y-4 px-4 pt-2 pb-4">
+              <p className="text-[13px] text-foreground/85">
+                删除「{runnerSheet.runner.name}」后，它的连接会立即断开，令牌同时作废。
+              </p>
+              {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={runnerBusy}
+                onClick={() => void deleteRunner(runnerSheet.runner)}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                {runnerBusy ? '删除中…' : '确认删除'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeRunnerSheet}
+                className="tap h-auto w-full py-3.5 text-[15px]"
+              >
+                取消
+              </Button>
+            </div>
+          </Sheet>
+        )}
+      </div>
+    </SheetPresentation>
   )
 }
 
@@ -688,7 +727,7 @@ function SystemUpdateSection({ runnerName }: { runnerName?: string }) {
 
   return (
     <>
-      <Section title="更新">
+      <Section section="updates">
         {!current && <div className="px-4 py-3 text-sm text-muted-foreground">{currentError ?? '加载中…'}</div>}
         {current && (
           <UpdateRow
@@ -920,7 +959,7 @@ function AgentsSection() {
   const ids = [...new Set([...byId.keys(), ...providers.map((provider) => provider.id)])]
 
   return (
-    <Section title="代理">
+    <Section section="agents">
       {ids.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">{error ?? '加载中…'}</div>}
       {ids.map((id) => {
         const agent = byId.get(id)
@@ -1055,10 +1094,52 @@ function AgentsSection() {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function WorkbenchSection() {
+  const position = useWorkbenchStore((state) => state.agentPanePosition)
+  const setPosition = useWorkbenchStore((state) => state.setAgentPanePosition)
+  const groupName = useId()
+
   return (
-    <section className="mt-6" aria-label={title}>
-      <h2 className="px-1 pb-2 text-xs font-medium text-muted-foreground">{title}</h2>
+    <DesktopSettingsSection section="workbench">
+      <div className="px-3 py-3">
+        <fieldset className="min-w-0">
+          <legend className="mb-1.5 text-[13px] font-medium text-foreground">分屏顺序</legend>
+          <div className="grid gap-0.5">
+            <label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[13px] text-foreground/90 hover:bg-secondary/60">
+              <input
+                type="radio"
+                name={groupName}
+                checked={position === 'start'}
+                onChange={() => setPosition('start')}
+                className="size-3.5 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              />
+              <span>Agent 居中，文件在右</span>
+            </label>
+            <label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[13px] text-foreground/90 hover:bg-secondary/60">
+              <input
+                type="radio"
+                name={groupName}
+                checked={position === 'end'}
+                onChange={() => setPosition('end')}
+                className="size-3.5 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              />
+              <span>文件居中，Agent 在右</span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+    </DesktopSettingsSection>
+  )
+}
+
+function Section({ section, children }: { section: SettingsSectionId; children: React.ReactNode }) {
+  const desktop = useDesktopSettings()
+  if (desktop) return <DesktopSettingsSection section={section}>{children}</DesktopSettingsSection>
+
+  const { label } = settingsSections[section]
+  return (
+    <section className="mt-6" aria-label={label}>
+      <h2 className="px-1 pb-2 text-xs font-medium text-muted-foreground">{label}</h2>
       <div className="surface-list overflow-hidden divide-y divide-border/70 shadow-sm">{children}</div>
     </section>
   )
@@ -1075,6 +1156,7 @@ function InfoRow({
   action?: React.ReactNode
   children: React.ReactNode
 }) {
+  const desktop = useDesktopSettings()
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -1085,13 +1167,24 @@ function InfoRow({
           aria-label={`${label}详情`}
           aria-haspopup="dialog"
           aria-expanded={open}
-          className="flex min-h-14 min-w-0 flex-1 items-center gap-3 px-4 text-left transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          className={`flex min-w-0 flex-1 items-center gap-3 text-left transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${desktop ? 'min-h-10 px-3 hover:bg-secondary/60' : 'min-h-14 px-4'}`}
         >
-          <span className="shrink-0 text-sm font-medium text-foreground/90">{label}</span>
+          <span
+            className={`font-medium text-foreground/90 ${desktop ? 'min-w-0 truncate text-[13px]' : 'shrink-0 text-sm'}`}
+            title={desktop ? label : undefined}
+          >
+            {label}
+          </span>
           <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{value}</span>
           <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/60" />
         </button>
-        {action && <div className="shrink-0 pr-2">{action}</div>}
+        {action && (
+          <div
+            className={`shrink-0 pr-2 ${desktop ? '[&_.tap]:size-7 [&_.tap]:min-h-7 [&_.tap]:min-w-7 [&_.tap]:rounded-md' : ''}`}
+          >
+            {action}
+          </div>
+        )}
       </div>
       {open && (
         <Sheet

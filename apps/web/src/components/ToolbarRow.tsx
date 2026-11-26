@@ -1,8 +1,14 @@
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 
-export default function ToolbarRow({ children }: { children: ReactNode }) {
-  return <div className="flex min-h-13 min-w-0 items-center gap-1 px-2 py-1 sm:gap-2 sm:px-3">{children}</div>
+export default function ToolbarRow({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
+  return (
+    <div
+      className={`flex min-w-0 items-center ${compact ? 'min-h-9 gap-1.5 px-3' : 'min-h-13 gap-1 px-2 py-1 sm:gap-2 sm:px-3'}`}
+    >
+      {children}
+    </div>
+  )
 }
 
 export function ToolbarIdentity({ icon: Icon, label }: { icon: LucideIcon; label: string }) {

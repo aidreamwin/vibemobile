@@ -14,7 +14,9 @@ import type { AgentEvent, AgentItem } from '@vibemobile/protocol'
 // the timer branch — and that branch is the only one that touches `window`.
 ;(globalThis as { window?: unknown }).window ??= globalThis
 
-const { loadTranscript, prependTranscriptItems, resyncTranscript, useChatStore } = await import('./store')
+const { createChatStore } = await import('./store')
+const chatStore = createChatStore()
+const { loadTranscript, prependTranscriptItems, resyncTranscript } = chatStore.getState()
 
 const THREAD = 'thread-1'
 const TURN = 'turn-1'
@@ -22,11 +24,16 @@ const TURN = 'turn-1'
 /** Deltas are flushed on a timer, so assertions have to wait one out. */
 const settled = () => new Promise((r) => setTimeout(r, 80))
 
-const apply = (event: AgentEvent) => useChatStore.getState().applyEvent(event)
+const apply = (event: AgentEvent) => chatStore.getState().applyEvent(event)
 
-const delta = (itemId: string, channel: 'text' | 'reasoning' | 'commandOutput', text: string): AgentEvent => ({
+const delta = (
+  itemId: string,
+  channel: 'text' | 'reasoning' | 'commandOutput',
+  text: string,
+  threadId = THREAD,
+): AgentEvent => ({
   kind: 'delta',
-  threadId: THREAD,
+  threadId,
   turnId: TURN,
   itemId,
   channel,
@@ -56,10 +63,37 @@ const reasoning = (id: string, summary: string[] = [], content: string[] = []): 
   content,
 })
 
-const itemAt = (id: string) => useChatStore.getState().items.find((i) => i.id === id)
+const itemAt = (id: string) => chatStore.getState().items.find((i) => i.id === id)
 
 beforeEach(() => {
-  useChatStore.getState().reset(THREAD)
+  chatStore.getState().reset(THREAD)
+})
+
+it('isolates transcript snapshots and streams belonging to two panes', async () => {
+  const otherThread = 'thread-2'
+  const otherChat = createChatStore(otherThread)
+  loadTranscript(THREAD, [message('history', 'first pane')])
+  otherChat.getState().loadTranscript(otherThread, [message('history', 'second pane')])
+
+  const events: AgentEvent[] = [
+    { kind: 'item.started', threadId: THREAD, turnId: TURN, item: message('reply', '') },
+    { kind: 'item.started', threadId: otherThread, turnId: TURN, item: message('reply', '') },
+    delta('reply', 'text', 'first reply'),
+    delta('reply', 'text', 'second reply', otherThread),
+  ]
+  for (const event of events) {
+    apply(event)
+    otherChat.getState().applyEvent(event)
+  }
+  await settled()
+
+  expect(itemAt('history')).toMatchObject({ text: 'first pane' })
+  expect(otherChat.getState().items[0]).toMatchObject({ text: 'second pane' })
+  expect(chatStore.getState().streams.reply?.text).toBe('first reply')
+  expect(otherChat.getState().streams.reply?.text).toBe('second reply')
+
+  chatStore.getState().reset(THREAD)
+  expect(otherChat.getState().streams.reply?.text).toBe('second reply')
 })
 
 describe('streamed deltas vs the authoritative completed item', () => {
@@ -74,7 +108,7 @@ describe('streamed deltas vs the authoritative completed item', () => {
 
     expect(itemAt('c1')).toMatchObject({ kind: 'command', output: 'line 1\nline 2\n' })
     // The buffer must still go away, or the text would render twice.
-    expect(useChatStore.getState().streams.c1).toBeUndefined()
+    expect(chatStore.getState().streams.c1).toBeUndefined()
   })
 
   it('keeps streamed reply text when the completed message is empty', async () => {
@@ -114,7 +148,7 @@ describe('streamed deltas vs the authoritative completed item', () => {
     await settled()
 
     expect(itemAt('c2')).toMatchObject({ output: 'real output' })
-    expect(useChatStore.getState().streams.c2).toBeUndefined()
+    expect(chatStore.getState().streams.c2).toBeUndefined()
   })
 
   it('keeps streamed reasoning when the completed item is empty', async () => {
@@ -126,7 +160,7 @@ describe('streamed deltas vs the authoritative completed item', () => {
     await settled()
 
     expect(itemAt('r1')).toEqual(reasoning('r1', [], ['A displayable reasoning summary']))
-    expect(useChatStore.getState().streams.r1).toBeUndefined()
+    expect(chatStore.getState().streams.r1).toBeUndefined()
   })
 
   it('materializes reasoning deltas when the turn ends without item.completed', async () => {
@@ -143,7 +177,7 @@ describe('streamed deltas vs the authoritative completed item', () => {
     await settled()
 
     expect(itemAt('r2')).toEqual(reasoning('r2', [], ['Recovered at turn completion']))
-    expect(useChatStore.getState().streams.r2).toBeUndefined()
+    expect(chatStore.getState().streams.r2).toBeUndefined()
   })
 })
 
@@ -159,15 +193,15 @@ describe('resyncTranscript', () => {
   it('adds what completed while the socket was down', () => {
     loadTranscript(THREAD, [message('m1', 'first')])
     resyncTranscript(THREAD, [message('m1', 'first'), message('m2', 'arrived while away')])
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2'])
   })
 
   it('can restart a disjoint history window without dropping newly arrived live items', () => {
     loadTranscript(THREAD, [message('old', 'before disconnect'), message('live', 'during read')])
     resyncTranscript(THREAD, [message('new', 'snapshot')], undefined, new Set(['old']))
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['new', 'live'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['new', 'live'])
     prependTranscriptItems(THREAD, [message('old', 'reachable by paging again')])
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['old', 'new', 'live'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['old', 'new', 'live'])
   })
 
   it('keeps an item the snapshot does not know about yet', () => {
@@ -178,9 +212,9 @@ describe('resyncTranscript', () => {
     apply(delta('m2', 'text', 'streaming'))
     return settled().then(() => {
       resyncTranscript(THREAD, [message('m1', 'first')])
-      expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2'])
+      expect(chatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2'])
       // …and its buffer survives, because it is the only copy of that text.
-      expect(useChatStore.getState().streams.m2?.text).toBe('streaming')
+      expect(chatStore.getState().streams.m2?.text).toBe('streaming')
     })
   })
 
@@ -193,7 +227,7 @@ describe('resyncTranscript', () => {
     // The snapshot carries this item's text, so the buffer is an older prefix
     // of it and rendering both would double the paragraph.
     resyncTranscript(THREAD, [message('m1', 'a stale prefix and the rest')])
-    expect(useChatStore.getState().streams.m1).toBeUndefined()
+    expect(chatStore.getState().streams.m1).toBeUndefined()
     expect(itemAt('m1')).toMatchObject({ text: 'a stale prefix and the rest' })
   })
 
@@ -211,7 +245,7 @@ describe('resyncTranscript', () => {
       message('m5', 'arrived while away'),
     ])
 
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5'])
     expect(itemAt('m3')).toMatchObject({ text: 'newest page, re-read' })
   })
 })
@@ -226,7 +260,7 @@ describe('prependTranscriptItems', () => {
     loadTranscript(THREAD, [message('m3', 'third')])
     const added = prependTranscriptItems(THREAD, [message('m1', 'first'), message('m2', 'second')])
     expect(added).toBe(2)
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2', 'm3'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2', 'm3'])
   })
 
   it('keeps the copy already on screen when a page overlaps', () => {
@@ -237,14 +271,14 @@ describe('prependTranscriptItems', () => {
     const added = prependTranscriptItems(THREAD, [message('m1', 'first'), message('m2', 'stale')])
     expect(added).toBe(1)
     expect(itemAt('m2')).toMatchObject({ text: 'live text' })
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2', 'm3'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['m1', 'm2', 'm3'])
   })
 
   it('ignores a page for a session that is no longer open', () => {
     loadTranscript(THREAD, [message('m2', 'second')])
     const added = prependTranscriptItems('thread-2', [message('m1', 'first')])
     expect(added).toBe(0)
-    expect(useChatStore.getState().items.map((i) => i.id)).toEqual(['m2'])
+    expect(chatStore.getState().items.map((i) => i.id)).toEqual(['m2'])
   })
 })
 
@@ -266,7 +300,7 @@ describe('usage', () => {
     loadTranscript(THREAD, [])
     apply(report(100, 10))
     apply(report(4000, 20))
-    expect(useChatStore.getState().usage?.promptTokens).toBe(4000)
+    expect(chatStore.getState().usage?.promptTokens).toBe(4000)
   })
 
   it('is cleared when a different session is loaded', () => {
@@ -275,7 +309,7 @@ describe('usage', () => {
     loadTranscript(THREAD, [])
     apply(report(100, 10))
     loadTranscript('thread-2', [])
-    expect(useChatStore.getState().usage).toBeNull()
+    expect(chatStore.getState().usage).toBeNull()
   })
 
   it('survives an in-place resync', () => {
@@ -284,12 +318,12 @@ describe('usage', () => {
     loadTranscript(THREAD, [])
     apply(report(100, 10))
     resyncTranscript(THREAD, [])
-    expect(useChatStore.getState().usage?.promptTokens).toBe(100)
+    expect(chatStore.getState().usage?.promptTokens).toBe(100)
   })
 })
 
 describe('visible provider failures', () => {
-  beforeEach(() => useChatStore.getState().reset(THREAD))
+  beforeEach(() => chatStore.getState().reset(THREAD))
   it('keeps retrying work running and exposes the retry details', () => {
     apply({ kind: 'turn.started', threadId: THREAD, turnId: TURN })
     apply({ kind: 'session.status', threadId: THREAD, status: 'working' })
@@ -302,13 +336,13 @@ describe('visible provider failures', () => {
       retryAttempt: 1,
       retryInMs: 1000,
     })
-    expect(useChatStore.getState()).toMatchObject({
+    expect(chatStore.getState()).toMatchObject({
       status: 'working',
       turnStatus: 'inProgress',
       retryNotice: { message: '503', retryAttempt: 1 },
     })
     apply(delta('answer', 'text', 'recovered'))
-    expect(useChatStore.getState().retryNotice).toBeNull()
+    expect(chatStore.getState().retryNotice).toBeNull()
   })
   it('shows a Codex failure even when only turn.completed supplies the reason, and idle cannot erase it', async () => {
     apply({
@@ -320,7 +354,7 @@ describe('visible provider failures', () => {
     })
     apply({ kind: 'session.status', threadId: THREAD, status: 'idle' })
     await settled()
-    expect(useChatStore.getState().items).toContainEqual({
+    expect(chatStore.getState().items).toContainEqual({
       kind: 'error',
       id: `turn-error:${TURN}`,
       message: 'upstream unavailable',
@@ -330,6 +364,6 @@ describe('visible provider failures', () => {
     apply({ kind: 'error', threadId: THREAD, turnId: TURN, message: 'denied', willRetry: false })
     apply({ kind: 'turn.completed', threadId: THREAD, turnId: TURN, status: 'failed', error: { message: 'denied' } })
     await settled()
-    expect(useChatStore.getState().items.filter((i) => i.kind === 'error')).toHaveLength(1)
+    expect(chatStore.getState().items.filter((i) => i.kind === 'error')).toHaveLength(1)
   })
 })

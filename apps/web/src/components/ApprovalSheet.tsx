@@ -55,7 +55,7 @@ function answerFor(pick: Pick | undefined): string[] {
   return custom ? [custom] : (pick?.labels ?? [])
 }
 
-export default function ApprovalSheet({ approval }: { approval: ApprovalRequest }) {
+export default function ApprovalSheet({ approval, inline = false }: { approval: ApprovalRequest; inline?: boolean }) {
   const [busy, setBusy] = useState<ApprovalDecision | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -108,12 +108,13 @@ export default function ApprovalSheet({ approval }: { approval: ApprovalRequest 
   }
 
   const isCommand = approval.type === 'command'
+  const label = isQuestion ? '等待你的回答' : '等待你的授权'
 
   // Not dismissable: a turn is blocked until this is answered, so a stray tap
   // outside must not make the question disappear.
-  return (
-    <Sheet label={isQuestion ? '等待你的回答' : '等待你的授权'} onClose={() => {}} dismissable={false}>
-      <div className="scroll-y max-h-[50dvh] px-5 pt-2 pb-2">
+  const content = (
+    <>
+      <div className={`scroll-y pt-2 pb-2 ${inline ? 'max-h-52 px-3' : 'max-h-[50dvh] px-5'}`}>
         <div className="mb-2 flex items-center gap-2">
           <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-warning" />
           <span className="text-xs font-semibold tracking-wide text-warning">
@@ -123,7 +124,11 @@ export default function ApprovalSheet({ approval }: { approval: ApprovalRequest 
 
         {/* For a question, the first question is the header and the form below
             repeats it — showing it twice reads as two questions. */}
-        {!isQuestion && <h2 className="mb-3 text-base font-semibold leading-snug text-foreground">{approval.title}</h2>}
+        {!isQuestion && (
+          <h2 className={`mb-2 font-semibold leading-snug text-foreground ${inline ? 'text-sm' : 'mb-3 text-base'}`}>
+            {approval.title}
+          </h2>
+        )}
 
         {isQuestion && (
           <div className="space-y-4">
@@ -132,6 +137,7 @@ export default function ApprovalSheet({ approval }: { approval: ApprovalRequest 
                 key={`${index}:${question.question}`}
                 question={question}
                 pick={picks[index]}
+                inline={inline}
                 onChoose={(label) => choose(index, label, question.multiSelect === true)}
                 onType={(text) => type(index, text)}
               />
@@ -161,7 +167,13 @@ export default function ApprovalSheet({ approval }: { approval: ApprovalRequest 
         {error && <div className="mb-2 text-xs text-destructive">{error}</div>}
       </div>
 
-      <div className="grid grid-cols-2 gap-2.5 px-4 pt-1 pb-2">
+      <div
+        className={
+          inline
+            ? 'flex flex-wrap items-center gap-1.5 border-t border-border px-3 py-2'
+            : 'grid grid-cols-2 gap-2.5 px-4 pt-1 pb-2'
+        }
+      >
         {decisions.map((decision) => {
           const meta = (isQuestion ? QUESTION_DECISIONS : DECISIONS)[decision]
           if (!meta) return null
@@ -173,22 +185,39 @@ export default function ApprovalSheet({ approval }: { approval: ApprovalRequest 
               key={decision}
               type="button"
               variant={meta.variant}
+              size={inline ? 'sm' : undefined}
               disabled={busy !== null || (wide && !answered)}
               onClick={() => answer(decision)}
               /* Two lines of text, so the base's single-line sizing has to go:
                  whitespace-nowrap would clip, and h-9 is too short. */
-              className={`tap h-auto flex-col gap-0.5 rounded-2xl px-3 py-3 whitespace-normal ${
-                wide ? 'col-span-2' : ''
-              }`}
+              title={inline ? (wide && !answered ? '先给每个问题选一个答案' : meta.hint) : undefined}
+              className={
+                inline
+                  ? 'text-xs'
+                  : `tap h-auto flex-col gap-0.5 rounded-2xl px-3 py-3 whitespace-normal ${wide ? 'col-span-2' : ''}`
+              }
             >
-              <span className="text-[14px] font-semibold leading-tight">
+              <span className={inline ? '' : 'text-[14px] font-semibold leading-tight'}>
                 {busy === decision ? '处理中…' : meta.label}
               </span>
-              <span className="text-[11px] opacity-75">{wide && !answered ? '先给每个问题选一个答案' : meta.hint}</span>
+              {!inline && (
+                <span className="text-[11px] opacity-75">
+                  {wide && !answered ? '先给每个问题选一个答案' : meta.hint}
+                </span>
+              )}
             </Button>
           )
         })}
       </div>
+    </>
+  )
+  return inline ? (
+    <section aria-label={label} className="overflow-hidden rounded-lg border border-warning/35 bg-card">
+      {content}
+    </section>
+  ) : (
+    <Sheet label={label} onClose={() => {}} dismissable={false}>
+      {content}
     </Sheet>
   )
 }
@@ -205,11 +234,13 @@ export default function ApprovalSheet({ approval }: { approval: ApprovalRequest 
 function QuestionForm({
   question,
   pick,
+  inline,
   onChoose,
   onType,
 }: {
   question: ApprovalQuestion
   pick: Pick | undefined
+  inline: boolean
   onChoose: (label: string) => void
   onType: (text: string) => void
 }) {
@@ -235,7 +266,7 @@ function QuestionForm({
               type="button"
               onClick={() => onChoose(option.label)}
               aria-pressed={on}
-              className={`tap flex w-full items-start gap-2 rounded-xl border px-3 py-2 text-left ${
+              className={`flex w-full items-start gap-2 border px-3 text-left ${inline ? 'rounded-md py-1.5' : 'tap rounded-xl py-2'} ${
                 on ? 'border-primary bg-primary/5' : 'border-border bg-transparent'
               }`}
             >

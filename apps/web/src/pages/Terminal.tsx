@@ -49,7 +49,14 @@ const KEYS: { label: string; seq: string }[] = [
   { label: '/', seq: '/' },
 ]
 
-export default function TerminalPage() {
+export interface TerminalPageProps {
+  terminalKey?: string
+  embedded?: boolean
+  onStatusChange?: (status: Status, label: string) => void
+}
+
+export default function TerminalPage({ terminalKey, embedded = false, onStatusChange }: TerminalPageProps = {}) {
+  const storageKey = terminalKey ? runnerStorageKey(`vibemobile.terminalId.${terminalKey}`) : ID_KEY
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoaded = useWorkspaceStore((state) => state.loaded)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -96,7 +103,7 @@ export default function TerminalPage() {
     const container = containerRef.current
     if (!container) return
 
-    idRef.current = sessionStorage.getItem(ID_KEY)
+    idRef.current = sessionStorage.getItem(storageKey)
 
     const term = new XTerm({
       // 13px remains compact while keeping shell output readable on a phone.
@@ -207,7 +214,7 @@ export default function TerminalPage() {
           // storing the string "undefined" would then be sent back as one.
           if (msg.id) {
             idRef.current = msg.id
-            sessionStorage.setItem(ID_KEY, msg.id)
+            sessionStorage.setItem(storageKey, msg.id)
           }
           setShell(msg.shell)
           // Only a brand-new shell gets the banner: writing into a restored
@@ -311,65 +318,73 @@ export default function TerminalPage() {
     else retryNow()
   }, [send, retryNow])
 
+  useEffect(() => {
+    onStatusChange?.(status, error ?? notice ?? shell?.split(/[\\/]/).pop() ?? '…')
+  }, [status, error, notice, shell, onStatusChange])
+
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
-      <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
-        <ToolbarRow>
-          <ToolbarIdentity icon={TerminalIcon} label="终端" />
-          <RunnerSelector compact />
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${
-              status === 'open' ? 'bg-success' : status === 'connecting' ? 'bg-warning' : 'bg-muted-foreground'
-            }`}
-          />
-          <span
-            role="status"
-            title={error ?? notice ?? shell ?? '正在启动 shell…'}
-            className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
-          >
-            {error ?? notice ?? shell?.split(/[\\/]/).pop() ?? '…'}
-          </span>
-          <button
-            type="button"
-            onClick={onReopen}
-            aria-label={status === 'open' ? '重开终端' : '重连终端'}
-            title={status === 'open' ? '重开终端' : '重连终端'}
-            className="tap shrink-0 rounded-xl text-muted-foreground active:bg-secondary"
-          >
-            <RotateCcw aria-hidden="true" className="size-5" strokeWidth={1.8} />
-          </button>
-        </ToolbarRow>
-      </header>
+      {!embedded && (
+        <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
+          <ToolbarRow>
+            <ToolbarIdentity icon={TerminalIcon} label="终端" />
+            <RunnerSelector compact />
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${
+                status === 'open' ? 'bg-success' : status === 'connecting' ? 'bg-warning' : 'bg-muted-foreground'
+              }`}
+            />
+            <span
+              role="status"
+              title={error ?? notice ?? shell ?? '正在启动 shell…'}
+              className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+            >
+              {error ?? notice ?? shell?.split(/[\\/]/).pop() ?? '…'}
+            </span>
+            <button
+              type="button"
+              onClick={onReopen}
+              aria-label={status === 'open' ? '重开终端' : '重连终端'}
+              title={status === 'open' ? '重开终端' : '重连终端'}
+              className="tap shrink-0 rounded-xl text-muted-foreground active:bg-secondary"
+            >
+              <RotateCcw aria-hidden="true" className="size-5" strokeWidth={1.8} />
+            </button>
+          </ToolbarRow>
+        </header>
+      )}
 
       <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden px-1 pt-1" />
 
       {/* Phone keyboards have no Esc/Ctrl/arrows — this row is what makes the
           terminal usable at all on a touch device. */}
-      <div className="safe-bottom shrink-0 border-t border-border bg-card">
-        <div className="scroll-x flex gap-1.5 px-2 py-2">
-          <button
-            type="button"
-            onClick={() => setCtrl(!ctrlArmed)}
-            aria-pressed={ctrlArmed}
-            aria-label={ctrlArmed ? '取消 Ctrl 组合键' : '按下 Ctrl 组合键'}
-            className={`min-h-11 shrink-0 rounded-lg px-3 py-2 text-[12px] ${
-              ctrlArmed ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
-            }`}
-          >
-            {ctrlArmed ? 'Ctrl · 已按下' : 'Ctrl'}
-          </button>
-          {KEYS.map((key) => (
+      {!embedded && (
+        <div className="safe-bottom shrink-0 border-t border-border bg-card">
+          <div className="scroll-x flex gap-1.5 px-2 py-2">
             <button
               type="button"
-              key={key.label}
-              onClick={() => send({ type: 'input', data: key.seq })}
-              className="min-h-11 shrink-0 rounded-lg bg-secondary px-3 py-2 font-mono text-[12px] text-foreground/90 active:bg-raised"
+              onClick={() => setCtrl(!ctrlArmed)}
+              aria-pressed={ctrlArmed}
+              aria-label={ctrlArmed ? '取消 Ctrl 组合键' : '按下 Ctrl 组合键'}
+              className={`min-h-11 shrink-0 rounded-lg px-3 py-2 text-[12px] ${
+                ctrlArmed ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+              }`}
             >
-              {key.label}
+              {ctrlArmed ? 'Ctrl · 已按下' : 'Ctrl'}
             </button>
-          ))}
+            {KEYS.map((key) => (
+              <button
+                type="button"
+                key={key.label}
+                onClick={() => send({ type: 'input', data: key.seq })}
+                className="min-h-11 shrink-0 rounded-lg bg-secondary px-3 py-2 font-mono text-[12px] text-foreground/90 active:bg-raised"
+              >
+                {key.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

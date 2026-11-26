@@ -32,6 +32,7 @@ interface Props {
   onStop: () => void
   running: boolean
   disabled?: boolean
+  desktopSessionId?: string
   models: ModelInfo[]
   model: string
   effort: string
@@ -112,11 +113,21 @@ const EFFORT_AUTO = '__auto__'
 const BARE_TRIGGER =
   'h-11 gap-0 rounded-lg border-0 bg-transparent text-[13px] font-medium shadow-none focus-visible:ring-0 data-[size=default]:h-11 dark:bg-transparent dark:hover:bg-transparent [&>svg]:hidden'
 
+const DESKTOP_TRIGGER =
+  'h-7 gap-1 rounded-md border-0 bg-transparent text-xs shadow-none data-[size=default]:h-7 dark:bg-transparent dark:hover:bg-secondary [&>svg]:size-3'
+
+const DESKTOP_COMPOSER_FRAME = 'mx-auto w-full max-w-[58rem] shrink-0 px-4 pb-4 pt-2 lg:max-w-[59rem] lg:px-6'
+
+// Switching workbench tabs can unmount a composer while its prompt is being edited.
+// Store drafts in memory so the prompt and attachments stay with their session.
+const desktopDrafts = new Map<string, { text: string; images: PreparedImage[] }>()
+
 export default function Composer({
   onSend,
   onStop,
   running,
   disabled,
+  desktopSessionId,
   models,
   model,
   effort,
@@ -128,8 +139,11 @@ export default function Composer({
   commands,
   readOnly,
 }: Props) {
-  const [text, setText] = useState('')
-  const [images, setImages] = useState<PreparedImage[]>([])
+  const desktop = Boolean(desktopSessionId)
+  const [text, setText] = useState(() => (desktopSessionId ? (desktopDrafts.get(desktopSessionId)?.text ?? '') : ''))
+  const [images, setImages] = useState<PreparedImage[]>(() =>
+    desktopSessionId ? (desktopDrafts.get(desktopSessionId)?.images ?? []) : [],
+  )
   const [imageError, setImageError] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
   const [preparing, setPreparing] = useState(false)
@@ -148,6 +162,9 @@ export default function Composer({
   const selectedModel = models.find((item) => item.id === model) ?? models[0]
   const effortOptions = selectedModel?.efforts ?? []
   const canSend = !disabled && (text.trim().length > 0 || images.length > 0)
+  const triggerClass = desktop ? DESKTOP_TRIGGER : BARE_TRIGGER
+  const sendLabel = running ? '追加指令' : '发送'
+  const sendShortcut = /Mac/i.test(globalThis.navigator?.platform ?? '') ? '⌘ ↵' : 'Ctrl ↵'
 
   // The command menu is derived from the text, not held as its own open flag:
   // there is exactly one state where it belongs on screen — a single token that
@@ -188,6 +205,13 @@ export default function Composer({
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
   }, [text])
+
+  useEffect(() => {
+    if (!desktopSessionId) return
+    desktopDrafts.delete(desktopSessionId)
+    if (!text && images.length === 0) return
+    desktopDrafts.set(desktopSessionId, { text, images })
+  }, [desktopSessionId, images, text])
 
   useEffect(() => () => dictationRef.current?.stop(), [])
 
@@ -303,6 +327,31 @@ export default function Composer({
   }
 
   if (readOnly) {
+    if (desktop) {
+      return (
+        <div className={DESKTOP_COMPOSER_FRAME}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-card px-3 py-2">
+            <Eye aria-hidden="true" className="size-4 shrink-0 text-warning" />
+            <div className="min-w-32 flex-1 text-xs text-muted-foreground">
+              {readOnly.message ?? '此会话正由另一客户端使用。'}
+              {readOnly.error && (
+                <p role="alert" className="mt-1 text-destructive">
+                  {readOnly.error}
+                </p>
+              )}
+            </div>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+              <Button type="button" variant="ghost" size="xs" onClick={readOnly.onRetry} disabled={readOnly.forking}>
+                <RefreshCw /> 重试连接
+              </Button>
+              <Button type="button" variant="secondary" size="xs" onClick={readOnly.onFork} disabled={readOnly.forking}>
+                <GitFork /> {readOnly.forking ? '正在创建…' : '创建副本继续'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="safe-bottom shrink-0 px-3 pt-1">
         <div className="rounded-2xl border border-border bg-card p-1.5">
@@ -351,11 +400,11 @@ export default function Composer({
   // the two rows pushed the transcript up by another 40px. Only the box itself
   // is drawn; everything inside is text on the surface, like the reference.
   return (
-    <div className="safe-bottom shrink-0 px-3 pt-1">
+    <div className={desktop ? DESKTOP_COMPOSER_FRAME : 'safe-bottom shrink-0 px-3 pt-1'}>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop target; keyboard users attach files through the picker */}
       {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drag-and-drop target; keyboard users attach files through the picker */}
       <div
-        className={`rounded-2xl border bg-card p-1.5 ${dropping ? 'border-primary border-dashed' : 'border-border'}`}
+        className={`border bg-card ${desktop ? 'rounded-xl shadow-sm transition-colors focus-within:border-primary/60' : 'rounded-2xl p-1.5'} ${dropping ? 'border-primary border-dashed' : 'border-border'}`}
         // Both handlers are needed: `dragover` is what marks this element as a
         // drop target, and without it the browser refuses the drop outright —
         // `onDrop` alone never fires. Desktop-only in practice, which is
@@ -384,13 +433,13 @@ export default function Composer({
         />
 
         {images.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 px-1.5 pt-1">
+          <div className={`flex flex-wrap items-center gap-2 ${desktop ? 'px-3 pt-3' : 'px-1.5 pt-1'}`}>
             {images.map((image, index) => (
               <div key={`${image.dataUrl.slice(-24)}-${index}`} className="relative">
                 <img
                   src={image.dataUrl}
                   alt={`待发送图片 ${index + 1}`}
-                  className="h-12 w-12 rounded-lg border border-border object-cover"
+                  className={`rounded-lg border border-border object-cover ${desktop ? 'size-10' : 'size-12'}`}
                 />
                 {/* size="icon-xs" is size-6 -- deliberately not `.tap`, since a
                     44px hit area centred on this corner would swallow a third of
@@ -414,14 +463,16 @@ export default function Composer({
         )}
 
         {(imageError || speechError) && (
-          <div className="px-1.5 pt-1 text-xs text-destructive">{imageError ?? speechError}</div>
+          <div className={`pt-1 text-xs text-destructive ${desktop ? 'px-3' : 'px-1.5'}`}>
+            {imageError ?? speechError}
+          </div>
         )}
 
         {/* In flow above the textarea, not an overlay: the box grows and the
             transcript gives up the space, so the list can never cover the line
             being typed or the send button. */}
         {slashOpen && (
-          <div className="scroll-y mb-1 max-h-[38dvh] border-b border-border pb-1">
+          <div className={`scroll-y mb-1 max-h-[38dvh] border-b border-border pb-1 ${desktop ? 'px-1 py-1' : ''}`}>
             {slashMatches.map((command, i) => (
               <button
                 key={command}
@@ -431,7 +482,7 @@ export default function Composer({
                 // blurs the textarea first and the menu closes under the finger.
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => insertCommand(command)}
-                className={`flex w-full items-center rounded-lg px-2 py-2 text-left font-mono text-[13px] ${
+                className={`flex w-full items-center rounded-lg px-2 text-left font-mono ${desktop ? 'py-1.5 text-xs' : 'py-2 text-[13px]'} ${
                   i === slashIndex ? 'bg-secondary text-foreground' : 'text-muted-foreground'
                 }`}
               >
@@ -443,6 +494,9 @@ export default function Composer({
 
         <textarea
           ref={textareaRef}
+          data-workbench-composer={desktop ? '' : undefined}
+          aria-label={desktop ? '输入任务' : undefined}
+          aria-keyshortcuts={desktop ? 'Control+Enter Meta+Enter' : undefined}
           rows={1}
           value={text}
           disabled={disabled}
@@ -477,7 +531,7 @@ export default function Composer({
                 setSlashIndex((i) => Math.max(i - 1, 0))
                 return
               }
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.key === 'Enter' && !event.shiftKey && (!desktop || !isSendKey(event.nativeEvent))) {
                 event.preventDefault()
                 insertCommand(slashMatches[slashIndex])
                 return
@@ -490,13 +544,19 @@ export default function Composer({
               send()
             }
           }}
-          placeholder={running ? '追加指令（输入当前任务）…' : '给代理下达任务…'}
+          placeholder={running ? (desktop ? '追加指令…' : '追加指令（输入当前任务）…') : '给代理下达任务…'}
           // 16px, not 15px: below 16px iOS Safari zooms the viewport when the
           // field takes focus (the rule at the top of styles.css).
-          className="scroll-y max-h-[140px] min-h-[38px] w-full resize-none bg-transparent px-2 py-1.5 text-[16px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+          className={`scroll-y max-h-[140px] w-full resize-none bg-transparent leading-relaxed text-foreground outline-none placeholder:text-muted-foreground ${desktop ? 'block min-h-13 px-3 py-3 text-sm' : 'min-h-[38px] px-2 py-1.5 text-[16px]'}`}
         />
 
-        <div className="flex items-center gap-1">
+        <div
+          className={
+            desktop
+              ? 'flex flex-wrap items-center gap-1 border-t border-border/70 px-1.5 py-1'
+              : 'flex items-center gap-1'
+          }
+        >
           {/* Was a hand-rolled popover with no outside-click and no Escape;
               Radix supplies both, plus focus management. */}
           <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen}>
@@ -507,11 +567,12 @@ export default function Composer({
                 size="icon"
                 disabled={disabled}
                 aria-label="添加图片或语音输入"
-                className={`tap -ml-1.5 rounded-full text-muted-foreground ${
+                title={desktop ? '添加图片或语音输入' : undefined}
+                className={`text-muted-foreground ${desktop ? 'size-7 rounded-md' : 'tap -ml-1.5 rounded-full'} ${
                   toolsOpen ? 'bg-secondary text-foreground' : ''
                 }`}
               >
-                <Plus className="size-5" />
+                <Plus className={desktop ? 'size-4' : 'size-5'} />
               </Button>
             </DropdownMenuTrigger>
             {/* z-30, not the default z-50: this menu belongs below the full
@@ -538,7 +599,7 @@ export default function Composer({
             <Select value={permission} onValueChange={(value) => onPermissionChange(value as PermissionCard)}>
               <SelectTrigger
                 aria-label="权限"
-                className={`${BARE_TRIGGER} w-[6rem] px-0 pl-6 ${
+                className={`${triggerClass} ${desktop ? 'w-fit pr-1 pl-6' : 'w-[6rem] px-0 pl-6'} ${
                   permissionWarns ? 'text-warning' : 'text-muted-foreground'
                 }`}
               >
@@ -560,7 +621,9 @@ export default function Composer({
               effort options to whichever model happened to be listed first.
               The model takes whatever is left over and ellipsizes: it is the
               one label here whose length is not ours to choose. */}
-          <div className="relative flex min-w-0 flex-1 items-center justify-end">
+          <div
+            className={`relative flex flex-1 items-center ${desktop ? 'min-w-20 justify-start' : 'min-w-0 justify-end'}`}
+          >
             <Select
               value={model || MODEL_DEFAULT}
               onValueChange={(value) => onModelChange(value === MODEL_DEFAULT ? '' : value)}
@@ -570,7 +633,7 @@ export default function Composer({
                 disabled={disabled || models.length === 0}
                 /* justify-end: the base is justify-between, which with the
                    chevron hidden would push the value to the left edge. */
-                className={`${BARE_TRIGGER} min-w-0 flex-1 justify-end px-2 text-right text-foreground/90 disabled:opacity-50`}
+                className={`${triggerClass} min-w-0 px-2 text-foreground/90 disabled:opacity-50 ${desktop ? 'max-w-52 flex-initial justify-start' : 'flex-1 justify-end text-right'}`}
               >
                 <SelectValue />
               </SelectTrigger>
@@ -591,7 +654,7 @@ export default function Composer({
               <SelectTrigger
                 aria-label="思考强度"
                 disabled={disabled || effortOptions.length === 0}
-                className={`${BARE_TRIGGER} w-[3.5rem] shrink-0 pl-1 pr-5 text-foreground/90 disabled:opacity-50`}
+                className={`${triggerClass} shrink-0 pl-1 text-foreground/90 disabled:opacity-50 ${desktop ? 'w-auto px-1.5' : 'w-[3.5rem] pr-5'}`}
               >
                 <SelectValue placeholder="自动" />
               </SelectTrigger>
@@ -604,7 +667,7 @@ export default function Composer({
                     opened on another device. Same guard as the model select
                     above, and it has to stay the same or the chip loses half
                     its label. */}
-                {effortOptions.length === 0 && <SelectItem value={EFFORT_AUTO}>自动</SelectItem>}
+                {(desktop || effortOptions.length === 0) && <SelectItem value={EFFORT_AUTO}>自动</SelectItem>}
                 {effort && !effortOptions.includes(effort) && (
                   <SelectItem value={effort}>{EFFORT_LABELS[effort] ?? effort}</SelectItem>
                 )}
@@ -615,7 +678,7 @@ export default function Composer({
                 ))}
               </SelectContent>
             </Select>
-            <ChevronIcon />
+            {!desktop && <ChevronIcon />}
           </div>
 
           {/* Both buttons keep `variant="default"` on purpose -- see the note
@@ -630,7 +693,8 @@ export default function Composer({
               type="button"
               size="icon"
               onClick={onStop}
-              className="tap shrink-0 rounded-full"
+              className={desktop ? 'ml-auto size-7 shrink-0 rounded-md' : 'tap shrink-0 rounded-full'}
+              title={desktop ? '中断当前任务' : undefined}
               aria-label="中断当前任务"
             >
               <Square className="size-3.5 fill-current" />
@@ -641,8 +705,13 @@ export default function Composer({
               size="icon"
               onClick={send}
               disabled={!canSend}
-              className="tap shrink-0 rounded-full disabled:opacity-25"
-              aria-label={running ? '追加指令' : '发送'}
+              className={
+                desktop
+                  ? 'ml-auto size-7 shrink-0 rounded-md disabled:opacity-35'
+                  : 'tap shrink-0 rounded-full disabled:opacity-25'
+              }
+              title={desktop ? `${sendLabel} (${sendShortcut})` : undefined}
+              aria-label={sendLabel}
             >
               <ArrowUp className="size-5" />
             </Button>

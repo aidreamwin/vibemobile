@@ -30,6 +30,7 @@ export default function ChatItemList({
   cwd,
   threadId,
   running,
+  desktop = false,
   onOpenFile,
   onDownloadTurn,
 }: {
@@ -41,6 +42,7 @@ export default function ChatItemList({
   threadId: string
   /** A turn is still executing; its actions would act on a moving target. */
   running: boolean
+  desktop?: boolean
   onOpenFile: (ref: FileRef) => void
   onDownloadTurn: (turnId: string, items: AgentItem[]) => void
 }) {
@@ -77,10 +79,11 @@ export default function ChatItemList({
               sentAt={sentAt}
               cwd={cwd}
               onOpenFile={onOpenFile}
+              desktop={desktop}
             />
           )}
-          {hasStream && !reasoningStream && (
-            <StreamingBlock itemId={item.id} isUser={isUser} cwd={cwd} onOpenFile={onOpenFile} />
+          {stream && !reasoningStream && !isUser && (
+            <StreamingBlock stream={stream} cwd={cwd} onOpenFile={onOpenFile} />
           )}
         </div>
       )
@@ -99,7 +102,7 @@ export default function ChatItemList({
       const inProgress = running && index === visibleGroups.length - 1
       return (
         <div key={group.items[0]?.id ?? group.turnId}>
-          <div className="space-y-4">{visible.map(renderItem)}</div>
+          <div className={desktop ? 'space-y-2.5' : 'space-y-4'}>{visible.map(renderItem)}</div>
           {group.turnId && !inProgress && (
             // After the turn's last card, not above it: the export belongs to
             // the answer that just ended, and the top of a turn is where the
@@ -114,9 +117,9 @@ export default function ChatItemList({
         </div>
       )
     })
-  }, [items, streams, turnTimes, cwd, threadId, running, onOpenFile, onDownloadTurn, prefs])
+  }, [items, streams, turnTimes, cwd, threadId, running, onOpenFile, onDownloadTurn, prefs, desktop])
 
-  return <div className="space-y-4 pb-4">{rendered}</div>
+  return <div className={desktop ? 'space-y-6 pb-3' : 'space-y-4 pb-4'}>{rendered}</div>
 }
 
 /**

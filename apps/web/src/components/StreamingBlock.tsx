@@ -1,20 +1,14 @@
-import { useChatStore } from '../lib/store'
+import type { Stream } from '../lib/store'
 import Markdown, { type MarkdownProps } from './Markdown'
 
 /** Renders the live delta buffer for an item that is still streaming. */
 export default function StreamingBlock({
-  itemId,
-  isUser,
+  stream,
   cwd,
   onOpenFile,
 }: {
-  itemId: string
-  isUser: boolean
+  stream: Stream
 } & Pick<MarkdownProps, 'cwd' | 'onOpenFile'>) {
-  const stream = useChatStore((s) => s.streams[itemId])
-  if (!stream) return null
-  if (isUser) return null
-
   // Only agent prose is Markdown. Reasoning is prose too, but it is rendered
   // verbatim today; command output never is — shell output is full of `#`,
   // `*` and `<`, which Markdown would silently reformat or swallow.

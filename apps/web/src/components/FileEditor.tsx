@@ -1,4 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { highlightFileRows } from '../lib/fileSyntax'
+import './file-source.css'
+import './file-editor.css'
 
 /**
  * Above this many lines, editing is not offered.
@@ -12,29 +15,41 @@ import { useEffect, useRef } from 'react'
  */
 export const MAX_EDIT_LINES = 20_000
 
-/**
- * A file's text, editable.
- *
- * A sibling of `FileBody` rather than a mode inside it: that component is a
- * *reader* — one div per line, a gutter, a rendered preview — and every one of
- * those is wrong for a textarea, which owns its own scrolling, has no per-line
- * elements to number, and must not be re-wrapped.
- *
- * There is no line-number gutter here on purpose. The one it could have would be
- * a second element that has to be scrolled in lockstep with this one and would
- * drift the moment the two disagree — and a textarea's `wrap="off"` means the
- * rows are not even the same heights the gutter would assume.
- */
 export default function FileEditor({
+  path,
   value,
   onChange,
   disabled = false,
+  desktop = false,
+  onSave,
 }: {
+  path: string
   value: string
   onChange: (text: string) => void
   disabled?: boolean
+  desktop?: boolean
+  onSave?: () => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
+  const mirror = useRef<HTMLPreElement>(null)
+  const gutter = useRef<HTMLPreElement>(null)
+  const [composing, setComposing] = useState(false)
+  // Match the textarea's line endings without changing the draft sent to save.
+  const rows = useMemo(() => value.split(/\r\n?|\n/), [value])
+  const highlighted = useMemo(() => (composing ? null : highlightFileRows(path, rows)), [composing, path, rows])
+  const lineNumbers = useMemo(
+    () => Array.from({ length: rows.length }, (_, index) => index + 1).join('\n'),
+    [rows.length],
+  )
+
+  function syncScroll(editor: HTMLTextAreaElement) {
+    if (mirror.current) mirror.current.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`
+    if (gutter.current) gutter.current.style.transform = `translateY(${-editor.scrollTop}px)`
+  }
+
+  useLayoutEffect(() => {
+    if (ref.current) syncScroll(ref.current)
+  }, [value, highlighted])
 
   // Focused on entry, because the user tapped 编辑 and the next thing they want
   // is a keyboard. `preventScroll` because focusing an element below the fold
@@ -45,22 +60,68 @@ export default function FileEditor({
   }, [])
 
   return (
-    <textarea
-      ref={ref}
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value)}
-      // Every one of these is aimed at a phone keyboard: autocapitalization
-      // rewrites `useState` to `UseState`, autocorrect "fixes" identifiers, and
-      // spellcheck paints red under every symbol.
-      autoCapitalize="off"
-      autoCorrect="off"
-      spellCheck={false}
-      // `off`, not wrapping: a wrapped code line is a line whose indentation no
-      // longer tells you anything, and this is the one view where the reader is
-      // also the writer.
-      wrap="off"
-      className="scroll-y scroll-x h-full w-full resize-none bg-transparent p-3 font-mono text-[13px] leading-[1.7] text-foreground outline-none"
-    />
+    <div className="file-editor file-source" data-highlighted={Boolean(highlighted)}>
+      <div className="file-editor-gutter" aria-hidden="true">
+        <pre ref={gutter} className="file-editor-numbers">
+          {lineNumbers}
+        </pre>
+      </div>
+      <div className="file-editor-area">
+        {highlighted && (
+          <div className="file-editor-highlight" aria-hidden="true">
+            <pre ref={mirror} className="file-editor-text">
+              {highlighted.map((tokens, index) => {
+                const offset = tokens[0]?.offset
+                return (
+                  <Fragment key={index === 0 ? 'first' : (offset ?? `empty-${index}`)}>
+                    {index > 0 && '\n'}
+                    {tokens.map((token) =>
+                      token.className ? (
+                        <span className={token.className} key={token.offset}>
+                          {token.text}
+                        </span>
+                      ) : (
+                        token.text
+                      ),
+                    )}
+                  </Fragment>
+                )
+              })}
+              {'\u200b'}
+            </pre>
+          </div>
+        )}
+        <textarea
+          ref={ref}
+          value={value}
+          aria-label="文件内容"
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          onScroll={(event) => syncScroll(event.currentTarget)}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={() => setComposing(false)}
+          onKeyDown={
+            onSave
+              ? (event) => {
+                  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return
+                  event.preventDefault()
+                  onSave()
+                }
+              : undefined
+          }
+          // Every one of these is aimed at a phone keyboard: autocapitalization
+          // rewrites `useState` to `UseState`, autocorrect "fixes" identifiers, and
+          // spellcheck paints red under every symbol.
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          // `off`, not wrapping: a wrapped code line is a line whose indentation no
+          // longer tells you anything, and this is the one view where the reader is
+          // also the writer.
+          wrap="off"
+          className={`file-editor-text file-editor-input scroll-y scroll-x ${desktop ? 'focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/50' : ''}`}
+        />
+      </div>
+    </div>
   )
 }

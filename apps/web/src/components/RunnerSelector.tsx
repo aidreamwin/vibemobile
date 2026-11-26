@@ -4,7 +4,13 @@ import { api } from '../lib/api'
 import { runnerId, runnerSwitchUrl, type RunnerInfo } from '../lib/runner'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectValue, SelectTrigger } from './ui/select'
 
-export default function RunnerSelector({ compact = false }: { compact?: boolean }) {
+export default function RunnerSelector({
+  compact = false,
+  workbench = false,
+}: {
+  compact?: boolean
+  workbench?: boolean
+}) {
   const [runners, setRunners] = useState<RunnerInfo[]>([])
   const [error, setError] = useState(false)
   useEffect(() => {
@@ -53,7 +59,11 @@ export default function RunnerSelector({ compact = false }: { compact?: boolean 
           id="runner-select"
           aria-label={`执行机器：${selected?.name ?? runnerId}，${status}`}
           title={`${selected?.name ?? runnerId} · ${status}`}
-          className={`${compact ? 'w-11 shrink-0 justify-center border-0 bg-transparent text-muted-foreground dark:bg-transparent dark:hover:bg-transparent [&>svg]:hidden' : 'min-w-0 flex-1 border-border/70 bg-secondary/60 dark:bg-secondary/60 dark:hover:bg-secondary'} h-11 gap-1.5 rounded-xl px-2 text-xs font-medium shadow-none focus-visible:ring-2 data-[size=default]:h-11`}
+          className={
+            workbench
+              ? 'h-[29px] max-w-[135px] min-w-0 gap-1.5 rounded-md border border-border bg-transparent px-2 text-[11px] text-muted-foreground shadow-none data-[size=default]:h-[29px] dark:bg-transparent dark:hover:bg-secondary'
+              : `${compact ? 'w-11 shrink-0 justify-center border-0 bg-transparent text-muted-foreground dark:bg-transparent dark:hover:bg-transparent [&>svg]:hidden' : 'min-w-0 flex-1 border-border/70 bg-secondary/60 dark:bg-secondary/60 dark:hover:bg-secondary'} h-11 gap-1.5 rounded-xl px-2 text-xs font-medium shadow-none focus-visible:ring-2 data-[size=default]:h-11`
+          }
         >
           <SelectValue>
             <span className="relative flex min-w-0 items-center gap-1.5">
@@ -61,7 +71,12 @@ export default function RunnerSelector({ compact = false }: { compact?: boolean 
                 aria-hidden="true"
                 className={`${compact ? 'absolute -right-1 -top-0.5 ring-2 ring-background' : 'shrink-0'} size-1.5 rounded-full ${dot}`}
               />
-              {compact ? (
+              {workbench ? (
+                <>
+                  <Monitor aria-hidden="true" className="size-3.5 shrink-0" strokeWidth={1.8} />
+                  <span className="truncate">{selected?.name ?? runnerId}</span>
+                </>
+              ) : compact ? (
                 <Monitor aria-hidden="true" className="size-[18px]" strokeWidth={1.8} />
               ) : (
                 <span className="truncate">{selected?.name ?? runnerId}</span>

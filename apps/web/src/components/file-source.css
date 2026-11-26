@@ -1,0 +1,31 @@
+.file-source :is(.hljs-keyword, .hljs-selector-tag, .hljs-section, .hljs-literal, .hljs-name) {
+  color: #ff9ca5;
+}
+
+.file-source :is(.hljs-string, .hljs-regexp, .hljs-addition) {
+  color: #a5d6ff;
+}
+
+.file-source :is(.hljs-number, .hljs-built_in, .hljs-type, .hljs-variable, .hljs-attribute) {
+  color: #8ecbff;
+}
+
+.file-source :is(.hljs-title, .hljs-symbol, .hljs-bullet) {
+  color: #d8b9ff;
+}
+
+.file-source :is(.hljs-attr, .hljs-meta, .hljs-selector-class) {
+  color: #aee6a4;
+}
+
+.file-source :is(.hljs-comment, .hljs-quote) {
+  color: #a0a9b8;
+}
+
+.file-source .hljs-emphasis {
+  font-style: italic;
+}
+
+.file-source .hljs-strong {
+  font-weight: 600;
+}

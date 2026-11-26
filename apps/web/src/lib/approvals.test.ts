@@ -1,7 +1,7 @@
 import type { AgentEvent, ApprovalRequest } from '@vibemobile/protocol'
 import { beforeEach, expect, it } from 'vitest'
 import { receiveApprovals, useApprovalStore } from './approvals'
-import { loadTranscript, resyncTranscript, useChatStore } from './store'
+import { createChatStore } from './store'
 
 const request = (id: string, threadId = 'agy:phone'): ApprovalRequest => ({
   threadId,
@@ -20,7 +20,7 @@ it('restores a replay received on the list page, survives transcript loading, an
   const approval = request('a')
   receiveApprovals({ type: 'hello', subscribed: [], pendingApprovalIds: ['a'] })
   event({ kind: 'approval.requested', approval })
-  useChatStore.getState().reset(approval.threadId)
+  const { loadTranscript, resyncTranscript } = createChatStore(approval.threadId).getState()
   loadTranscript(approval.threadId, [])
   resyncTranscript(approval.threadId, [])
   event({ kind: 'approval.requested', approval })

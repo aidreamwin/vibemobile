@@ -90,7 +90,13 @@ type ListScroll = { key: string; id: string | null; offset: number; top: number 
 
 let listScroll: ListScroll | null = null
 
-export default function Sessions() {
+export interface SessionsProps {
+  embedded?: boolean
+  onSelectSession?: (session: SessionSummary) => void
+  onSessionsChange?: (sessions: SessionSummary[]) => void
+}
+
+export default function Sessions({ embedded = false, onSelectSession, onSessionsChange }: SessionsProps = {}) {
   const navigate = useNavigate()
 
   const projects = useWorkspaceStore((state) => state.projects)
@@ -397,6 +403,10 @@ export default function Sessions() {
   const FilterIcon = filterVisual.icon
   const filterTone = filterVisual.tone
 
+  useEffect(() => {
+    onSessionsChange?.(sessions)
+  }, [sessions, onSessionsChange])
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
@@ -573,7 +583,10 @@ export default function Sessions() {
           <SessionList
             sessions={visible}
             providerName={providerName}
-            onOpen={(session) => navigate('/chat/' + session.id)}
+            onOpen={(session) => {
+              if (onSelectSession) onSelectSession(session)
+              else navigate('/chat/' + session.id)
+            }}
             onActions={setActionsFor}
           />
         )}
@@ -593,7 +606,11 @@ export default function Sessions() {
         disabled={projects.length === 0}
         /* text-primary-foreground, not text-white: --primary is oklch(0.922),
            so white-on-white would leave the + invisible. */
-        className="tap fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-30 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-xl shadow-black/50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+        className={
+          embedded
+            ? 'mx-3 mb-3 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40'
+            : 'tap fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-30 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-xl shadow-black/50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40'
+        }
         aria-label="新建会话"
       >
         <svg
@@ -602,10 +619,11 @@ export default function Sessions() {
           fill="none"
           stroke="currentColor"
           strokeWidth="2.2"
-          className="h-6 w-6"
+          className={embedded ? 'h-4 w-4' : 'h-6 w-6'}
         >
           <path d="M12 5v14M5 12h14" strokeLinecap="round" />
         </svg>
+        {embedded && <span>新建 Agent 会话</span>}
       </button>
 
       {creating && (
