@@ -474,7 +474,7 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
   }, [sessions, onSessionsChange])
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="relative flex h-full flex-col overflow-hidden">
       <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
         {/* Keep the runner and provider selectors in the same header row. */}
         <ToolbarRow>
@@ -576,17 +576,6 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
               <path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-          {!embedded && (
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              disabled={projects.length === 0}
-              className="tap shrink-0 rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
-              aria-label="新建会话"
-            >
-              <Plus aria-hidden="true" className="size-5" strokeWidth={2.2} />
-            </button>
-          )}
         </ToolbarRow>
 
         {/* Second row, only while searching: this is the field the magnifier
@@ -658,7 +647,7 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
         )}
       </header>
 
-      <div ref={listRef} onScroll={rememberScroll} className="scroll-y min-h-0 flex-1 pb-2">
+      <div ref={listRef} onScroll={rememberScroll} className="scroll-y min-h-0 flex-1 pb-20">
         {error && (
           <div className="border-b border-destructive/50 bg-destructive/15 px-4 py-2 text-[12px] text-destructive">
             {error}
@@ -672,39 +661,26 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
         ) : (
           <SessionList sessions={visible} providerName={providerName} onOpen={openSession} onActions={setActionsFor} />
         )}
-
         <button
           type="button"
           onClick={() => setShowArchived((v) => !v)}
-          className="w-full py-4 text-center text-[12px] text-muted-foreground/70"
+          aria-pressed={showArchived}
+          className="tap w-full py-4 text-xs text-muted-foreground"
         >
           {showArchived ? '隐藏已归档会话' : '显示已归档会话'}
         </button>
       </div>
 
-      {embedded && (
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={projects.length === 0}
-          /* text-primary-foreground, not text-white: --primary is oklch(0.922),
-           so white-on-white would leave the + invisible. */
-          className="mx-3 mb-3 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="新建会话"
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            className="h-4 w-4"
-          >
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
-          <span>新建 Agent 会话</span>
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        disabled={projects.length === 0}
+        className={`tap absolute right-4 bottom-3 z-10 rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40 ${embedded ? 'size-11' : 'size-14'}`}
+        aria-label="新建会话"
+        title="新建会话"
+      >
+        <Plus aria-hidden="true" className="size-6" strokeWidth={2.2} />
+      </button>
 
       {creating && (
         <NewSessionSheet
