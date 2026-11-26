@@ -36,6 +36,9 @@ describe('Antigravity supplier models', () => {
         models: { name: string; displayName: string }[]
       }
       expect(catalog.models.map((m) => m.displayName)).toEqual(models)
+      expect(catalog.models.every((m) => /^models\/gemini-vm-[a-f0-9]+$/.test(m.name))).toBe(true)
+      const legacyAlias = acpModelId(models[0]).slice('gemini-'.length)
+      expect(gateway.byAcpId.get(legacyAlias)).toBe(models[0])
       expect(gateway.headers['x-goog-api-key']).not.toBe('supplier-key')
       await Promise.all(
         models.map(async (id) => {
@@ -56,6 +59,18 @@ describe('Antigravity supplier models', () => {
           key: 'supplier-key',
           body: JSON.stringify({ text: id }),
         })
+      const contents = {
+        contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: 'AQID' } }] }],
+      }
+      const response = await fetch(`${url}/${acpModelId(models[0])}:streamGenerateContent?alt=sse`, {
+        method: 'POST',
+        headers: gateway.headers,
+        body: JSON.stringify(contents),
+      })
+      expect(await response.text()).toBe('data: response\n\n')
+      expect(calls.at(-1)?.body).toBe(JSON.stringify(contents))
+      const legacy = await fetch(`${url}/${legacyAlias}:generateContent`, { method: 'POST', headers: gateway.headers })
+      expect(legacy.status).toBe(200)
     } finally {
       gateway.close()
       upstream.close()

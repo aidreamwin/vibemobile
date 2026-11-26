@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ArrowUp,
   Eye,
@@ -32,6 +32,8 @@ interface Props {
   onStop: () => void
   running: boolean
   disabled?: boolean
+  sessionId?: string
+  visible?: boolean
   desktopSessionId?: string
   models: ModelInfo[]
   model: string
@@ -118,15 +120,17 @@ const DESKTOP_TRIGGER =
 
 const DESKTOP_COMPOSER_FRAME = 'mx-auto w-full max-w-[58rem] shrink-0 px-4 pb-4 pt-2 lg:max-w-[59rem] lg:px-6'
 
-// Switching workbench tabs can unmount a composer while its prompt is being edited.
-// Store drafts in memory so the prompt and attachments stay with their session.
-const desktopDrafts = new Map<string, { text: string; images: PreparedImage[] }>()
+// Session views can be evicted from the cache while a prompt is being edited.
+// Keep the prompt and attachments with their session.
+const sessionDrafts = new Map<string, { text: string; images: PreparedImage[] }>()
 
-export default function Composer({
+const Composer = memo(function Composer({
   onSend,
   onStop,
   running,
   disabled,
+  sessionId,
+  visible = true,
   desktopSessionId,
   models,
   model,
@@ -140,9 +144,10 @@ export default function Composer({
   readOnly,
 }: Props) {
   const desktop = Boolean(desktopSessionId)
-  const [text, setText] = useState(() => (desktopSessionId ? (desktopDrafts.get(desktopSessionId)?.text ?? '') : ''))
+  const draftId = sessionId ?? desktopSessionId
+  const [text, setText] = useState(() => (draftId ? (sessionDrafts.get(draftId)?.text ?? '') : ''))
   const [images, setImages] = useState<PreparedImage[]>(() =>
-    desktopSessionId ? (desktopDrafts.get(desktopSessionId)?.images ?? []) : [],
+    draftId ? (sessionDrafts.get(draftId)?.images ?? []) : [],
   )
   const [imageError, setImageError] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
@@ -150,6 +155,7 @@ export default function Composer({
   const [dictating, setDictating] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [openSelect, setOpenSelect] = useState<'permission' | 'model' | 'effort' | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -199,28 +205,36 @@ export default function Composer({
       <Shield className="size-4 text-muted-foreground" />
     )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = textareaRef.current
-    if (!el) return
+    if (!visible || !el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
-  }, [text])
+  }, [text, visible, readOnly])
 
   useEffect(() => {
-    if (!desktopSessionId) return
-    desktopDrafts.delete(desktopSessionId)
+    if (!draftId) return
+    sessionDrafts.delete(draftId)
     if (!text && images.length === 0) return
-    desktopDrafts.set(desktopSessionId, { text, images })
-  }, [desktopSessionId, images, text])
+    sessionDrafts.set(draftId, { text, images })
+  }, [draftId, images, text])
 
   useEffect(() => () => dictationRef.current?.stop(), [])
+  useEffect(() => {
+    if (visible) return
+    setToolsOpen(false)
+    setOpenSelect(null)
+    dictationRef.current?.stop()
+    dictationRef.current = null
+    setDictating(false)
+  }, [visible])
 
   // Back to the top whenever the filter changes: keeping the old index would
   // highlight an unrelated command after the first keystroke.
   useEffect(() => setSlashIndex(0), [slashQuery])
   useEffect(() => {
-    activeSlashRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [slashIndex])
+    if (visible) activeSlashRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [slashIndex, visible])
 
   /**
    * Put a command in the box — it is not sent.
@@ -559,7 +573,7 @@ export default function Composer({
         >
           {/* Was a hand-rolled popover with no outside-click and no Escape;
               Radix supplies both, plus focus management. */}
-          <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen}>
+          <DropdownMenu open={visible && toolsOpen} onOpenChange={setToolsOpen}>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
@@ -596,7 +610,12 @@ export default function Composer({
               should not compete for attention. */}
           <div className="relative shrink-0">
             <span className="pointer-events-none absolute left-2 top-1/2 z-10 -translate-y-1/2">{permissionGlyph}</span>
-            <Select value={permission} onValueChange={(value) => onPermissionChange(value as PermissionCard)}>
+            <Select
+              open={visible && openSelect === 'permission'}
+              onOpenChange={(open) => setOpenSelect(open ? 'permission' : null)}
+              value={permission}
+              onValueChange={(value) => onPermissionChange(value as PermissionCard)}
+            >
               <SelectTrigger
                 aria-label="权限"
                 className={`${triggerClass} ${desktop ? 'w-fit pr-1 pl-6' : 'w-[6rem] px-0 pl-6'} ${
@@ -625,6 +644,8 @@ export default function Composer({
             className={`relative flex flex-1 items-center ${desktop ? 'min-w-20 justify-start' : 'min-w-0 justify-end'}`}
           >
             <Select
+              open={visible && openSelect === 'model'}
+              onOpenChange={(open) => setOpenSelect(open ? 'model' : null)}
               value={model || MODEL_DEFAULT}
               onValueChange={(value) => onModelChange(value === MODEL_DEFAULT ? '' : value)}
             >
@@ -648,6 +669,8 @@ export default function Composer({
               </SelectContent>
             </Select>
             <Select
+              open={visible && openSelect === 'effort'}
+              onOpenChange={(open) => setOpenSelect(open ? 'effort' : null)}
               value={effort || EFFORT_AUTO}
               onValueChange={(value) => onEffortChange(value === EFFORT_AUTO ? '' : value)}
             >
@@ -720,7 +743,9 @@ export default function Composer({
       </div>
     </div>
   )
-}
+})
+
+export default Composer
 
 /* The only icon left over from the hand-drawn set: the model chip's two
  * selects hide their own chevrons (`[&>svg]:hidden`) and share this one. */

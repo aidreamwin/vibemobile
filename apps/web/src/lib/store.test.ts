@@ -122,6 +122,27 @@ it('keeps the item list and unaffected streams stable across stream-only updates
   expect(after.streams.reply?.text).toBe('part one and two')
 })
 
+it('buffers hidden stream deltas and publishes them when the conversation becomes visible', async () => {
+  const store = createChatStore(THREAD)
+  store.getState().loadTranscript(THREAD, [message('reply', '')])
+  store.getState().setVisible(false)
+  store.getState().applyEvent(delta('reply', 'text', 'first'))
+  store.getState().applyEvent(delta('reply', 'text', ' and second'))
+  await settled()
+
+  expect(store.getState().streams.reply).toBeUndefined()
+  store.getState().setVisible(true)
+  expect(store.getState().streams.reply?.text).toBe('first and second')
+
+  store.getState().setVisible(false)
+  store.getState().applyEvent(delta('reply', 'text', ' and final'))
+  store.getState().applyEvent({ kind: 'item.completed', threadId: THREAD, turnId: TURN, item: message('reply', '') })
+  await settled()
+
+  expect(store.getState().items[0]).toMatchObject({ text: 'first and second and final' })
+  expect(store.getState().streams.reply).toBeUndefined()
+})
+
 describe('streamed deltas vs the authoritative completed item', () => {
   it('keeps streamed command output when the completed item carries none', async () => {
     apply({ kind: 'item.started', threadId: THREAD, turnId: TURN, item: command('c1', '') })

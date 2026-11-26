@@ -108,3 +108,46 @@ describe('PUT /api/files/content', () => {
     expect(res.statusCode).toBe(400) // no `path`, from the GET handler
   })
 })
+
+describe('GET /api/files/image', () => {
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9V8AAAAASUVORK5CYII=',
+    'base64',
+  )
+
+  it('serves original image bytes with a safe MIME type and mutable private caching', async () => {
+    const file = path.join(dir, '图片 #1.PNG')
+    fs.writeFileSync(file, png)
+    const res = await app.inject(`/api/files/image?path=${encodeURIComponent(file)}&refresh=1`)
+    expect(res.statusCode).toBe(200)
+    expect(res.rawPayload).toEqual(png)
+    expect(res.headers['content-type']).toBe('image/png')
+    expect(res.headers['cache-control']).toBe('private, max-age=0')
+    expect(res.headers['x-content-type-options']).toBe('nosniff')
+  })
+
+  it('restricts image reads to supported formats and allowed workspaces', async () => {
+    const unsupported = path.join(dir, 'a.svg')
+    fs.writeFileSync(unsupported, '<svg xmlns="http://www.w3.org/2000/svg"/>')
+    const cases = [
+      { file: unsupported, status: 415 },
+      { file: path.join(dir, '..', 'outside.png'), status: 403 },
+      { file: path.join(dir, 'missing.png'), status: 404 },
+      { file: '', status: 400 },
+    ]
+    for (const { file, status } of cases) {
+      const res = await app.inject(`/api/files/image?path=${encodeURIComponent(file)}`)
+      expect(res.statusCode).toBe(status)
+      expect(res.headers['cache-control']).toBe('no-store')
+    }
+  })
+
+  it('rejects oversized images before reading their contents', async () => {
+    const file = path.join(dir, 'large.png')
+    fs.writeFileSync(file, png)
+    fs.truncateSync(file, 10 * 1024 * 1024 + 1)
+    const res = await app.inject(`/api/files/image?path=${encodeURIComponent(file)}`)
+    expect(res.statusCode).toBe(413)
+    expect(res.headers['cache-control']).toBe('no-store')
+  })
+})

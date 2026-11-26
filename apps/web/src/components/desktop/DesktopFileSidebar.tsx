@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ChevronRight, Columns2, FileCode2, Folder, FolderOpen, GitBranch, RefreshCw } from 'lucide-react'
+import { ChevronRight, Columns2, FileCode2, FileImage, Folder, FolderOpen, GitBranch, RefreshCw } from 'lucide-react'
+import { isImageFile } from '../../lib/fileImage'
 import type { FileEntry } from '@vibemobile/protocol'
 import { api } from '../../lib/api'
 import { normalizeFilePath } from '../../lib/fileLink'
@@ -274,7 +275,7 @@ function WorkspaceFileTree({
             const isDirectory = entry.type === 'directory'
             const isOpen = isDirectory && expanded.has(entry.path)
             const isSelected = entry.path === selectedPath
-            const Icon = isDirectory ? (isOpen ? FolderOpen : Folder) : FileCode2
+            const Icon = isDirectory ? (isOpen ? FolderOpen : Folder) : isImageFile(entry.path) ? FileImage : FileCode2
             const indent = `min(${(level - 1) * 12 + 8}px, 40%)`
 
             return (

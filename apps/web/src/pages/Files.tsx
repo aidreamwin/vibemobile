@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Search,
   ArrowUpDown,
+  FileImage,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -19,19 +20,29 @@ import {
 } from '../components/ui/dropdown-menu'
 import ToolbarRow, { ToolbarIdentity } from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FileContent, FileEntry } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { formatBytes, shortPath } from '../lib/format'
-import { getFileSnapshot, readFileSnapshot, rememberFileSnapshot } from '../lib/fileSnapshots'
+import {
+  getDirectorySnapshot,
+  getFileSnapshot,
+  invalidateDirectorySnapshot,
+  readDirectorySnapshot,
+  readFileSnapshot,
+  rememberFileSnapshot,
+} from '../lib/fileSnapshots'
 import { isPathInside, parentPath, useWorkspaceStore } from '../lib/workspace'
 import { UnifiedDiff } from '../components/DiffView'
 import FileBody, { isRenderable } from '../components/FileBody'
+import ImageFilePreview from '../components/ImageFilePreview'
+import { isImageFile, isRasterImage } from '../lib/fileImage'
 import FileEditor, { MAX_EDIT_LINES } from '../components/FileEditor'
 import { useDocumentTitle } from '../lib/title'
 import DesktopFilePane, { type FilePaneView } from '../components/desktop/DesktopFilePane'
 
 type View = { kind: 'list'; path: string } | FilePaneView
+const EMPTY_ENTRIES: FileEntry[] = []
 
 /**
  * Where the file browser was left, remembered across a trip to another tab.
@@ -101,10 +112,13 @@ export default function Files({
   const workspaceLoaded = useWorkspaceStore((state) => state.loaded)
   // Picked up from the last visit to this page, if there was one — which is the
   // whole point: the root of the workspace is the fallback, not the default.
-  const [browserView, setView] = useState<View>(() => lastView ?? { kind: 'list', path: '' })
+  const [browserView, setView] = useState<View>(() =>
+    lastView && (!defaultCwd || inWorkspace(lastView, defaultCwd)) ? lastView : { kind: 'list', path: defaultCwd },
+  )
   const view = fixedView ?? browserView
+  const rasterImage = view.kind === 'file' && isRasterImage(view.path)
   useDocumentTitle(
-    embedded
+    embedded || !visible
       ? ''
       : view.kind === 'file'
         ? view.name
@@ -113,8 +127,12 @@ export default function Files({
           : '改动',
   )
 
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [content, setContent] = useState(() => (view.kind === 'file' ? getFileSnapshot(view.path) : null))
+  const [entries, setEntries] = useState(() =>
+    view.kind === 'list' ? (getDirectorySnapshot(view.path) ?? EMPTY_ENTRIES) : EMPTY_ENTRIES,
+  )
+  const [content, setContent] = useState(() =>
+    view.kind === 'file' && !rasterImage ? getFileSnapshot(view.path) : null,
+  )
   const [diff, setDiff] = useState('')
   // Markdown opens rendered; the header's code/eye button flips it back.
   const [preview, setPreview] = useState(!line)
@@ -122,7 +140,9 @@ export default function Files({
   const [query, setQuery] = useState('')
   const [sortByName, setSortByName] = useState(false)
 
-  const [loading, setLoading] = useState(() => !content)
+  const [loading, setLoading] = useState(() =>
+    view.kind === 'list' ? !getDirectorySnapshot(view.path) : !content && !rasterImage,
+  )
   const [error, setError] = useState<string | null>(null)
   /** Bumped by 刷新, so re-reading the same view is one more fetch. */
   const [reload, setReload] = useState(0)
@@ -143,15 +163,20 @@ export default function Files({
    */
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  const visibleEntries = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase()
-    const result = needle ? entries.filter((entry) => entry.name.toLocaleLowerCase().includes(needle)) : entries
-    if (!sortByName) return result
-    return [...result].sort(
+  const deferredQuery = useDeferredValue(query)
+  const searchQuery = query ? deferredQuery : ''
+  const sortedEntries = useMemo(() => {
+    if (!sortByName) return entries
+    return [...entries].sort(
       (a, b) =>
         Number(b.type === 'directory') - Number(a.type === 'directory') || a.name.localeCompare(b.name, 'zh-CN'),
     )
-  }, [entries, query, sortByName])
+  }, [entries, sortByName])
+  const visibleEntries = useMemo(() => {
+    const needle = searchQuery.trim().toLocaleLowerCase()
+    return needle ? sortedEntries.filter((entry) => entry.name.toLocaleLowerCase().includes(needle)) : sortedEntries
+  }, [sortedEntries, searchQuery])
+  const filtering = view.kind === 'list' && Boolean(query)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   /** True until this mount's first fetch has answered — see the fallback below. */
@@ -202,9 +227,12 @@ export default function Files({
     // `loading` moves in the same tick as the view on purpose: the fetch below
     // only starts after the render that shows the new screen, and without this
     // that render would carry the *previous* screen's rows or file body.
-    const cached = next.kind === 'file' ? getFileSnapshot(next.path) : null
+    const image = next.kind === 'file' && isRasterImage(next.path)
+    const cached = next.kind === 'file' && !image ? getFileSnapshot(next.path) : null
+    const cachedEntries = next.kind === 'list' ? getDirectorySnapshot(next.path) : null
     const restoredDraft = next.kind === 'file' ? drafts.get(next.path) : undefined
-    setLoading(!cached)
+    setLoading(!image && !cached && !cachedEntries)
+    setEntries(cachedEntries ?? EMPTY_ENTRIES)
     setContent(cached)
     setEditing(Boolean(restoredDraft))
     setDraft(restoredDraft?.text ?? '')
@@ -217,6 +245,19 @@ export default function Files({
     }
     setView(next)
   }, [])
+
+  const openEntry = useCallback(
+    (entry: FileEntry) => {
+      if (entry.type === 'directory') {
+        go({ kind: 'list', path: entry.path })
+      } else if (onOpenFileTab) {
+        onOpenFileTab(entry.path, entry.name)
+      } else {
+        go({ kind: 'file', path: entry.path, name: entry.name })
+      }
+    },
+    [go, onOpenFileTab],
+  )
 
   function beginEdit() {
     if (!content) return
@@ -246,6 +287,7 @@ export default function Files({
       setDraft(saved.text)
       setEditBase(undefined)
       rememberFileSnapshot(view.path, saved)
+      invalidateDirectorySnapshot(parentPath(view.path))
       drafts.delete(view.path)
       setEditing(false)
     } catch (err) {
@@ -292,20 +334,29 @@ export default function Files({
     if (!visible) return
     if (view.kind === 'list' && !view.path) return
     if (view.kind === 'diff' && !defaultCwd) return
+    if (rasterImage) {
+      lastReload.current = reload
+      firstLoad.current = false
+      setLoading(false)
+      setError(null)
+      return
+    }
 
     let cancelled = false
     const force = reload !== lastReload.current
     lastReload.current = reload
     const cached = view.kind === 'file' ? getFileSnapshot(view.path) : null
+    const cachedEntries = view.kind === 'list' ? getDirectorySnapshot(view.path) : null
     if (cached) setContent(cached)
-    setLoading(!cached)
+    if (cachedEntries) setEntries(cachedEntries)
+    setLoading(!cached && !cachedEntries)
     setError(null)
 
     void (async () => {
       try {
         if (view.kind === 'list') {
-          const res = await api.files(view.path)
-          if (!cancelled) setEntries(res.data)
+          const res = await readDirectorySnapshot(view.path, force)
+          if (!cancelled) setEntries(res)
         } else if (view.kind === 'file') {
           const res = await readFileSnapshot(view.path, force)
           if (!cancelled) setContent(res)
@@ -317,6 +368,7 @@ export default function Files({
         if (cancelled) return
         setError((err as Error).message)
         if (view.kind === 'file' && !getFileSnapshot(view.path)) setContent(null)
+        if (view.kind === 'list' && !getDirectorySnapshot(view.path)) setEntries(EMPTY_ENTRIES)
         // What this mount opened on can outlive itself: the agent renames and
         // deletes files while this page sits in another tab. An empty pane
         // under a red banner is a dead end nobody asked for, so only the first
@@ -326,15 +378,17 @@ export default function Files({
           go({ kind: 'list', path: defaultCwd || '' })
         }
       } finally {
-        firstLoad.current = false
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          firstLoad.current = false
+          setLoading(false)
+        }
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [view, defaultCwd, fixedView, go, reload, visible])
+  }, [view, defaultCwd, fixedView, go, reload, visible, rasterImage])
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
@@ -347,21 +401,21 @@ export default function Files({
     // container's content shrinks, the browser clamps `scrollTop`, and the
     // resulting scroll event would write the clamped value over the position the
     // reader had. Same shape as the 加载中 frame, one layer further in.
-    if (!el || !visible || loading || editing) return
+    if (!el || !visible || loading || editing || filtering) return
     offsets.set(key, el.scrollTop)
-  }, [key, loading, editing, visible])
+  }, [key, loading, editing, visible, filtering])
 
   // Laid out, not painted: restoring in a plain effect shows the top of the
   // page for one frame first.
   useLayoutEffect(() => {
     const el = scrollRef.current
-    if (!el || !visible || loading || editing) return
+    if (!el || !visible || loading || editing || filtering) return
     // Absent means "never seen" — a directory opened for the first time starts
     // at the top, which is what `0` here does.
     el.scrollTop = offsets.get(key) ?? 0
     // `editing` is a dependency so that leaving the editor puts the reader back
     // where they were, rather than at the top the clamp left behind.
-  }, [key, loading, editing, visible])
+  }, [key, loading, editing, visible, filtering])
 
   if (embedded && fixedView) {
     return (
@@ -386,6 +440,7 @@ export default function Files({
         onRefresh={() => setReload((n) => n + 1)}
         onEdit={beginEdit}
         editBlockedBy={editBlockedBy}
+        imageRevision={reload}
         editor={
           editing
             ? {
@@ -621,7 +676,7 @@ export default function Files({
           <div className="flex items-center gap-2 px-4 pb-2">
             <input
               // biome-ignore lint/a11y/noAutofocus: the field is opened by an explicit search tap
-              autoFocus
+              autoFocus={visible}
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -669,65 +724,22 @@ export default function Files({
         {loading ? (
           <div className="py-16 text-center text-sm text-muted-foreground/70">加载中…</div>
         ) : view.kind === 'list' ? (
-          <ul className="divide-y divide-border">
-            {visibleEntries.map((entry) => (
-              <li key={entry.path}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (entry.type === 'directory') {
-                      go({ kind: 'list', path: entry.path })
-                    } else if (onOpenFileTab) {
-                      onOpenFileTab(entry.path, entry.name)
-                    } else {
-                      go({ kind: 'file', path: entry.path, name: entry.name })
-                    }
-                  }}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-card"
-                >
-                  <span className={entry.type === 'directory' ? 'text-primary' : 'text-muted-foreground/70'}>
-                    {entry.type === 'directory' ? (
-                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                        <path d="M3 7a2 2 0 012-2h3.6l2 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                      </svg>
-                    ) : (
-                      <svg
-                        aria-hidden="true"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        className="h-5 w-5"
-                      >
-                        <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" strokeLinejoin="round" />
-                        <path d="M14 3v5h5" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[14px] text-foreground/90">{entry.name}</span>
-                  {entry.type === 'file' && (
-                    <span className="shrink-0 text-[11px] text-muted-foreground/70">{formatBytes(entry.size)}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-            {visibleEntries.length === 0 && (
-              <li className="py-16 text-center text-sm text-muted-foreground/70">
-                {query ? '没有匹配的文件' : '空目录'}
-              </li>
-            )}
-          </ul>
+          <DirectoryList entries={visibleEntries} filtered={Boolean(searchQuery)} onOpen={openEntry} />
         ) : view.kind === 'file' ? (
-          content &&
-          (editing ? (
-            // `h-full` because the textarea owns its own scrolling: the outer
-            // container has to hand it a definite height, not grow to fit it.
-            <div className="h-full">
-              <FileEditor path={view.path} value={draft} onChange={setDraft} disabled={saving} />
-            </div>
+          rasterImage ? (
+            <ImageFilePreview key={`${view.path}:${reload}`} path={view.path} refresh={reload > 0} />
           ) : (
-            <FileBody content={content} path={view.path} line={line} preview={preview} />
-          ))
+            content &&
+            (editing ? (
+              // `h-full` because the textarea owns its own scrolling: the outer
+              // container has to hand it a definite height, not grow to fit it.
+              <div className="h-full">
+                <FileEditor path={view.path} value={draft} onChange={setDraft} disabled={saving} visible={visible} />
+              </div>
+            ) : (
+              <FileBody content={content} path={view.path} line={line} preview={preview} visible={visible} />
+            ))
+          )
         ) : (
           <UnifiedDiff diff={diff} />
         )}
@@ -735,3 +747,68 @@ export default function Files({
     </div>
   )
 }
+
+const DirectoryList = memo(function DirectoryList({
+  entries,
+  filtered,
+  onOpen,
+}: {
+  entries: FileEntry[]
+  filtered: boolean
+  onOpen: (entry: FileEntry) => void
+}) {
+  return (
+    <ul className="divide-y divide-border">
+      {entries.map((entry) => (
+        <DirectoryRow key={entry.path} entry={entry} onOpen={onOpen} />
+      ))}
+      {entries.length === 0 && (
+        <li className="py-16 text-center text-sm text-muted-foreground/70">{filtered ? '没有匹配的文件' : '空目录'}</li>
+      )}
+    </ul>
+  )
+})
+
+const DirectoryRow = memo(function DirectoryRow({
+  entry,
+  onOpen,
+}: {
+  entry: FileEntry
+  onOpen: (entry: FileEntry) => void
+}) {
+  return (
+    <li className="[content-visibility:auto] [contain-intrinsic-block-size:auto_45px]">
+      <button
+        type="button"
+        onClick={() => onOpen(entry)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-card"
+      >
+        <span className={entry.type === 'directory' ? 'text-primary' : 'text-muted-foreground/70'}>
+          {entry.type === 'directory' ? (
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+              <path d="M3 7a2 2 0 012-2h3.6l2 2H19a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+            </svg>
+          ) : isImageFile(entry.path) ? (
+            <FileImage aria-hidden="true" className="size-5" strokeWidth={1.6} />
+          ) : (
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              className="h-5 w-5"
+            >
+              <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" strokeLinejoin="round" />
+              <path d="M14 3v5h5" strokeLinejoin="round" />
+            </svg>
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[14px] text-foreground/90">{entry.name}</span>
+        {entry.type === 'file' && (
+          <span className="shrink-0 text-[11px] text-muted-foreground/70">{formatBytes(entry.size)}</span>
+        )}
+      </button>
+    </li>
+  )
+})

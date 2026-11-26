@@ -1,7 +1,8 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
-import { Bot, ChevronLeft, ChevronRight, FileCode2, GitBranch, Settings, X } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, FileCode2, FileImage, GitBranch, Settings, X } from 'lucide-react'
 import { ContextMenu } from 'radix-ui'
 import type { WorkbenchTab } from '../../lib/workbench'
+import { isImageFile } from '../../lib/fileImage'
 
 function TabStatusDot({ tab }: { tab: WorkbenchTab }) {
   if (tab.kind !== 'chat' || !tab.status || tab.status === 'idle') return null
@@ -23,7 +24,11 @@ function TabIcon({ tab }: { tab: WorkbenchTab }) {
     case 'chat':
       return <Bot className={cls} strokeWidth={1.5} />
     case 'file':
-      return <FileCode2 className={cls} strokeWidth={1.5} />
+      return isImageFile(tab.path) ? (
+        <FileImage className={cls} strokeWidth={1.5} />
+      ) : (
+        <FileCode2 className={cls} strokeWidth={1.5} />
+      )
     case 'diff':
       return <GitBranch className={cls} strokeWidth={1.5} />
     case 'settings':
@@ -47,7 +52,7 @@ export default function WorkbenchTabs({
   secondaryTabId: string | null
   onSelect: (id: string) => void
   onClose: (id: string) => void
-  onCloseAll: () => void
+  onCloseAll: (id: string) => void
   menuContainer: HTMLElement | null
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -193,9 +198,11 @@ export default function WorkbenchTabs({
                     <ContextMenu.Item className={menuItemClass} onSelect={() => onClose(tab.id)}>
                       关闭标签页
                     </ContextMenu.Item>
-                    <ContextMenu.Item className={menuItemClass} onSelect={onCloseAll}>
-                      全部关闭
-                    </ContextMenu.Item>
+                    {tab.kind !== 'settings' && (
+                      <ContextMenu.Item className={menuItemClass} onSelect={() => onCloseAll(tab.id)}>
+                        {tab.kind === 'chat' ? '关闭全部 Agent 标签' : '关闭全部文件标签'}
+                      </ContextMenu.Item>
+                    )}
                   </ContextMenu.Content>
                 </ContextMenu.Portal>
               </ContextMenu.Root>

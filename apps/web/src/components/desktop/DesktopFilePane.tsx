@@ -1,5 +1,16 @@
 import type { FileContent } from '@vibemobile/protocol'
-import { Check, ChevronRight, Ellipsis, FileCode2, GitCompare, LoaderCircle, Pencil, RefreshCw, X } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  Ellipsis,
+  FileCode2,
+  FileImage,
+  GitCompare,
+  LoaderCircle,
+  Pencil,
+  RefreshCw,
+  X,
+} from 'lucide-react'
 import { useMemo, useState, type Ref } from 'react'
 import { formatBytes } from '../../lib/format'
 import type { FileRef } from '../../lib/fileLink'
@@ -7,6 +18,8 @@ import { isPathInside } from '../../lib/workspace'
 import CopyButton from '../CopyButton'
 import { UnifiedDiff } from '../DiffView'
 import FileBody, { isRenderable } from '../FileBody'
+import ImageFilePreview from '../ImageFilePreview'
+import { isImageFile, isRasterImage } from '../../lib/fileImage'
 import FileEditor from '../FileEditor'
 import {
   DropdownMenu,
@@ -30,7 +43,7 @@ function PathBreadcrumbs({ path, root, diff }: { path: string | undefined; root:
   }
   const current = parts.pop() || fullPath
   const parent = parts.length > 2 ? `${parts[0]} › … › ${parts.at(-1)}` : parts.join(' › ')
-  const Icon = diff ? GitCompare : FileCode2
+  const Icon = diff ? GitCompare : path && isImageFile(path) ? FileImage : FileCode2
 
   return (
     <div className="flex min-w-0 flex-1 basis-24 items-center gap-1.5 text-xs" title={fullPath}>
@@ -65,6 +78,7 @@ interface DesktopFilePaneProps {
   onRefresh: () => void
   onEdit: () => void
   editBlockedBy: string | null
+  imageRevision: number
   editor?: {
     value: string
     dirty: boolean
@@ -94,10 +108,12 @@ export default function DesktopFilePane({
   onRefresh,
   onEdit,
   editBlockedBy,
+  imageRevision,
   editor,
 }: DesktopFilePaneProps) {
   const [wrap, setWrap] = useState(false)
   const markdown = view.kind === 'file' && isRenderable(view.path)
+  const rasterImage = view.kind === 'file' && isRasterImage(view.path)
   const rendered = markdown && preview
   const selection = editor?.value ?? content?.text
   const lineCount = useMemo(() => selection?.split('\n').length, [selection])
@@ -153,16 +169,18 @@ export default function DesktopFilePane({
                   ))}
                 </fieldset>
               )}
-              <button
-                type="button"
-                aria-label="编辑文件"
-                title={editBlockedBy ?? '编辑文件'}
-                disabled={!content || loading || Boolean(error) || Boolean(editBlockedBy)}
-                onClick={onEdit}
-                className={toolClass}
-              >
-                <Pencil aria-hidden="true" className="size-3.5" />
-              </button>
+              {!rasterImage && (
+                <button
+                  type="button"
+                  aria-label="编辑文件"
+                  title={editBlockedBy ?? '编辑文件'}
+                  disabled={!content || loading || Boolean(error) || Boolean(editBlockedBy)}
+                  onClick={onEdit}
+                  className={toolClass}
+                >
+                  <Pencil aria-hidden="true" className="size-3.5" />
+                </button>
+              )}
               {onOpenDiff && (
                 <button
                   type="button"
@@ -181,7 +199,7 @@ export default function DesktopFilePane({
             {(view.path || root) && (
               <CopyButton getText={() => view.path || root} label="复制路径" className={toolClass} />
             )}
-            {view.kind === 'file' && !rendered ? (
+            {view.kind === 'file' && !rendered && !rasterImage ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button type="button" aria-label="更多文件操作" title="更多文件操作" className={toolClass}>
@@ -252,6 +270,13 @@ export default function DesktopFilePane({
           ) : (
             <p className="grid h-full place-content-center text-xs text-muted-foreground">没有文件改动</p>
           )
+        ) : rasterImage ? (
+          <ImageFilePreview
+            key={`${view.path}:${imageRevision}`}
+            path={view.path}
+            refresh={imageRevision > 0}
+            desktop
+          />
         ) : (
           content &&
           (editor ? (
@@ -279,7 +304,7 @@ export default function DesktopFilePane({
         )}
       </div>
 
-      {view.kind === 'file' && content && !loading && !error && (
+      {view.kind === 'file' && content && !loading && !error && !(rendered && isImageFile(view.path)) && (
         <footer className="flex h-6 shrink-0 items-center justify-end gap-3 border-t border-border bg-card/60 px-3 text-[11px] tabular-nums text-muted-foreground">
           {editor && (
             <span className="mr-auto truncate" role="status">

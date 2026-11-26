@@ -5,6 +5,7 @@ import type { ProviderId } from '@vibemobile/protocol'
 import { api } from '../lib/api'
 import { currentProvider } from '../lib/currentProvider'
 import { runnerId } from '../lib/runner'
+import { getRunnerSnapshot, readRunnerSnapshot } from '../lib/runnerSnapshot'
 
 export default function SessionInfo({
   provider,
@@ -43,12 +44,13 @@ export default function SessionInfo({
       active = false
     }
   }, [open, provider])
-  const [runnerName, setRunnerName] = useState(runnerId || '本机')
+  const [runnerName, setRunnerName] = useState(
+    () => getRunnerSnapshot()?.data.find((item) => item.id === runnerId)?.name ?? (runnerId || '本机'),
+  )
   useEffect(() => {
     if (!runnerId) return
     let active = true
-    void api
-      .runners()
+    void readRunnerSnapshot()
       .then((result) => {
         const runner = result.data.find((item) => item.id === runnerId)
         if (active && runner) setRunnerName(runner.name)

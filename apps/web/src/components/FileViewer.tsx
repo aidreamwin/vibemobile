@@ -4,6 +4,8 @@ import { api, ApiError } from '../lib/api'
 import { shortPath } from '../lib/format'
 import type { FileRef } from '../lib/fileLink'
 import FileBody, { SourcePreviewToggle, isRenderable } from './FileBody'
+import ImageFilePreview from './ImageFilePreview'
+import { isRasterImage } from '../lib/fileImage'
 
 /**
  * What a file reference in a transcript opens into.
@@ -27,6 +29,7 @@ export default function FileViewer({
   /** Given, a link inside the preview opens here instead of on a new tab. */
   onOpenFile?: (ref: FileRef) => void
 }) {
+  const rasterImage = isRasterImage(file.path)
   const [content, setContent] = useState<FileContent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -40,6 +43,12 @@ export default function FileViewer({
   const shown = preview && isRenderable(file.path)
 
   useEffect(() => {
+    if (rasterImage) {
+      setLoading(false)
+      setError(null)
+      setContent(null)
+      return
+    }
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -58,7 +67,7 @@ export default function FileViewer({
     return () => {
       cancelled = true
     }
-  }, [file.path])
+  }, [file.path, rasterImage])
 
   const name = file.path.split('/').pop() || file.path
 
@@ -91,7 +100,7 @@ export default function FileViewer({
               link pointed at, and a rendered document has no lines to point
               at. Dropping it there also leaves the toggle room on a 390px
               header. */}
-          {file.line !== null && !shown && (
+          {file.line !== null && !shown && !rasterImage && (
             <span className="shrink-0 rounded-md bg-warning/15 px-2 py-1 text-[11px] text-warning">
               第 {file.line} 行
             </span>
@@ -101,7 +110,9 @@ export default function FileViewer({
       </header>
 
       <div className="scroll-y min-h-0 flex-1">
-        {loading ? (
+        {rasterImage ? (
+          <ImageFilePreview key={file.path} path={file.path} />
+        ) : loading ? (
           <div className="py-16 text-center text-sm text-muted-foreground/70">加载中…</div>
         ) : error ? (
           <div className="px-4 py-6 text-center">

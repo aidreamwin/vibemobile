@@ -331,7 +331,7 @@ describe('Antigravity ACP session lifecycle', () => {
     agent.onRequest('session/set_config_option', ({ params }) =>
       responses(ignoreSelection ? acpModelId(models[1]) : String(params.value)),
     )
-    agent.onRequest('session/load', () => responses(acpModelId(models[0])))
+    agent.onRequest('session/load', () => responses(acpModelId(models[1]).slice('gemini-'.length)))
     agent.onRequest('session/prompt', prompt)
     expect((await provider.listModels()).map((m) => m.id)).toEqual(models)
     const s = await provider.createSession({ cwd })
@@ -341,12 +341,14 @@ describe('Antigravity ACP session lifecycle', () => {
     expect((await provider.getSession(s.id))?.model).toBe(models[1])
     await provider.stop()
     expect((await provider.resumeSession(s.id))?.model).toBe(models[1])
+    await provider.startTurn(s.id, [{ type: 'image', url: 'data:image/png;base64,AQID' }])
+    await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
     await expect(provider.createSession({ cwd, model: 'unconfigured' })).rejects.toMatchObject({ statusCode: 400 })
     ignoreSelection = true
     await expect(
       provider.startTurn(s.id, [{ type: 'text', text: 'verify selection' }], { model: models[0] }),
     ).rejects.toMatchObject({ statusCode: 502 })
-    expect(prompt).toHaveBeenCalledTimes(1)
+    expect(prompt).toHaveBeenCalledTimes(2)
   })
 
   it('authenticates each managed connection before new or resumed sessions and restores CLI login on removal', async () => {

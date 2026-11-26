@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Monitor } from 'lucide-react'
-import { api } from '../lib/api'
+import { getRunnerSnapshot, readRunnerSnapshot } from '../lib/runnerSnapshot'
 import { runnerId, runnerSwitchUrl, type RunnerInfo } from '../lib/runner'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectValue, SelectTrigger } from './ui/select'
 
@@ -11,14 +11,14 @@ export default function RunnerSelector({
   compact?: boolean
   workbench?: boolean
 }) {
-  const [runners, setRunners] = useState<RunnerInfo[]>([])
+  const [runners, setRunners] = useState<RunnerInfo[]>(() => getRunnerSnapshot()?.data ?? [])
   const [error, setError] = useState(false)
   useEffect(() => {
     if (!runnerId) return
     let active = true
-    const refresh = () =>
-      api
-        .runners()
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return
+      void readRunnerSnapshot()
         .then((result) => {
           if (active) {
             setRunners(result.data)
@@ -28,11 +28,14 @@ export default function RunnerSelector({
         .catch(() => {
           if (active) setError(true)
         })
+    }
     void refresh()
     const timer = setInterval(() => void refresh(), 10_000)
+    document.addEventListener('visibilitychange', refresh)
     return () => {
       active = false
       clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
     }
   }, [])
   if (!runnerId) return null

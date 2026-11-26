@@ -34,6 +34,8 @@ import { Hint } from '../components/ui/tooltip'
 import { api } from '../lib/api'
 import { agentStatus } from '../lib/agentStatus'
 import { runnerId, runnerSwitchUrl } from '../lib/runner'
+import { clearRunnerSnapshot, getRunnerSnapshot, readRunnerSnapshot } from '../lib/runnerSnapshot'
+import { clearProviderSnapshot, readProviderSnapshot } from '../lib/providerSnapshot'
 import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
 import { WEB_BUILD, buildLabel, builtAtLabel, halvesDiverge, serverRestartPending, uptimeLabel } from '../lib/build'
 import { socket, type ConnectionState } from '../lib/ws'
@@ -121,8 +123,8 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   // Hub-only runner management. `hub` stays false on a standalone server, which
   // is exactly what hides the section.
   const [hub, setHub] = useState(false)
-  const [runners, setRunners] = useState<RunnerInfo[]>([])
-  const [defaultRunner, setDefaultRunner] = useState('')
+  const [runners, setRunners] = useState<RunnerInfo[]>(() => getRunnerSnapshot()?.data ?? [])
+  const [defaultRunner, setDefaultRunner] = useState(() => getRunnerSnapshot()?.default ?? '')
   const [runnerSheet, setRunnerSheet] = useState<RunnerSheet | null>(null)
   const [runnerName, setRunnerName] = useState('')
   const [runnerBusy, setRunnerBusy] = useState(false)
@@ -155,7 +157,8 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   }, [showingSystem])
 
   const reloadRunners = useCallback(async () => {
-    const result = await api.runners()
+    clearRunnerSnapshot()
+    const result = await readRunnerSnapshot()
     setRunners(result.data)
     setDefaultRunner(result.default)
   }, [])
@@ -183,7 +186,7 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
       if (pending || document.visibilityState === 'hidden') return
       pending = true
       try {
-        const result = await api.runners()
+        const result = await readRunnerSnapshot()
         if (active) {
           setRunners(result.data)
           setDefaultRunner(result.default)
@@ -924,20 +927,27 @@ function AgentsSection() {
   const [checking, setChecking] = useState<AgentRuntimeId | null>(null)
 
   const loadProviders = useCallback(() => {
-    void api
-      .providers()
+    void readProviderSnapshot(true)
       .then((result) => setProviders(result.data))
       .catch(() => undefined)
   }, [])
 
-  const load = useCallback(async () => {
-    try {
-      setAgents((await api.agents()).data)
-      setError(null)
-    } catch (err) {
-      setError((err as Error).message)
-    }
-  }, [])
+  const load = useCallback(
+    async (refreshingUpdate = false) => {
+      try {
+        const { data } = await api.agents()
+        setAgents(data)
+        setError(null)
+        if (refreshingUpdate && !data.some((agent) => agent.updating)) {
+          clearProviderSnapshot()
+          loadProviders()
+        }
+      } catch (err) {
+        setError((err as Error).message)
+      }
+    },
+    [loadProviders],
+  )
 
   useEffect(() => {
     loadProviders()
@@ -947,7 +957,7 @@ function AgentsSection() {
   const updating = agents.some((agent) => agent.updating)
   useEffect(() => {
     if (!updating) return
-    const timer = setInterval(() => void load(), 1500)
+    const timer = setInterval(() => void load(true), 1500)
     return () => clearInterval(timer)
   }, [updating, load])
 
@@ -967,7 +977,10 @@ function AgentsSection() {
     setBusy(id)
     setError(null)
     try {
-      setAgents((await api.updateAgent(id)).data)
+      const { data } = await api.updateAgent(id)
+      setAgents(data)
+      clearProviderSnapshot()
+      if (!data.some((agent) => agent.updating)) loadProviders()
       setLatest((prev) => {
         const next = { ...prev }
         delete next[id]

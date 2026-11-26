@@ -2,8 +2,7 @@
  * Serves the pictures a user sent, addressed by the tokens carried on their
  * transcript messages (`AgentItem` of kind `message`).
  *
- * The only route in this server that returns something other than JSON. It
- * exists because the alternative — inlining data URLs in the transcript — costs
+ * This binary route exists because inlining data URLs in the transcript costs
  * the full image bytes again on every reconnect, which is exactly the mobile
  * case this app is for. A content-addressed token can be cached forever by the
  * browser instead, so a reconnect re-fetches the transcript and none of its

@@ -55,8 +55,28 @@ describe('the rendered form of a file', () => {
   it('knows which files have a rendered form', () => {
     expect(isRenderable('D:/x/README.md')).toBe(true)
     expect(isRenderable('D:/x/notes.MARKDOWN')).toBe(true)
+    expect(isRenderable('D:/x/diagram.SVG')).toBe(true)
     expect(isRenderable('D:/x/Page.tsx')).toBe(false)
     expect(isRenderable('D:/x/md')).toBe(false)
+  })
+
+  it('renders SVG in an isolated image context and preserves its source view', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+    const rendered = renderToStaticMarkup(<FileBody content={file(svg)} path="D:/x/diagram.svg" preview />)
+    expect(rendered).toContain('<img')
+    expect(rendered).toContain(`data:image/svg+xml,${encodeURIComponent(svg)}`)
+    expect(rendered).not.toContain('<script>')
+
+    const source = renderToStaticMarkup(<FileBody content={file(svg)} path="D:/x/diagram.svg" />)
+    expect(source).not.toContain('<img')
+    expect(source).toContain('>svg</span>')
+    expect(source).not.toContain('<svg')
+
+    const truncated = renderToStaticMarkup(
+      <FileBody content={file(svg, { truncated: true })} path="D:/x/diagram.svg" preview />,
+    )
+    expect(truncated).not.toContain('<img')
+    expect(truncated).toContain('文件较大')
   })
 
   it.each([

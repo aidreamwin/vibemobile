@@ -125,7 +125,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - 图片落 `.vibemobile/images/`（`<sha256[:32]>.<ext>`），转写只放 `/api/images/<token>`；代理会话文件只读：不写 `~/.codex/sessions/**`、`~/.claude/projects/**`，`*-sessions.json` 不记图。
 - `ImageStore` 无内存态，可多实例同 `stateDir`；`SessionPrefsStore` 相反只能一个实例；无 `stateDir` = 无 store（不写 `images`，data URL 不上 item）。
 - 落盘走 `normalizeItem(item, { onImage })`，不能先放进 item 再改写；Claude 侧要在 `beginTurn` 前完成；token 带扩展名（定 Content-Type），拒 `svg`（同源 XSS）。
-- `GET /api/images/:id` 是唯一非 JSON 路由：未命中必须 `Cache-Control: no-store`，命中 `immutable`；图片目录纯缓存，故意无清理。
+- `GET /api/images/:id` 未命中必须 `Cache-Control: no-store`，命中 `immutable`；图片目录纯缓存，故意无清理。`GET /api/files/image` 沿用 `resolveInside()`，仅栅格图片 MIME 白名单、10 MiB 上限，文件内容可变 → `private, max-age=0`；Hub 转发原始字节及 Content-Type。
 - item 两种拼法都要读：WS `{"type":"image","url"}`，rollout `{"type":"image","image_url"}`（靠 `smoke-image.ts` 抓）；出站张数在 provider 入口 `capImages(rawInput)`；`MAX_PER_MESSAGE` 与 `apps/web/src/lib/image.ts` 的 `MAX_IMAGES` 是同一数两份，必须同步。
 ### 终端持久化（`ws/terminal.ts`）
 - shell 属于终端：socket close 只是 detach，不杀 pty；回收看无连接 + `config.terminal.idleTimeoutMs`（60 s 扫一轮）；身份在 `sessionStorage`，未知 id 给新壳并回传（不是 404）。

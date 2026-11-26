@@ -13,6 +13,7 @@ import type {
 } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { cachedSessionList, clearSessionLists, loadSessionList, withSessionStatus } from '../lib/sessionLists'
+import { getProviderSnapshot, readProviderSnapshot } from '../lib/providerSnapshot'
 import { socket } from '../lib/ws'
 import { useWorkspaceStore } from '../lib/workspace'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from '../components/ui/select'
@@ -110,7 +111,7 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
   const setLastSessionCwd = useWorkspaceStore((state) => state.setLastSessionCwd)
   const [filter, setFilter] = useState<ProviderFilter>(readStoredFilter)
   const [initialSessions] = useState(() => cachedSessionList({ provider: filter, limit: SESSION_LIMIT }))
-  const [providers, setProviders] = useState<ProviderStatus[]>([])
+  const [providers, setProviders] = useState<ProviderStatus[]>(() => getProviderSnapshot()?.data ?? [])
   const [sessions, setSessions] = useState<SessionSummary[]>(() => initialSessions ?? [])
   const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [showArchived, setShowArchived] = useState(false)
@@ -317,8 +318,7 @@ export default function Sessions({ embedded = false, onSelectSession, onSessions
   // not a filter: changing it must not hide sessions from other directories.
   useEffect(() => {
     let cancelled = false
-    api
-      .providers()
+    readProviderSnapshot()
       .then((providerRes) => {
         if (cancelled) return
         setProviders(providerRes.data)

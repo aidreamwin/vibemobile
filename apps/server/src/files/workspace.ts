@@ -152,6 +152,44 @@ export async function resolveDirectory(roots: string[], candidate: string): Prom
 }
 
 const MAX_FILE_BYTES = 512 * 1024
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+const IMAGE_MIMES: ReadonlyMap<string, string> = new Map([
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.webp', 'image/webp'],
+  ['.bmp', 'image/bmp'],
+  ['.ico', 'image/x-icon'],
+  ['.avif', 'image/avif'],
+])
+
+/** Read a browser-supported raster image within the workspace preview limit. */
+export async function readFileImage(roots: string[], filePath: string): Promise<{ mime: string; body: Buffer }> {
+  const file = resolveInside(roots, filePath)
+  const mime = IMAGE_MIMES.get(path.extname(file).toLowerCase())
+  if (!mime) throw new WorkspaceError('unsupported image format', 415)
+  const stat = await fs.stat(file).catch(() => null)
+  if (!stat?.isFile()) throw new WorkspaceError('not a file', 404)
+  if (stat.size > MAX_IMAGE_BYTES) throw new WorkspaceError('image is larger than 10 MB', 413)
+
+  const handle = await fs.open(file, 'r')
+  try {
+    // Bound the read even if an agent is simultaneously writing the file.
+    const buffer = Buffer.alloc(stat.size + 1)
+    let offset = 0
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+      if (!bytesRead) break
+      offset += bytesRead
+    }
+    if (offset > stat.size) throw new WorkspaceError('image changed while being read', 409, 'file_changed')
+    return { mime, body: buffer.subarray(0, offset) }
+  } finally {
+    await handle.close()
+  }
+}
 
 /** Short digest used as `FileContent.rev`; 64 bits is far past what a
  *  concurrent-edit window needs. */

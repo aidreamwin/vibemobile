@@ -126,7 +126,7 @@ describe('useWorkbenchStore', () => {
     })
   })
 
-  it('closes every workbench tab without restoring the previous selection or closing terminals', () => {
+  it('closes only the selected group of workbench tabs and updates the saved selection', () => {
     const saved = new Map<string, string>()
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => saved.get(key) ?? null,
@@ -136,6 +136,7 @@ describe('useWorkbenchStore', () => {
     try {
       const store = useWorkbenchStore.getState()
       store.openChatTab({ threadId: 't1' })
+      store.openChatTab({ threadId: 't2' })
       store.openFileTab({ path: '/repo/a.ts' })
       store.openDiffTab()
       store.openSettingsTab()
@@ -144,7 +145,12 @@ describe('useWorkbenchStore', () => {
       store.setAgentPanePosition('end')
 
       expect(useWorkbenchStore.getState().settingsReturn).not.toBeNull()
-      store.closeAllTabs()
+      store.closeAllTabs('diff:workspace')
+      expect(useWorkbenchStore.getState().tabs.map((tab) => tab.id)).toEqual(['chat:t1', 'chat:t2', 'settings'])
+      expect(useWorkbenchStore.getState().settingsReturn).toEqual({ activeTabId: 'chat:t2', secondaryTabId: null })
+      store.closeTab('settings')
+      expect(useWorkbenchStore.getState().activeTabId).toBe('chat:t2')
+      store.closeAllTabs('chat:t1')
 
       const result = {
         tabs: [],
@@ -163,6 +169,35 @@ describe('useWorkbenchStore', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('keeps the selected editor when closing all Agent tabs, even from an inactive tab', () => {
+    const store = useWorkbenchStore.getState()
+    store.openChatTab({ threadId: 't1' })
+    store.openChatTab({ threadId: 't2' })
+    store.openFileTab({ path: '/repo/a.ts' })
+    store.openFileTab({ path: '/repo/b.ts' })
+    store.closeAllTabs('chat:t1')
+    expect(useWorkbenchStore.getState()).toMatchObject({
+      activeTabId: 'file:/repo/b.ts',
+      secondaryTabId: null,
+      splitEnabled: false,
+    })
+    expect(useWorkbenchStore.getState().tabs.map((tab) => tab.id)).toEqual(['file:/repo/a.ts', 'file:/repo/b.ts'])
+  })
+
+  it('promotes the remaining Agent when closing all files in a mixed split', () => {
+    const store = useWorkbenchStore.getState()
+    store.openChatTab({ threadId: 't1' })
+    store.openFileTab({ path: '/repo/a.ts' })
+    store.openDiffTab()
+    store.closeAllTabs('file:/repo/a.ts')
+    expect(useWorkbenchStore.getState()).toMatchObject({
+      activeTabId: 'chat:t1',
+      secondaryTabId: null,
+      splitEnabled: false,
+    })
+    expect(useWorkbenchStore.getState().tabs.map((tab) => tab.id)).toEqual(['chat:t1'])
   })
 
   it('swaps the split panes when reopening the secondary tab and promotes it when closing the primary', () => {

@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Navigate, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import { api, ApiError } from './lib/api'
 import { socket } from './lib/ws'
 import Sessions from './pages/Sessions'
@@ -12,14 +12,16 @@ import { routeTitle, useDocumentTitle } from './lib/title'
 import { useIsDesktop } from './lib/viewport'
 import { clearSessionLists, updateSessionListsStatus } from './lib/sessionLists'
 import { clearFileSnapshots } from './lib/fileSnapshots'
+import { clearRunnerSnapshot, readRunnerSnapshot } from './lib/runnerSnapshot'
+import { clearProviderSnapshot } from './lib/providerSnapshot'
 
 // The landing page stays eager; everything else is fetched when its route is
 // opened. That keeps xterm (Terminal) and react-markdown (Chat / Files) out of
 // the first load.
 const Login = lazy(() => import('./pages/Login'))
 const Chat = lazy(() => import('./pages/Chat'))
-const Files = lazy(() => import('./pages/Files'))
-const Terminal = lazy(() => import('./pages/Terminal'))
+const Files = memo(lazy(() => import('./pages/Files')))
+const Terminal = memo(lazy(() => import('./pages/Terminal')))
 const Settings = lazy(() => import('./pages/Settings'))
 const DesktopWorkbenchShell = lazy(() => import('./components/desktop/DesktopWorkbenchShell'))
 
@@ -31,6 +33,78 @@ function PageFallback({ full = false }: { full?: boolean }) {
   )
 }
 
+const MAX_MOBILE_CHATS = 2
+
+function MobilePages({ onLogout }: { onLogout: () => void }) {
+  const pathname = useLocation().pathname.replace(/\/+$/, '').toLowerCase() || '/'
+  const navigate = useNavigate()
+  const threadId = useMatch('/chat/:threadId')?.params.threadId
+  const navigateRef = useRef(navigate)
+  useLayoutEffect(() => {
+    navigateRef.current = navigate
+  }, [navigate])
+  const [recentChats, setRecentChats] = useState<string[]>([])
+  const [terminalVisited, setTerminalVisited] = useState(pathname === '/terminal')
+  const [filesVisited, setFilesVisited] = useState(pathname === '/files')
+  const chatIds = [...new Set([...(threadId ? [threadId] : []), ...recentChats])].slice(0, MAX_MOBILE_CHATS)
+  const exitChat = useCallback(() => navigateRef.current('/'), [])
+  const selectChat = useCallback(
+    (id: string) => navigateRef.current(`/chat/${encodeURIComponent(id)}`, { replace: true }),
+    [],
+  )
+
+  useEffect(() => {
+    if (threadId)
+      setRecentChats((previous) =>
+        previous[0] === threadId
+          ? previous
+          : [threadId, ...previous.filter((id) => id !== threadId)].slice(0, MAX_MOBILE_CHATS),
+      )
+  }, [threadId])
+  useEffect(() => {
+    if (pathname === '/terminal') setTerminalVisited(true)
+    if (pathname === '/files') setFilesVisited(true)
+  }, [pathname])
+
+  if (!threadId && !['/', '/files', '/terminal', '/settings'].includes(pathname)) return <Navigate to="/" replace />
+
+  return (
+    <div className="app-height flex flex-col overflow-hidden">
+      <UpdateBanner />
+      <main className="relative min-h-0 flex-1">
+        {pathname === '/' && <Sessions />}
+        {chatIds.map((id) => (
+          <div key={id} hidden={id !== threadId} inert={id !== threadId} className="h-full">
+            <Suspense fallback={<PageFallback />}>
+              <Chat threadId={id} visible={threadId === id} onExit={exitChat} onSelectSession={selectChat} />
+            </Suspense>
+          </div>
+        ))}
+        {(filesVisited || pathname === '/files') && (
+          <div hidden={pathname !== '/files'} inert={pathname !== '/files'} className="h-full">
+            <Suspense fallback={<PageFallback />}>
+              <Files visible={pathname === '/files'} />
+            </Suspense>
+          </div>
+        )}
+        {(terminalVisited || pathname === '/terminal') && (
+          <div hidden={pathname !== '/terminal'} inert={pathname !== '/terminal'} className="h-full">
+            <Suspense fallback={<PageFallback />}>
+              <Terminal visible={pathname === '/terminal'} />
+            </Suspense>
+          </div>
+        )}
+        {pathname === '/settings' && (
+          <Suspense fallback={<PageFallback />}>
+            <Settings onLogout={onLogout} />
+          </Suspense>
+        )}
+      </main>
+      {!threadId && <BottomNav />}
+    </div>
+  )
+}
+
 type AuthState = 'checking' | 'authed' | 'anonymous' | 'offline'
 
 export default function App() {
@@ -38,6 +112,8 @@ export default function App() {
   const logout = useCallback(() => {
     clearSessionLists()
     clearFileSnapshots()
+    clearRunnerSnapshot()
+    clearProviderSnapshot()
     setAuth('anonymous')
   }, [])
   const [bootError, setBootError] = useState<string | null>(null)
@@ -47,7 +123,12 @@ export default function App() {
   const isDesktop = useIsDesktop()
   // A runner prefix is part of every path under /r/<id>; the title is the same
   // page either way. Pages with real content override this below.
-  useDocumentTitle(isDesktop && auth === 'authed' ? null : routeTitle(pathAfterScope(location.pathname)))
+  const routePath = pathAfterScope(location.pathname).replace(/\/+$/, '').toLowerCase() || '/'
+  useDocumentTitle(
+    auth === 'authed' && (isDesktop || routePath.startsWith('/chat/') || routePath === '/files')
+      ? null
+      : routeTitle(routePath),
+  )
   const loadWorkspace = useWorkspaceStore((state) => state.load)
 
   useEffect(() => {
@@ -75,7 +156,7 @@ export default function App() {
           throw hub.error
         }
         if (hub.available) {
-          const runners = await api.runners()
+          const runners = await readRunnerSnapshot()
           if (cancelled) return
           if (!runners.data.some((runner) => runner.id === runnerId)) {
             // A known scope that no longer exists keeps its page; a URL with no
@@ -119,9 +200,6 @@ export default function App() {
   useEffect(() => {
     if (auth === 'authed') void loadWorkspace()
   }, [auth, loadWorkspace])
-
-  // The chat view owns the full height and hides the bottom nav.
-  const isChat = location.pathname.startsWith('/chat/')
 
   if (auth === 'checking') {
     return <div className="app-height flex items-center justify-center text-muted-foreground">连接中…</div>
@@ -190,22 +268,5 @@ export default function App() {
     )
   }
 
-  return (
-    <div className="app-height flex flex-col overflow-hidden">
-      <UpdateBanner />
-      <main className="min-h-0 flex-1">
-        <Suspense fallback={<PageFallback />}>
-          <Routes>
-            <Route path="/" element={<Sessions />} />
-            <Route path="/chat/:threadId" element={<Chat />} />
-            <Route path="/files" element={<Files />} />
-            <Route path="/terminal" element={<Terminal />} />
-            <Route path="/settings" element={<Settings onLogout={logout} />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
-      </main>
-      {!isChat && <BottomNav />}
-    </div>
-  )
+  return <MobilePages onLogout={logout} />
 }

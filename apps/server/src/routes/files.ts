@@ -1,7 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import type { Config } from '../config.js'
 import { requireAuth } from './guards.js'
-import { gitDiff, listDirectory, readFileText, writeFileText, WorkspaceError } from '../files/workspace.js'
+import {
+  gitDiff,
+  listDirectory,
+  readFileImage,
+  readFileText,
+  writeFileText,
+  WorkspaceError,
+} from '../files/workspace.js'
 
 /**
  * How much JSON a save may be.
@@ -43,6 +50,16 @@ export function registerFileRoutes(app: FastifyInstance, config: Config): void {
     if (!req.query.path) return reply.code(400).send({ error: 'path is required' })
     const result = await wrap(() => readFileText(config.workspaceRoots, req.query.path), reply)
     return result
+  })
+
+  app.get<{ Querystring: { path: string } }>('/api/files/image', auth, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store')
+    if (!req.query.path) return reply.code(400).send({ error: 'path is required' })
+    const image = await wrap(() => readFileImage(config.workspaceRoots, req.query.path), reply)
+    if (!image) return
+    reply.header('Cache-Control', 'private, max-age=0')
+    reply.header('X-Content-Type-Options', 'nosniff')
+    return reply.type(image.mime).send(image.body)
   })
 
   /**

@@ -59,6 +59,7 @@ interface ChatState {
   streamVersion: number
 
   reset: (threadId: string) => void
+  setVisible: (visible: boolean) => void
   indexTurns: (threadId: string, turns: { id: string; items: { id: string }[] }[]) => void
   turnIdOfItem: (itemId: string) => string | undefined
   applyEvent: (event: AgentEvent) => void
@@ -106,6 +107,7 @@ export function createChatStore(initialThreadId: string | null = null) {
     let itemsDirty = false
     let dirty = false
     let flushHandle: number | null = null
+    let visible = true
 
     /** Upsert by id, preserving insertion order. */
     function upsertItem(item: AgentItem): void {
@@ -177,8 +179,11 @@ export function createChatStore(initialThreadId: string | null = null) {
       }))
     }
 
-    const scheduleFlush = () => {
+    const scheduleFlush = (deltaOnly = false) => {
       dirty = true
+      // Keep collecting tokens for hidden conversations without continuously
+      // re-rendering their Markdown. Item and turn events still publish snapshots.
+      if (!visible && deltaOnly) return
       if (flushHandle !== null) return
       if (typeof requestAnimationFrame === 'function' && document.visibilityState === 'visible') {
         flushHandle = requestAnimationFrame(flush)
@@ -355,6 +360,11 @@ export function createChatStore(initialThreadId: string | null = null) {
       turnTimes: {},
       streamVersion: 0,
 
+      setVisible(nextVisible) {
+        visible = nextVisible
+        if (visible && dirty && flushHandle === null) flush()
+      },
+
       reset(threadId) {
         turnIndex.clear()
         turnErrorIds.clear()
@@ -400,7 +410,7 @@ export function createChatStore(initialThreadId: string | null = null) {
           case 'delta':
             if (get().retryNotice) set({ retryNotice: null })
             appendDelta(event.itemId, event.channel, event.text)
-            scheduleFlush()
+            scheduleFlush(true)
             return
 
           case 'item.started':

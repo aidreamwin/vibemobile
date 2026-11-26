@@ -1,5 +1,5 @@
 import { RetryBanner } from '../components/RetryBanner'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useStore } from 'zustand'
 import type { AgentInput, AgentItem, ModelInfo, SessionStatus, SessionSummary, Transcript } from '@vibemobile/protocol'
@@ -48,9 +48,12 @@ export interface ChatProps {
   onExit?: () => void
 }
 
-export default function Chat(props: ChatProps) {
-  return props.embedded ? <ChatView {...props} /> : <RoutedChat {...props} />
-}
+const Chat = memo(function Chat(props: ChatProps) {
+  if (props.embedded || (props.threadId && props.onExit && props.onSelectSession)) return <ChatView {...props} />
+  return <RoutedChat {...props} />
+})
+
+export default Chat
 
 function RoutedChat(props: ChatProps) {
   const { threadId } = useParams<{ threadId: string }>()
@@ -76,12 +79,15 @@ function ChatView({
   onExit,
 }: ChatProps = {}) {
   const chatStore = useMemo(() => createChatStore(threadId ?? null), [threadId])
+  useLayoutEffect(() => {
+    chatStore.getState().setVisible(visible)
+  }, [chatStore, visible])
   useEffect(() => {
     if (embedded && threadId) return registerChatStore(threadId, chatStore)
   }, [chatStore, embedded, threadId])
 
   const [session, setSession] = useState<SessionSummary | null>(null)
-  useDocumentTitle(embedded ? '' : session?.title || '对话')
+  useDocumentTitle(visible && !embedded ? session?.title || '对话' : null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [showDiff, setShowDiff] = useState(false)
@@ -89,7 +95,10 @@ function ChatView({
   const [turnModel, setTurnModel] = useState('')
   const [turnEffort, setTurnEffort] = useState('')
   const [turnPermission, setTurnPermission] = useState<PermissionCard>('ask')
-  const permissionCards = permissionCardsFor(session?.provider, session?.permissionModes)
+  const permissionCards = useMemo(
+    () => permissionCardsFor(session?.provider, session?.permissionModes),
+    [session?.provider, session?.permissionModes],
+  )
   const selectedPermission = permissionCards.includes(turnPermission) ? turnPermission : 'ask'
   const [models, setModels] = useState<ModelInfo[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
@@ -982,10 +991,13 @@ function ChatView({
       )}
 
       <Composer
+        key={threadId}
         onSend={send}
         onStop={stop}
         running={running}
         disabled={readOnly}
+        sessionId={threadId}
+        visible={visible}
         desktopSessionId={embedded ? threadId : undefined}
         models={models}
         model={turnModel}

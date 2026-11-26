@@ -4,7 +4,9 @@ import { formatBytes } from '../lib/format'
 import type { FileRef } from '../lib/fileLink'
 import { parentPath } from '../lib/workspace'
 import { highlightFileRows } from '../lib/fileSyntax'
+import { isSvgImage } from '../lib/fileImage'
 import Markdown from './Markdown'
+import ImageFilePreview from './ImageFilePreview'
 import './file-source.css'
 
 /**
@@ -20,7 +22,7 @@ const MARKDOWN = /\.(md|markdown)$/i
 
 /** Whether a file has a rendered form to switch to. */
 export function isRenderable(path: string): boolean {
-  return MARKDOWN.test(path)
+  return MARKDOWN.test(path) || isSvgImage(path)
 }
 
 /**
@@ -57,7 +59,26 @@ export function SourcePreviewToggle({ preview, onChange }: { preview: boolean; o
  * `line` is the line a link pointed at: that row is marked and scrolled to.
  * It applies to the source view only; a rendered document has no lines.
  */
-export default function FileBody({
+interface FileBodyProps {
+  content: FileContent
+  path: string
+  line?: number | null
+  preview?: boolean
+  desktop?: boolean
+  visible?: boolean
+  wrap?: boolean
+  onOpenFile?: (ref: FileRef) => void
+}
+
+export default function FileBody(props: FileBodyProps) {
+  const { content, path, preview, desktop } = props
+  if (preview && isSvgImage(path) && !content.truncated) {
+    return <ImageFilePreview key={`${path}:${content.rev}`} path={path} svgText={content.text} desktop={desktop} />
+  }
+  return <TextFileBody {...props} />
+}
+
+function TextFileBody({
   content,
   path,
   line = null,
@@ -66,18 +87,8 @@ export default function FileBody({
   visible = true,
   wrap = !desktop,
   onOpenFile,
-}: {
-  content: FileContent
-  path: string
-  line?: number | null
-  preview?: boolean
-  desktop?: boolean
-  visible?: boolean
-  wrap?: boolean
-  /** Given, a link inside the preview opens in the app instead of a new tab. */
-  onOpenFile?: (ref: FileRef) => void
-}) {
-  const shown = preview && isRenderable(path)
+}: FileBodyProps) {
+  const shown = preview && MARKDOWN.test(path)
 
   // `\r?\n`, not `\n`: these are Windows files, and a lone `\r` left at the end
   // of every row is an invisible character that survives a copy — or, under

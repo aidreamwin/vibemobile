@@ -52,10 +52,16 @@ const KEYS: { label: string; seq: string }[] = [
 export interface TerminalPageProps {
   terminalKey?: string
   embedded?: boolean
+  visible?: boolean
   onStatusChange?: (status: Status, label: string) => void
 }
 
-export default function TerminalPage({ terminalKey, embedded = false, onStatusChange }: TerminalPageProps = {}) {
+export default function TerminalPage({
+  terminalKey,
+  embedded = false,
+  visible = true,
+  onStatusChange,
+}: TerminalPageProps = {}) {
   const storageKey = terminalKey ? runnerStorageKey(`vibemobile.terminalId.${terminalKey}`) : ID_KEY
   const defaultCwd = useWorkspaceStore((state) => state.defaultCwd)
   const workspaceLoaded = useWorkspaceStore((state) => state.loaded)
@@ -86,6 +92,8 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
   /** Flips once the first fit has produced a real geometry. */
   const [sized, setSized] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
   const setCtrl = useCallback((armed: boolean) => {
     ctrlArmedRef.current = armed
@@ -167,7 +175,7 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
     observer.observe(container)
     window.addEventListener('orientationchange', syncSize)
 
-    term.focus()
+    if (visibleRef.current && container.clientHeight) term.focus()
 
     return () => {
       if (sizeFrame !== null) cancelAnimationFrame(sizeFrame)
@@ -307,6 +315,10 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
   // Keepalive: phones drop idle sockets aggressively, and a shell that looks
   // alive but is not is worse than one that reconnects.
   useEffect(() => {
+    if (!visible) termRef.current?.blur()
+  }, [visible])
+
+  useEffect(() => {
     const timer = setInterval(() => send({ type: 'ping' }), 45_000)
     return () => clearInterval(timer)
   }, [send])
@@ -345,7 +357,7 @@ export default function TerminalPage({ terminalKey, embedded = false, onStatusCh
         <header className="safe-top shrink-0 border-b border-border bg-background/95 backdrop-blur-xl">
           <ToolbarRow>
             <ToolbarIdentity icon={TerminalIcon} label="终端" />
-            <RunnerSelector compact />
+            {visible && <RunnerSelector compact />}
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${
                 status === 'open' ? 'bg-success' : status === 'connecting' ? 'bg-warning' : 'bg-muted-foreground'

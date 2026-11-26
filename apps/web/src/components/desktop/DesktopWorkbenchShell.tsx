@@ -328,10 +328,13 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   const focusComposer = useCallback(() => {
     editorRef.current?.querySelector<HTMLTextAreaElement>('[data-workbench-composer]')?.focus()
   }, [])
-  const handleCloseAllTabs = useCallback(() => {
-    closeAllTabs()
-    requestAnimationFrame(() => editorRef.current?.focus({ preventScroll: true }))
-  }, [closeAllTabs])
+  const handleCloseAllTabs = useCallback(
+    (id: string) => {
+      closeAllTabs(id)
+      requestAnimationFrame(() => editorRef.current?.focus({ preventScroll: true }))
+    },
+    [closeAllTabs],
+  )
 
   const previewSplitRatio = useCallback((ratio: number | null) => {
     const style = editorRef.current?.style

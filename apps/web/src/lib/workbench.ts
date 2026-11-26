@@ -188,7 +188,7 @@ export interface WorkbenchState extends PersistedWorkbench {
   openSettingsTab: () => void
   updateChatTabMeta: (threadId: string, meta: { title?: string; provider?: ProviderId; status?: SessionStatus }) => void
   closeTab: (id: string) => void
-  closeAllTabs: () => void
+  closeAllTabs: (id: string) => void
   setActiveTab: (id: string) => void
   setSecondaryTab: (id: string | null) => void
   toggleSplit: () => void
@@ -369,7 +369,21 @@ export const useWorkbenchStore = create<WorkbenchState>((set) => {
         return { tabs, ...selectionAfterClose(state.tabs, index, state) }
       }),
 
-    closeAllTabs: () => commit(() => ({ tabs: [], ...tabSelection(null), settingsReturn: null })),
+    closeAllTabs: (id) =>
+      commit((state) => {
+        const target = state.tabs.find((tab) => tab.id === id)
+        if (!target || target.kind === 'settings') return {}
+        const tabs = state.tabs.filter((tab) => tab.kind === 'settings' || !samePane(target, tab))
+        if (state.activeTabId === 'settings') {
+          return { tabs, settingsReturn: restoreSelection(tabs, state.settingsReturn) }
+        }
+        const selection = restoreSelection(tabs, state)
+        return {
+          tabs,
+          ...tabSelection(selection?.activeTabId ?? tabs[0]?.id ?? null, selection?.secondaryTabId),
+          settingsReturn: null,
+        }
+      }),
 
     setActiveTab: (id) =>
       commit((state) => {

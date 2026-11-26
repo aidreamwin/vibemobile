@@ -1,23 +1,8 @@
 .desktop-workbench {
-  --background: #191c22;
-  --foreground: #edf1f8;
-  --card: #21252d;
-  --popover: #252a34;
-  --primary: #a5c7ff;
-  --primary-foreground: #142440;
-  --secondary: #2a303b;
-  --muted: #252b35;
-  --muted-foreground: #a0aabb;
-  --accent: #303a4b;
-  --border: #343b48;
-  --input: #3b4556;
-  --ring: #a5c7ff;
-  --raised: #353e4d;
-  --raised-hover: #404c60;
-  --workbench-rail: #1b1f27;
-  --workbench-sidebar: #20252e;
-  --workbench-toolbar: #222730;
-  --workbench-selection: #2c3b53;
+  --workbench-rail: var(--background);
+  --workbench-sidebar: var(--card);
+  --workbench-toolbar: var(--card);
+  --workbench-selection: var(--secondary);
   color-scheme: dark;
 }
 
@@ -28,7 +13,7 @@
 
 .desktop-workbench :where(.scroll-y, .scroll-x) {
   scrollbar-width: thin;
-  scrollbar-color: #485366 transparent;
+  scrollbar-color: var(--raised-hover) transparent;
 }
 
 .workbench-icon {

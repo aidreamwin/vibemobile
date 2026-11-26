@@ -117,6 +117,13 @@ beforeAll(async () => {
     app.get('/api/images/picture.png', (_req, reply) =>
       reply.header('cache-control', 'private, max-age=31536000, immutable').type('image/png').send(image),
     )
+    app.get('/api/files/image', (_req, reply) =>
+      reply
+        .header('cache-control', 'private, max-age=0')
+        .header('x-content-type-options', 'nosniff')
+        .type('image/png')
+        .send(image),
+    )
     app.get('/ws', { websocket: true }, (ws) => {
       ws.send(JSON.stringify({ type: 'hello', runner: index, approvalId: 'same-approval' }))
       ws.on('message', (raw) => {
@@ -372,6 +379,17 @@ describe('distributed Hub and two reverse runners', () => {
     expect(response.headers['content-type']).toBe('image/png')
     expect(response.headers['cache-control']).toContain('private')
     expect(response.headers['cache-control']).toContain('immutable')
+  })
+
+  it('forwards authenticated workspace image previews with their original bytes and headers', async () => {
+    const url = '/r/r0/api/files/image?path=D%3A%5Cworkspace%5Cpicture.png&refresh=1'
+    expect((await hub.inject(url)).statusCode).toBe(401)
+    const response = await hub.inject({ url, headers: { cookie } })
+    expect(response.statusCode).toBe(200)
+    expect(response.rawPayload).toEqual(image)
+    expect(response.headers['content-type']).toBe('image/png')
+    expect(response.headers['cache-control']).toBe('private, max-age=0')
+    expect(response.headers['x-content-type-options']).toBe('nosniff')
   })
 
   it('isolates chat and approval traffic between machines', async () => {

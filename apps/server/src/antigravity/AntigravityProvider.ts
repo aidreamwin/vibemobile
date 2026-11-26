@@ -507,7 +507,8 @@ export class AntigravityProvider implements AgentProvider {
           ),
         )
     }
-    if (gateway && opts.model && session.summary.model !== opts.model) {
+    const appliedModel = selectOption(session.options, 'model')
+    if (gateway && modelId && (appliedModel?.type !== 'select' || appliedModel.currentValue !== modelId)) {
       session.stale = true
       throw clientError('Antigravity CLI 未应用选定的供应商模型。', 502)
     }
@@ -840,8 +841,8 @@ export class AntigravityProvider implements AgentProvider {
     if (session.starting || session.history.live) throw clientError('此 Antigravity 会话正在运行。', 409)
     session.starting = true
     try {
-      const prompt = promptBlocks(input, Boolean(session.client.info.agentCapabilities?.promptCapabilities?.image))
       await this.#selectForTurn(session, opts)
+      const prompt = promptBlocks(input, Boolean(session.client.info.agentCapabilities?.promptCapabilities?.image))
       const { connection } = session.client
       if (this.#opened.get(id) !== session || connection.signal.aborted) throw new Error('Antigravity CLI 已断开连接。')
       session.history.live = true

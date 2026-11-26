@@ -1,4 +1,4 @@
-import type { FileContent } from '@vibemobile/protocol'
+import type { FileContent, FileEntry } from '@vibemobile/protocol'
 import { api, ApiError } from './api'
 
 // This module belongs to the current runner. Switching runners reloads the app.
@@ -6,6 +6,10 @@ const MAX_FILES = 12
 const FRESH_MS = 2_000
 const snapshots = new Map<string, { content: FileContent; fetchedAt: number }>()
 const pending = new Map<string, Promise<FileContent>>()
+const MAX_DIRECTORIES = 12
+const DIRECTORY_FRESH_MS = 5_000
+const directories = new Map<string, { entries: FileEntry[]; fetchedAt: number }>()
+const pendingDirectories = new Map<string, Promise<FileEntry[]>>()
 
 export function getFileSnapshot(path: string): FileContent | null {
   return snapshots.get(path)?.content ?? null
@@ -24,6 +28,61 @@ export function rememberFileSnapshot(path: string, content: FileContent) {
 export function clearFileSnapshots() {
   snapshots.clear()
   pending.clear()
+  directories.clear()
+  pendingDirectories.clear()
+}
+
+export function getDirectorySnapshot(path: string): FileEntry[] | null {
+  return directories.get(path)?.entries ?? null
+}
+
+export function invalidateDirectorySnapshot(path: string) {
+  directories.delete(path)
+  pendingDirectories.delete(path)
+}
+
+export function readDirectorySnapshot(path: string, force = false): Promise<FileEntry[]> {
+  const inFlight = pendingDirectories.get(path)
+  if (inFlight) return inFlight
+
+  const cached = directories.get(path)
+  if (cached) {
+    directories.delete(path)
+    directories.set(path, cached)
+    if (!force && Date.now() - cached.fetchedAt < DIRECTORY_FRESH_MS) return Promise.resolve(cached.entries)
+  }
+
+  const request = api.files(path).then(
+    ({ data }) => {
+      if (pendingDirectories.get(path) !== request) return getDirectorySnapshot(path) ?? data
+      pendingDirectories.delete(path)
+      const previous = directories.get(path)?.entries
+      // Retain row identities so background refresh doesn't redraw identical entries.
+      const byPath = new Map(previous?.map((entry) => [entry.path, entry]))
+      const next = data.map((entry) => {
+        const old = byPath.get(entry.path)
+        return old?.name === entry.name && old.type === entry.type && old.size === entry.size ? old : entry
+      })
+      const entries =
+        previous?.length === next.length && previous.every((entry, index) => entry === next[index]) ? previous : next
+      directories.delete(path)
+      directories.set(path, { entries, fetchedAt: Date.now() })
+      if (directories.size > MAX_DIRECTORIES) {
+        const oldest = directories.keys().next().value
+        if (oldest !== undefined) directories.delete(oldest)
+      }
+      return entries
+    },
+    (error: unknown) => {
+      if (pendingDirectories.get(path) === request) {
+        pendingDirectories.delete(path)
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) directories.delete(path)
+      }
+      throw error
+    },
+  )
+  pendingDirectories.set(path, request)
+  return request
 }
 
 export function readFileSnapshot(path: string, force = false): Promise<FileContent> {

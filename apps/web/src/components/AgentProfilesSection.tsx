@@ -20,6 +20,7 @@ import type {
   NativeAgentProfile,
 } from '@vibemobile/protocol'
 import { api } from '../lib/api'
+import { clearProviderSnapshot } from '../lib/providerSnapshot'
 import { agentProfileErrorLabel } from '../lib/agentProfileErrors'
 import SelectField from './SelectField'
 import Sheet from './Sheet'
@@ -192,6 +193,7 @@ export default function AgentProfilesSection({
     setError(null)
     try {
       setData(await run())
+      clearProviderSnapshot()
       onChanged?.()
       if (close) setPanel(null)
     } catch (err) {

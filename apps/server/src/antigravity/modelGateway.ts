@@ -15,14 +15,22 @@ export function supplierModels(profile?: StoredAgentProfile) {
   return [...new Set([profile?.model, ...(profile?.models ?? [])].filter((id): id is string => Boolean(id)))]
 }
 
-// ACP canonicalizes known model IDs before making HTTP requests (neon-low becomes neon).
-// Stable, distinct ACP IDs also let concurrent sessions use different supplier variants.
+// Stable aliases preserve supplier variants that ACP otherwise canonicalizes.
+// agy 1.5.17 also uses the Gemini prefix to recognize vision-capable models.
 export function acpModelId(model: string) {
-  return `vm-${createHash('sha256').update(model).digest('hex')}`
+  return `gemini-vm-${createHash('sha256').update(model).digest('hex')}`
 }
 
 export async function startModelGateway(profile: StoredAgentProfile, models: string[]) {
-  const byAcpId = new Map(models.map((id) => [acpModelId(id), id]))
+  const byAcpId = new Map(
+    models.flatMap((id) => {
+      const alias = acpModelId(id)
+      return [
+        [alias, id],
+        [alias.slice('gemini-'.length), id],
+      ] as const
+    }),
+  )
   const catalog = JSON.stringify({
     models: models.map((id) => ({
       name: `models/${acpModelId(id)}`,
@@ -44,9 +52,10 @@ export async function startModelGateway(profile: StoredAgentProfile, models: str
       res.writeHead(200, { 'content-type': 'application/json' }).end(catalog)
       return
     }
-    const match = /^\/v1beta\/models\/(vm-[a-f0-9]+):(streamGenerateContent|generateContent|countTokens)$/.exec(
-      pathname,
-    )
+    const match =
+      /^\/v1beta\/models\/((?:gemini-)?vm-[a-f0-9]+):(streamGenerateContent|generateContent|countTokens)$/.exec(
+        pathname,
+      )
     const model = match && byAcpId.get(match[1])
     if (req.method !== 'POST' || !match || !model) {
       res.writeHead(404).end()

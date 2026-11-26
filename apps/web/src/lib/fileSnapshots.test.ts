@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FileContent } from '@vibemobile/protocol'
+import type { FileContent, FileEntry } from '@vibemobile/protocol'
 import { api, ApiError } from './api'
-import { clearFileSnapshots, getFileSnapshot, readFileSnapshot, rememberFileSnapshot } from './fileSnapshots'
+import {
+  clearFileSnapshots,
+  getDirectorySnapshot,
+  getFileSnapshot,
+  invalidateDirectorySnapshot,
+  readDirectorySnapshot,
+  readFileSnapshot,
+  rememberFileSnapshot,
+} from './fileSnapshots'
 
 const path = '/example.ts'
 const initial: FileContent = { path, text: 'initial', rev: '1', bytes: 7, truncated: false }
@@ -62,5 +70,71 @@ describe('file snapshots', () => {
     resolve(initial)
     await pending
     expect(getFileSnapshot(path)).toBeNull()
+  })
+})
+
+describe('directory snapshots', () => {
+  const root = '/workspace'
+  const entries: FileEntry[] = [
+    { path: '/workspace/main.ts', name: 'main.ts', type: 'file', size: 5 },
+    { path: '/workspace/next', name: 'next', type: 'directory' },
+  ]
+
+  it('deduplicates concurrent requests, uses a fresh directory and preserves identical row references', async () => {
+    vi.useFakeTimers()
+    const request = vi.spyOn(api, 'files').mockImplementation(async () => ({
+      data: entries.map((entry) => ({ ...entry })),
+    }))
+    const pending = readDirectorySnapshot(root)
+    expect(readDirectorySnapshot(root)).toBe(pending)
+    const snapshot = await pending
+    expect(await readDirectorySnapshot(root)).toBe(snapshot)
+    expect(request).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(5_001)
+    expect(await readDirectorySnapshot(root)).toBe(snapshot)
+    expect(request).toHaveBeenCalledTimes(2)
+
+    request.mockResolvedValue({ data: [{ ...entries[0], size: 10 }, { ...entries[1] }] })
+    const refreshed = await readDirectorySnapshot(root, true)
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(refreshed[0]).not.toBe(snapshot[0])
+    expect(refreshed[1]).toBe(snapshot[1])
+    expect(refreshed[0].size).toBe(10)
+  })
+
+  it('invalidates a directory when saved file metadata changes and when access is revoked', async () => {
+    const request = vi.spyOn(api, 'files').mockResolvedValue({ data: entries })
+    await readDirectorySnapshot(root)
+    invalidateDirectorySnapshot(root)
+    expect(getDirectorySnapshot(root)).toBeNull()
+    await readDirectorySnapshot(root)
+    expect(request).toHaveBeenCalledTimes(2)
+
+    request.mockRejectedValue(new ApiError('forbidden', 403))
+    await expect(readDirectorySnapshot(root, true)).rejects.toThrow('forbidden')
+    expect(getDirectorySnapshot(root)).toBeNull()
+  })
+
+  it('does not let a cleared or invalidated request repopulate the cache', async () => {
+    let finish!: (response: { data: FileEntry[] }) => void
+    const request = vi.spyOn(api, 'files').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const pending = readDirectorySnapshot(root)
+    invalidateDirectorySnapshot(root)
+    finish({ data: entries })
+    await pending
+    expect(getDirectorySnapshot(root)).toBeNull()
+
+    const afterInvalidation = readDirectorySnapshot(root)
+    clearFileSnapshots()
+    finish({ data: entries })
+    await afterInvalidation
+    expect(getDirectorySnapshot(root)).toBeNull()
+    expect(request).toHaveBeenCalledTimes(2)
   })
 })
