@@ -1,6 +1,11 @@
 /** Helpers shared by the settings-page runner manager. */
 import { ApiError } from './api'
 
+/** One credential for the interactive CLI installer. */
+export function runnerConnectionToken(id: string, token: string): string {
+  return `${id}:${token}`
+}
+
 /** The two variables a remote runner needs, copied as one block. */
 export function runnerEnvBlock(id: string, token: string): string {
   return `VIBEMOBILE_RUNNER_ID=${id}\nVIBEMOBILE_RUNNER_TOKEN=${token}`

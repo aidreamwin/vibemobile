@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'
-import { runnerAdminError, runnerEnvBlock } from './runnerAdmin'
+import { runnerAdminError, runnerConnectionToken, runnerEnvBlock } from './runnerAdmin'
 
 describe('runner admin helpers', () => {
+  it('combines the ID and token for the one-line installer', () => {
+    expect(runnerConnectionToken('runner-abc', 'deadbeef')).toBe('runner-abc:deadbeef')
+  })
+
   it('builds the exact env lines copied to the runner machine', () => {
     expect(runnerEnvBlock('runner-abc', 'deadbeef')).toBe(
       'VIBEMOBILE_RUNNER_ID=runner-abc\nVIBEMOBILE_RUNNER_TOKEN=deadbeef',

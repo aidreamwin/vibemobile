@@ -778,7 +778,9 @@ export class ClaudeProvider extends EventEmitter implements AgentProvider {
       // why a restart put every session back on the CLI's default model.
       model: remembered?.model ?? null,
       contextWindow:
-        remembered?.contextModel === remembered?.model ? remembered?.contextWindow : this.#profileContextWindow(remembered?.model),
+        remembered?.contextModel === remembered?.model
+          ? remembered?.contextWindow
+          : this.#profileContextWindow(remembered?.model),
       effort: remembered?.effort ?? null,
       // Restored for the same reason the two above are, and it is the one that
       // was reported as a bug: a session set to 完全访问 came back on the

@@ -1,5 +1,7 @@
 # PM2 部署包、更新包与 runner 包
 
+首次部署与日常升级推荐使用 [一键安装命令](quick-install.md)，自动下载校验发布包、准备依赖、启动 PM2。本页说明手工打包和部署细节。
+
 三个产物都由 `npm run release` 在**构建机**上生成，分发到**目标机**后再安装。包里是纯源码和 Node 脚本：没有 `node_modules`、没有 `dist`、没有 Codex CLI，也没有任何证书或 PIN。原因很直接 —— `node-pty` 是原生模块、Codex CLI 和 Claude CLI 都是按平台解析的，只有目标机自己执行 `npm ci` 才能装对。
 
 | 包 | 用途 | 目标机执行 |

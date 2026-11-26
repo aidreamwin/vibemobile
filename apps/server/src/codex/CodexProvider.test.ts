@@ -397,7 +397,13 @@ it('logs model metadata fallback warnings without reporting a failed turn', asyn
     expect(listener).not.toHaveBeenCalled()
 
     client.emit('notification', 'error', { threadId, turnId, error: { message: '503 unavailable' }, willRetry: false })
-    expect(listener).toHaveBeenCalledWith({ kind: 'error', threadId, turnId, message: '503 unavailable', willRetry: false })
+    expect(listener).toHaveBeenCalledWith({
+      kind: 'error',
+      threadId,
+      turnId,
+      message: '503 unavailable',
+      willRetry: false,
+    })
   } finally {
     clientEvents.mockRestore()
     await provider.stop()

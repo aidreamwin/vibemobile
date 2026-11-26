@@ -6,6 +6,7 @@
  * A stale writer must not overwrite a newer job.
  */
 import fs from 'node:fs'
+import path from 'node:path'
 import { writeAtomic } from './common.mjs'
 
 const TERMINAL = new Set(['succeeded', 'failed', 'rolled_back'])
@@ -44,4 +45,34 @@ export function isPidAlive(pid) {
   } catch (error) {
     return error.code === 'EPERM'
   }
+}
+
+/** Serialize installations and updates that write the same deployment root. */
+export function lockInstall(root) {
+  const file = path.join(root, 'install.lock')
+  const owner = JSON.stringify({ pid: process.pid })
+  try {
+    fs.writeFileSync(file, owner, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    const current = fs.readFileSync(file, 'utf8')
+    let pid
+    try {
+      pid = JSON.parse(current).pid
+    } catch {
+      // Another process may still be writing its PID.
+    }
+    if (!Number.isInteger(pid) || isPidAlive(pid) || fs.readFileSync(file, 'utf8') !== current) {
+      throw new Error(`An installation or update is already in progress: ${root}`)
+    }
+    fs.unlinkSync(file)
+    fs.writeFileSync(file, owner, { flag: 'wx', mode: 0o600 })
+  }
+  process.once('exit', () => {
+    try {
+      if (fs.readFileSync(file, 'utf8') === owner) fs.unlinkSync(file)
+    } catch {
+      // Best effort after a failed or interrupted installation.
+    }
+  })
 }

@@ -112,7 +112,9 @@ NSSM 是代持服务的：node 崩溃时它会立刻重试拉起，SCM 仍显示
 
 ## 方式三：PM2（Linux/macOS 后台常驻）
 
-推荐直接用发布包：
+推荐使用 [GitHub Release 一键安装](quick-install.md)。自动准备依赖、安装和启动，重复执行可升级已有部署。
+
+手动构建发布包：
 
 ```bash
 npm run release

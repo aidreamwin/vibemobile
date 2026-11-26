@@ -169,6 +169,75 @@ export function pm2BinPath() {
 
 /** PM2 is commonly installed globally; resolve its JS entry to avoid .cmd. */
 export function runPm2(args, options = {}) {
+  // PM2 exposes application metadata as environment variables. When a command
+  // is launched inside a managed app (including our updater), PM2 can merge
+  // these values into a new application and override its name, cwd and script.
+  const managed =
+    process.env.pm_id !== undefined || process.env.NODE_APP_INSTANCE !== undefined || process.env.pm_exec_path
+  if (managed) {
+    const metadata = new Set([
+      'name',
+      'namespace',
+      'cwd',
+      'script',
+      'args',
+      'interpreter',
+      'exec_interpreter',
+      'exec_mode',
+      'node_args',
+      'instances',
+      'instance_var',
+      'NODE_APP_INSTANCE',
+      'status',
+      'created_at',
+      'version',
+      'username',
+      'time',
+      'unique_id',
+      'windowsHide',
+      'autorestart',
+      'autostart',
+      'max_restarts',
+      'restart_delay',
+      'restart_time',
+      'unstable_restarts',
+      'prev_restart_delay',
+      'kill_timeout',
+      'kill_retry_time',
+      'shutdown_with_message',
+      'treekill',
+      'merge_logs',
+      'log_date_format',
+      'out_file',
+      'error_file',
+      'log_file',
+      'watch',
+      'ignore_watch',
+      'watch_options',
+      'versioning',
+      'vizion',
+      'vizion_running',
+      'pmx',
+      'pmx_module',
+      'automation',
+      'exit_code',
+      'filter_env',
+      'stop_exit_codes',
+      'max_memory_restart',
+      'min_uptime',
+      'wait_ready',
+      'listen_timeout',
+    ])
+    const inherited = Object.keys(process.env).filter(
+      (key) =>
+        metadata.has(key) ||
+        key.startsWith('pm_') ||
+        key.startsWith('axm_') ||
+        (args[0] === 'start' &&
+          (/^VIBEMOBILE_/.test(key) || ['PORT', 'CODEX_PORT', 'OPENCODE_PORT', 'CODEX_WS_URL'].includes(key))),
+    )
+    options = { ...options, unset: [...(options.unset ?? []), ...inherited] }
+  }
   const bin = pm2BinPath()
   if (bin) return run(process.execPath, [bin, ...args], options)
   return runShellLine('pm2', args, options)
@@ -209,7 +278,11 @@ export function writeAtomic(file, content, mode = 0o600) {
 
 function unquote(value) {
   if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value.slice(1, -1)
+    }
   }
   if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1)
   return value
@@ -455,8 +528,12 @@ export function pm2Delete(name) {
   if (result.status === 0) reapWindowsDescendants(descendants)
 }
 
-export function pm2Start({ ecosystemFile, cwd }) {
+export function pm2Start({ ecosystemFile, cwd, name, releaseDir }) {
   runPm2(['start', ecosystemFile, '--update-env'], { cwd })
+  const app = pm2Describe(name)
+  if (!app || (releaseDir && path.relative(releaseDir, app.pm2_env?.pm_cwd ?? '') !== '')) {
+    fail(`PM2 did not start ${name} from the expected release directory`)
+  }
   runPm2(['save'])
 }
 
@@ -477,4 +554,45 @@ export function readRelease(root) {
 
 export function sanitizeSegment(value) {
   return String(value).replace(/[^\w.-]+/g, '-')
+}
+
+export function releaseStamp(release, role) {
+  return sanitizeSegment(
+    [
+      release.serverVersion,
+      role === 'hub' && release.webVersion ? `w${release.webVersion}` : null,
+      release.commit ?? 'unknown',
+    ]
+      .filter(Boolean)
+      .join('-'),
+  )
+}
+
+export function ecosystemCwd(source) {
+  const match = source?.match(/\bcwd:\s*("(?:[^"\\]|\\.)*")/)
+  if (!match) return null
+  try {
+    return path.resolve(JSON.parse(match[1]))
+  } catch {
+    return null
+  }
+}
+
+export function writeActiveRelease(installDir, releaseDir, release, previous, noStart) {
+  writeAtomic(
+    path.join(installDir, 'active-release.json'),
+    `${JSON.stringify(
+      {
+        active: releaseDir,
+        previous: previous && path.resolve(previous) !== releaseDir ? previous : null,
+        commit: release.commit ?? null,
+        serverVersion: release.serverVersion ?? null,
+        webVersion: release.webVersion ?? null,
+        updatedAt: new Date().toISOString(),
+        manager: noStart ? 'none' : 'pm2',
+      },
+      null,
+      2,
+    )}\n`,
+  )
 }

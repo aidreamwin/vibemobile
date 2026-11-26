@@ -87,7 +87,21 @@ VibeMobile 是一个开源的、面向移动端的 AI Coding Agent 控制平台�
   <img src="docs/media/webp/VibeMobileHubRunner.webp" width="1200" alt="VibeMobile Hub 与多 Runner 架构：手机通过 Hub 统一管理并切换多台运行 AI Coding Agent 的机器。" />
 </p>
 
-要求 **Node.js 20+**（推荐 22），npm，以及至少一个已登录的代理 CLI。
+### 一键安装（推荐）
+
+在需要管理的项目目录运行。
+
+```sh
+# Hub：自动安装、构建并启动，输出地址和 PIN
+curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/hub-install.sh | sh
+
+# Runner：输入 Hub 地址与设置页生成的连接令牌
+curl -LsSf https://github.com/aidreamwin/vibemobile/releases/latest/download/runner-install.sh | sh
+```
+
+重复执行同一命令即可交互升级。Windows PowerShell 命令、自定义目录与端口见 [一键安装与升级](docs/quick-install.md)。首次使用前按需登录代理 CLI。
+
+手动部署要求 **Node.js 20+**（推荐 22）和 npm。
 
 在对应的 runner 上安装支持 ACP 的 **Antigravity CLI**（`agy`），然后启动或重启 runner。
 服务会在 `PATH` 和官方安装位置查找 CLI，也可以通过 `ANTIGRAVITY_BIN` 指定可执行文件。
@@ -122,7 +136,7 @@ docker compose logs -f
 完整步骤和验证判据见 [docs/deployment.md](docs/deployment.md)：
 
 - Windows：`scripts\windows\install-service.bat`
-- Linux/macOS：`npm run release` + `deploy/install.mjs`
+- Linux/macOS：一键安装或使用 `npm run release` + `deploy/install.mjs`
 - 多机器：[docs/multi-runner.md](docs/multi-runner.md)
 
 ## 开发

@@ -12,12 +12,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  ecosystemCwd,
   ecosystemSource,
   ensureDir,
   fail,
   generatedPin,
   hasCommand,
-  isWindows,
   log,
   nodeMajor,
   npmCliPath,
@@ -32,16 +32,17 @@ import {
   readRelease,
   run,
   runNpm,
-  sanitizeSegment,
+  releaseStamp,
   step,
   waitForHub,
   waitForPortListening,
   waitForPortsFree,
   warn,
+  writeActiveRelease,
   writeAtomic,
   copyTree,
 } from './lib/common.mjs'
-import { updateJob } from './lib/job.mjs'
+import { lockInstall, updateJob } from './lib/job.mjs'
 
 const SOURCE = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const args = parseArgs()
@@ -102,15 +103,7 @@ const tls = env.VIBEMOBILE_HUB_TLS === 'on'
 const stateDir = path.resolve(env.VIBEMOBILE_STATE_DIR ?? path.join(TARGET, 'data', role === 'hub' ? 'hub' : 'state'))
 const certDir = path.join(TARGET, 'data', 'certs')
 
-const stamp = sanitizeSegment(
-  [
-    sourceRelease.serverVersion,
-    role === 'hub' && sourceRelease.webVersion ? `w${sourceRelease.webVersion}` : null,
-    sourceRelease.commit ?? 'unknown',
-  ]
-    .filter(Boolean)
-    .join('-'),
-)
+const stamp = releaseStamp(sourceRelease, role)
 const releaseDir = path.join(TARGET, 'releases', stamp)
 const ecosystemFile = path.join(TARGET, 'ecosystem.config.cjs')
 const activeFile = path.join(TARGET, 'active-release.json')
@@ -142,6 +135,7 @@ for (const [key, value] of Object.entries({
 if (nodeMajor() < 20) fail(`Node >= 20 is required, found ${process.versions.node}`)
 if (!npmCliPath() && !hasCommand('npm')) fail('npm not found')
 if (!dryRun && !noStart && !pm2Available()) fail('PM2 is not available to the current user')
+if (!dryRun) lockInstall(TARGET)
 
 const oldEcosystem = fs.existsSync(ecosystemFile) ? fs.readFileSync(ecosystemFile, 'utf8') : null
 const previousDir = ecosystemCwd(oldEcosystem)
@@ -219,22 +213,18 @@ ok(`new build: server ${built?.version ?? 'unknown'} ${built?.commit ?? '(no git
 
 // --------------------------------------------------------------- swap
 
-step('Writing the new ecosystem file')
 ensureDir(logsDir)
-writeAtomic(
-  ecosystemFile,
-  ecosystemSource({
-    name: pm2Name,
-    cwd: releaseDir,
-    script: `apps/server/dist/distributed/${role === 'hub' ? 'hub' : 'runner'}.js`,
-    envFile,
-    outFile: path.join(logsDir, `${role}-out.log`),
-    errorFile: path.join(logsDir, `${role}-err.log`),
-  }),
-)
-ok(`${ecosystemFile} -> ${releaseDir}`)
+const newEcosystem = ecosystemSource({
+  name: pm2Name,
+  cwd: releaseDir,
+  script: `apps/server/dist/distributed/${role === 'hub' ? 'hub' : 'runner'}.js`,
+  envFile,
+  outFile: path.join(logsDir, `${role}-out.log`),
+  errorFile: path.join(logsDir, `${role}-err.log`),
+})
 
 if (noStart) {
+  writeAtomic(ecosystemFile, newEcosystem)
   writeActive(previousDir)
   step('Staged (--no-start). Start when ready:')
   log(`  pm2 delete ${pm2Name}; pm2 start ${ecosystemFile} --update-env; pm2 save`)
@@ -250,15 +240,21 @@ ok(backupDir)
 jobPhase('restarting')
 step('Swapping the PM2 process')
 try {
+  writeAtomic(ecosystemFile, newEcosystem)
+  ok(`${ecosystemFile} -> ${releaseDir}`)
   pm2Delete(pm2Name)
   await waitForPortsFree(
     role === 'hub' ? [hubPort, runnerPort, codexPort, opencodePort] : [runnerPort, codexPort, opencodePort],
   )
-  pm2Start({ ecosystemFile, cwd: TARGET })
+  pm2Start({ ecosystemFile, cwd: TARGET, name: pm2Name, releaseDir })
   jobPhase('healthcheck')
   await healthy()
   writeActive(previousDir)
-  prune()
+  try {
+    prune()
+  } catch (error) {
+    warn(`Could not prune older releases: ${error.message}`)
+  }
   jobPhase('done', 'succeeded')
   step('Updated')
   log(`    active:  ${releaseDir}`)
@@ -280,7 +276,7 @@ try {
       await waitForPortsFree(
         role === 'hub' ? [hubPort, runnerPort, codexPort, opencodePort] : [runnerPort, codexPort, opencodePort],
       )
-      pm2Start({ ecosystemFile, cwd: TARGET })
+      pm2Start({ ecosystemFile, cwd: TARGET, name: pm2Name, releaseDir: previousDir })
       await healthy()
       jobPhase('rolled_back', 'rolled_back')
       ok('rolled back; the previous release is running')
@@ -298,41 +294,17 @@ try {
 
 // -------------------------------------------------------------- helpers
 
-function ecosystemCwd(source) {
-  if (!source) return null
-  const match = source.match(/\bcwd:\s*("(?:[^"\\]|\\.)*")/)
-  if (!match) return null
-  try {
-    const value = JSON.parse(match[1])
-    return path.resolve(value)
-  } catch {
-    return null
-  }
-}
-
 function writeActive(previous) {
-  writeAtomic(
-    activeFile,
-    `${JSON.stringify(
-      {
-        active: releaseDir,
-        previous: previous && path.resolve(previous) !== releaseDir ? previous : null,
-        commit: sourceRelease.commit ?? null,
-        serverVersion: sourceRelease.serverVersion ?? null,
-        webVersion: sourceRelease.webVersion ?? null,
-        updatedAt: new Date().toISOString(),
-        manager: noStart ? 'none' : 'pm2',
-      },
-      null,
-      2,
-    )}\n`,
-    0o600,
-  )
+  writeActiveRelease(TARGET, releaseDir, sourceRelease, previous, noStart)
 }
 
 async function healthy() {
   if (role === 'hub') {
-    await waitForHub({ port: hubPort, tls, caPath: tls ? path.join(certDir, 'ca.pem') : undefined })
+    await waitForHub({
+      port: hubPort,
+      tls,
+      caPath: tls ? (env.VIBEMOBILE_HUB_CA_FILE ?? path.join(certDir, 'ca.pem')) : undefined,
+    })
   } else {
     await waitForPortListening(runnerPort)
   }

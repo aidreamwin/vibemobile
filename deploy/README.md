@@ -2,6 +2,8 @@
 
 这个目录在解压后的发布包里。完整说明见 [`docs/pm2-release.md`](../docs/pm2-release.md)。
 
+GitHub Release 附带 `hub-install.sh`、`runner-install.sh` 及对应的 PowerShell 脚本。默认通过一键安装命令部署，已有安装可交互升级。见 [一键安装与升级](../docs/quick-install.md)。
+
 前提：Node ≥ 20、npm、PM2；Linux 还要 `python3`、`make`、`g++`（`node-pty` 需要现场编译）。用实际运行 PM2 的用户先执行一次 `codex login`（用 Claude 的话再执行一次 `claude`）。
 
 ## Hub

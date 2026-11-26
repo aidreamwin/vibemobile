@@ -229,10 +229,16 @@ export class OpencodeProvider extends EventEmitter implements AgentProvider {
     await this.#fetchModels()
     const profile = this.#opts.connection?.()
     const allowed = profile?.models.length
-      ? new Set(profile.models.map((model) => opencodeProfileModelId(model)).filter((model): model is string => Boolean(model)))
+      ? new Set(
+          profile.models
+            .map((model) => opencodeProfileModelId(model))
+            .filter((model): model is string => Boolean(model)),
+        )
       : null
     const visible = allowed
-      ? this.#models.filter((model) => model.info.providerID === OPENCODE_PROFILE_PROVIDER && allowed.has(model.info.modelID))
+      ? this.#models.filter(
+          (model) => model.info.providerID === OPENCODE_PROFILE_PROVIDER && allowed.has(model.info.modelID),
+        )
       : this.#models
     const configured = opencodeProfileModelId(profile?.model)
     const ordered =

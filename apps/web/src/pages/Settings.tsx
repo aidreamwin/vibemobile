@@ -36,7 +36,7 @@ import { agentStatus } from '../lib/agentStatus'
 import { runnerId, runnerSwitchUrl } from '../lib/runner'
 import { clearRunnerSnapshot, getRunnerSnapshot, readRunnerSnapshot } from '../lib/runnerSnapshot'
 import { clearProviderSnapshot, readProviderSnapshot } from '../lib/providerSnapshot'
-import { runnerAdminError, runnerEnvBlock } from '../lib/runnerAdmin'
+import { runnerAdminError, runnerConnectionToken, runnerEnvBlock } from '../lib/runnerAdmin'
 import { WEB_BUILD, buildLabel, builtAtLabel, halvesDiverge, serverRestartPending, uptimeLabel } from '../lib/build'
 import { socket, type ConnectionState } from '../lib/ws'
 import { useWorkbenchStore } from '../lib/workbench'
@@ -132,7 +132,7 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   const [runnerName, setRunnerName] = useState('')
   const [runnerBusy, setRunnerBusy] = useState(false)
   const [runnerSheetError, setRunnerSheetError] = useState<string | null>(null)
-  const [runnerCopied, setRunnerCopied] = useState(false)
+  const [runnerCopied, setRunnerCopied] = useState<'connection' | 'env' | null>(null)
 
   const showingSystem = !embedded || section === 'system'
   const showingRunners = !embedded || section === 'runners'
@@ -213,7 +213,7 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
   function closeRunnerSheet() {
     setRunnerSheet(null)
     setRunnerSheetError(null)
-    setRunnerCopied(false)
+    setRunnerCopied(null)
   }
 
   async function createRunner() {
@@ -225,7 +225,7 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
       const created = await api.createRunner(name)
       await reloadRunners().catch(() => undefined)
       setRunnerName('')
-      setRunnerCopied(false)
+      setRunnerCopied(null)
       setRunnerSheet({ kind: 'secret', id: created.id, name: created.name, token: created.token, source: 'created' })
     } catch (error) {
       setRunnerSheetError(runnerAdminError(error))
@@ -241,7 +241,7 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
     try {
       const rotated = await api.refreshRunnerToken(runner.id)
       await reloadRunners().catch(() => undefined)
-      setRunnerCopied(false)
+      setRunnerCopied(null)
       setRunnerSheet({ kind: 'secret', id: rotated.id, name: rotated.name, token: rotated.token, source: 'rotated' })
     } catch (error) {
       setRunnerSheetError(runnerAdminError(error))
@@ -267,12 +267,13 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
     }
   }
 
-  async function copyRunnerEnv() {
+  async function copyRunnerCredentials(format: 'connection' | 'env') {
     if (runnerSheet?.kind !== 'secret') return
     try {
-      await navigator.clipboard.writeText(runnerEnvBlock(runnerSheet.id, runnerSheet.token))
-      setRunnerCopied(true)
-      setTimeout(() => setRunnerCopied(false), 2000)
+      const credential = format === 'connection' ? runnerConnectionToken : runnerEnvBlock
+      await navigator.clipboard.writeText(credential(runnerSheet.id, runnerSheet.token))
+      setRunnerCopied(format)
+      setTimeout(() => setRunnerCopied(null), 2000)
     } catch {
       setRunnerSheetError('复制失败，请手动选择文本复制。')
     }
@@ -593,20 +594,37 @@ export default function Settings({ onLogout, embedded = false }: { onLogout: () 
             <div className="space-y-4 px-4 pt-2 pb-4">
               <p className="text-[12px] text-warning">令牌只显示这一次，关闭后无法再次查看；丢失只能在列表里刷新。</p>
               <pre className="scroll-x rounded-xl border border-border bg-secondary/60 p-3 text-[12px] leading-relaxed text-foreground/90">
-                <code>{runnerEnvBlock(runnerSheet.id, runnerSheet.token)}</code>
+                <code>{runnerConnectionToken(runnerSheet.id, runnerSheet.token)}</code>
               </pre>
               {runnerSheetError && <p className="text-[12px] text-destructive">{runnerSheetError}</p>}
               <Button
                 type="button"
-                onClick={() => void copyRunnerEnv()}
+                onClick={() => void copyRunnerCredentials('connection')}
                 className="tap h-auto w-full py-3.5 text-[15px]"
               >
-                {runnerCopied ? '已复制' : '复制 ID 和令牌'}
+                {runnerCopied === 'connection' ? '已复制' : '复制连接令牌'}
               </Button>
               <p className="text-[12px] text-muted-foreground">
-                把这两行写进执行机的 .env.runner，然后运行{' '}
-                <code>docker compose -f docker-compose.runner.yml up -d</code>。
+                在执行机运行 Runner 安装命令，按提示输入 Hub 地址并粘贴连接令牌。
               </p>
+              <p className="break-all text-[12px] text-muted-foreground">Hub 地址 {window.location.origin}</p>
+              <details className="space-y-3 text-[12px] text-muted-foreground">
+                <summary className="cursor-pointer">Docker / 手动配置</summary>
+                <pre className="scroll-x rounded-lg bg-secondary/60 p-3 text-foreground/90">
+                  <code>{runnerEnvBlock(runnerSheet.id, runnerSheet.token)}</code>
+                </pre>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void copyRunnerCredentials('env')}
+                  className="tap h-auto w-full py-3 text-[13px]"
+                >
+                  {runnerCopied === 'env' ? '已复制' : '复制环境变量'}
+                </Button>
+                <p>
+                  写入 .env.runner 后运行 <code>docker compose -f docker-compose.runner.yml up -d</code>。
+                </p>
+              </details>
               <Button
                 type="button"
                 variant="secondary"

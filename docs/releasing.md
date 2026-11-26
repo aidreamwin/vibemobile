@@ -46,11 +46,24 @@ npm run test:approval
 
 ## 打包
 
+GitHub Actions 的 [Release 工作流](../.github/workflows/release.yml) 在推送仓库级版本标签后自动检查代码、构建并发布 GitHub Release。也可在 Actions 页面指定已有标签手动触发。
+
+在 [公开仓库](https://github.com/aidreamwin/vibemobile) 的工作副本中提交变更并标记版本。
+
+```bash
+git push origin main
+git tag v0.1.62-0.1.103
+git push origin v0.1.62-0.1.103
+```
+
+Release 资产包括 Hub、Runner、Update 三类 tar.gz，`manifest.json`、`SHA256SUMS` 和两种角色的 `.sh`、`.ps1` 安装脚本。工作流根据当前 GitHub 仓库及标签生成下载地址，全部资产上传成功后发布为 Latest。用户通过 [一键安装命令](quick-install.md) 获取最新版本。
+
 ```bash
 npm run release                       # 全部三类包
 npm run release -- --kind=runner      # 只打 runner
 npm run release -- --allow-dirty      # 允许未提交改动（不推荐）
 npm run release -- --skip-verify      # 跳过测试/构建（不推荐）
+npm run release -- --release-url=https://github.com/aidreamwin/vibemobile/releases/download/v0.1.62-0.1.103
 ```
 
 产物在 `release/`（已 gitignore），包含纯源码和安装脚本；`node_modules`、

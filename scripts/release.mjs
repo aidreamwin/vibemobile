@@ -5,6 +5,7 @@
  *   npm run release -- --kind=runner      # only the runner package
  *   npm run release -- --allow-dirty      # include uncommitted work
  *   npm run release -- --skip-verify      # skip tests/build (not recommended)
+ *   npm run release -- --release-url=https://github.com/owner/repo/releases/download/v1.0.0
  *
  * Artifacts contain source only. `node_modules`, `dist` and every secret are
  * excluded, and the actual `npm ci` + build happens on the target machine so
@@ -12,7 +13,6 @@
  */
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -25,7 +25,28 @@ const allowDirty = flag('allow-dirty')
 const skipVerify = flag('skip-verify')
 const force = flag('force')
 const keepStage = flag('keep-stage')
+const releaseUrl = one(args['release-url'])
 const targets = ['linux-x64', 'win32-x64', 'linux-arm64']
+
+let downloadBase
+if (releaseUrl !== undefined) {
+  try {
+    downloadBase = new URL(`${String(releaseUrl).replace(/\/+$/, '')}/`)
+    const localHttp =
+      downloadBase.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(downloadBase.hostname)
+    if (
+      (!localHttp && downloadBase.protocol !== 'https:') ||
+      downloadBase.username ||
+      downloadBase.password ||
+      downloadBase.search ||
+      downloadBase.hash
+    ) {
+      fail('--release-url must be an HTTPS release asset directory (HTTP is allowed on loopback for testing)')
+    }
+  } catch {
+    fail('invalid --release-url')
+  }
+}
 
 const HUB_ENTRIES = [
   'package.json',
@@ -57,6 +78,7 @@ const HUB_ENTRIES = [
   'scripts/create-runner.mjs',
   'deploy',
   'docs/pm2-release.md',
+  'docs/quick-install.md',
   'docs/hub-tls.md',
   'docs/multi-runner.md',
   'docs/architecture.md',
@@ -176,7 +198,35 @@ if (kind === 'all' || kind === 'runner') {
   }
 }
 
-const sums = artifacts.map((artifact) => `${artifact.sha256}  ${artifact.file}`).join('\n')
+const installers = []
+if (downloadBase) {
+  step('Creating one-line installers')
+  for (const artifact of artifacts.filter(({ key }) => key === 'hub' || key === 'runner')) {
+    const variables = {
+      ROLE: artifact.key,
+      ARCHIVE_URL: new URL(encodeURIComponent(artifact.file), downloadBase).href,
+      ARCHIVE_SHA256: artifact.sha256,
+      NODE_VERSION: process.version,
+    }
+    for (const extension of ['sh', 'ps1']) {
+      const template = fs
+        .readFileSync(path.join(ROOT, 'deploy', `bootstrap.${extension}`), 'utf8')
+        .replace(/\r\n/g, '\n')
+      const source = template.replace(/@([A-Z0-9_]+)@/g, (_, key) => {
+        if (!Object.hasOwn(variables, key)) fail(`unknown installer template variable: ${key}`)
+        const value = variables[key]
+        return extension === 'sh' ? `'${value.replace(/'/g, "'\"'\"'")}'` : `'${value.replace(/'/g, "''")}'`
+      })
+      const file = `${artifact.key}-install.${extension}`
+      const destination = path.join(outDir, file)
+      fs.writeFileSync(destination, source, { mode: 0o755 })
+      installers.push({ file, bytes: fs.statSync(destination).size, sha256: sha256(destination) })
+      ok(file)
+    }
+  }
+}
+
+const sums = [...artifacts, ...installers].map((artifact) => `${artifact.sha256}  ${artifact.file}`).join('\n')
 fs.writeFileSync(path.join(outDir, 'SHA256SUMS'), `${sums}\n`)
 fs.writeFileSync(
   path.join(outDir, 'manifest.json'),
@@ -191,6 +241,9 @@ fs.writeFileSync(
       codexVersion,
       targets,
       artifacts: Object.fromEntries(artifacts.map((artifact) => [artifact.key, artifact])),
+      ...(installers.length
+        ? { installers: Object.fromEntries(installers.map((artifact) => [artifact.file, artifact])) }
+        : {}),
       prerequisites: {
         node: '>=20',
         linuxNativeBuild: ['python3', 'make', 'g++'],
@@ -306,7 +359,7 @@ function copy(relative, source, destination) {
       if (relative === 'deploy' && (child.name === 'node_modules' || child.name.endsWith('.env'))) continue
       // Tests and their fixtures are not part of the runtime; the fixture
       // directory also contains a throwaway private key.
-      if (/\.test\.(ts|tsx|mts)$/.test(child.name)) continue
+      if (/\.test\.(ts|tsx|mts|mjs)$/.test(child.name)) continue
       if (child.name === 'fixtures' && relative.endsWith('distributed')) continue
       copy(path.posix.join(relative, child.name), path.join(source, child.name), path.join(destination, child.name))
     }
@@ -373,7 +426,13 @@ function archiveDirectory(stage, archive) {
     }
     if (forbidden.some((pattern) => pattern.test(name))) fail(`archive contains a forbidden entry: ${name}`)
   }
-  for (const required of ['./RELEASE.json', './deploy/install.mjs', './deploy/update.mjs', './package-lock.json']) {
+  for (const required of [
+    './RELEASE.json',
+    './deploy/install.mjs',
+    './deploy/update.mjs',
+    './deploy/quick-install.mjs',
+    './package-lock.json',
+  ]) {
     if (!names.includes(required)) fail(`archive is missing ${required}`)
   }
 }
