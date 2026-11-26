@@ -91,7 +91,7 @@ node apps/web/scripts/smoke-claude-browser.mjs <PIN>
 - 每回合生效的是输入框权限项，覆盖建会话预设（`startTurn()` 用 `opts.sandbox/approvalPolicy` 重算）；输入框必须从会话当前档开始（`SessionSummary.sandbox/approvalPolicy`，内存 `LiveSession` 优先、磁盘兜底）。
 - 读不到一律兜底「按需确认」，绝不用「上次在这个 App 选的档」；建会话 9 种组合，输入框只有固定卡（Claude 4 / Codex 3 / OpenCode 2），6 种显示为「按需确认」；不变量：认不出的组合不点亮完全访问，屏幕上的档 == 下一回合发出去的那对。
 - `codex/permission.ts` 的 `SANDBOXES`/`APPROVAL_POLICIES` 是唯一运行期闸门（两字段都在枚举里才报）；档位改四处：`apps/web/src/lib/permission.ts`（`PERMISSIONS`/`permissionCardFor()`/`permissionCardsFor()`）、`claude/permission.ts`（`permissionModeFor()`/`permissionOptionsFor()`）、`opencode/permission.ts`（`cardFromPair()`/`rulesetFor()`）。
-- 「自动判断」Claude 与支持该模式的 Antigravity：同信道 `approvalPolicy:'auto'` + `sandbox:'workspace-write'`；`isApprovalPolicy` 拦 Codex；Antigravity 还支持 `accept-edits` 和 `plan`，按 ACP 返回的模式展示。免审批进程独立复用，跨进程切换须关闭并恢复同一个 native session。
+- 「自动判断」Claude 与支持该模式的 Antigravity：同信道 `approvalPolicy:'auto'` + `sandbox:'workspace-write'`；`isApprovalPolicy` 拦 Codex；Antigravity 支持 `accept-edits`、`plan`。AGY 1.5.17 使用 `--process-per-session`，跨进程交接先确认关闭旧会话。历史刷新依据原生 revision；`antigravity-active-turns.json` 记录未确认结束的回合，重连前用单个 ACP 进程取消并关闭中断会话，供应商网关在明确发送前禁止生成请求。
 - `permissionCardFor()` 的 `cards` 必需无默认（Radix 缺 item 会渲染空触发器），`Chat.tsx` 种子和 `<Composer>` 传同一列表。
 - `needsDangerousAck('auto')` 永远 false（单测钉着）：变真会设 `allowDangerouslySkipPermissions`，root 容器下 CLI `exit(1)`；「完全访问」= 无人值守，唯一能拿到无限制机器权限的入口。
 - `AskUserQuestion` 与权限共用 `canUseTool`；答案只走 `updatedInput.answers`（`{[问题原文]: label}`，多选 `', '` 连接）→ `type:'userInput'` + `ApprovalRequest.questions`，无 `acceptForSession`，`ApprovalSheet.tsx` 见到 `questions` 换表单；给不出答案一律拒绝，只接受形状对的（`answersFor` 返回 `null` 即拒），问题读不出退回普通审批卡，`bypassPermissions` 下照样调用。

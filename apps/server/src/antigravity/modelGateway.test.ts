@@ -77,4 +77,35 @@ describe('Antigravity supplier models', () => {
       upstream.closeAllConnections()
     }
   })
+
+  it('blocks generation during startup and allows it after the explicit turn is configured', async () => {
+    const upstream = createServer((_req, res) => res.writeHead(200).end('reply'))
+    upstream.listen(0, '127.0.0.1')
+    await once(upstream, 'listening')
+    const model = 'gemini-4-neon-high'
+    const gateway = await startModelGateway(
+      {
+        id: 'test',
+        name: 'Gemini',
+        apiKey: 'test-key',
+        updatedAt: 1,
+        baseUrl: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
+        model,
+        models: [model],
+      },
+      [model],
+      true,
+    )
+    try {
+      const url = `${gateway.baseUrl}/v1beta/models/${acpModelId(model)}:generateContent`
+      const options = { method: 'POST', headers: gateway.headers, body: '{}' }
+      expect((await fetch(url, options)).status).toBe(400)
+      gateway.enableGeneration()
+      expect(await (await fetch(url, options)).text()).toBe('reply')
+    } finally {
+      gateway.close()
+      upstream.closeAllConnections()
+      upstream.close()
+    }
+  })
 })

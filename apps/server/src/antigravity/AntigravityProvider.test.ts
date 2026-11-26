@@ -15,6 +15,7 @@ import type { AgentEvent } from '@vibemobile/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AntigravityProvider } from './AntigravityProvider.js'
 import { acpModelId } from './modelGateway.js'
+import { AgyTurnJournal } from './turnJournal.js'
 
 let cwd: string
 let agent: AgentApp
@@ -28,6 +29,7 @@ let baseUrl: string
 let models: string[]
 let launchUrls: (string | undefined)[]
 let launchUnattended: boolean[]
+let launchWorkerMode: boolean[]
 const configOptions = [
   {
     type: 'select',
@@ -63,6 +65,7 @@ beforeEach(() => {
   models = []
   launchUrls = []
   launchUnattended = []
+  launchWorkerMode = []
   cwd = mkdtempSync(path.join(os.tmpdir(), 'vibe-agy-acp-'))
   agent = mockAgent()
   nextAgent = () => agent
@@ -74,10 +77,11 @@ beforeEach(() => {
       apiKey
         ? { apiKey, baseUrl, name: 'Gemini', id: 'gemini', updatedAt: 1, models, model: models[0] ?? '' }
         : undefined,
-    connect: async (client, _cwd, _bin, key, url, _gateway, unattended) => {
+    connect: async (client, _cwd, _bin, key, url, _gateway, unattended, workerMode) => {
       launchKeys.push(key)
       launchUrls.push(url)
       launchUnattended.push(Boolean(unattended))
+      launchWorkerMode.push(Boolean(workerMode))
       connection = client.connect(nextAgent())
       return connection
     },
@@ -94,6 +98,7 @@ describe('supplier catalogues larger than the ACP limit', () => {
   let prompts: { sessionId: string; model: string }[]
   let closed: string[]
   let failNextLoad: boolean
+  let failNextClose: boolean
   beforeEach(() => {
     apiKey = 'test-key'
     models = Array.from({ length: 100 }, (_, i) => `supplier-${i}`)
@@ -101,6 +106,7 @@ describe('supplier catalogues larger than the ACP limit', () => {
     prompts = []
     closed = []
     failNextLoad = false
+    failNextClose = false
     const history = new Map<string, string[]>()
     nextAgent = () => {
       let choices: { name: string; value: string }[] = []
@@ -144,6 +150,10 @@ describe('supplier catalogues larger than the ACP limit', () => {
           return controls(sessionId)
         })
         .onRequest('session/close', ({ params: { sessionId } }) => {
+          if (failNextClose) {
+            failNextClose = false
+            throw new RequestError(-32603, 'close failed')
+          }
           selected.delete(sessionId)
           closed.push(sessionId)
           return {}
@@ -224,9 +234,105 @@ describe('supplier catalogues larger than the ACP limit', () => {
       ),
     )
   })
+
+  it('retains the original owner when a cross-catalogue handoff cannot close its worker', async () => {
+    const session = await provider.createSession({ cwd, model: models[31] })
+    const original = connection
+    const launches = launchKeys.length
+    failNextClose = true
+    await expect(
+      provider.startTurn(session.id, [{ type: 'text', text: 'switch' }], { model: models[32] }),
+    ).rejects.toThrow('close failed')
+    expect(launchKeys).toHaveLength(launches)
+    expect(original.signal.aborted).toBe(false)
+    expect(prompts).toEqual([])
+    await provider.startTurn(session.id, [{ type: 'text', text: 'continue' }])
+    await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    expect(prompts).toEqual([{ sessionId: session.id.slice(4), model: models[31] }])
+  })
 })
 
 describe('Antigravity ACP session lifecycle', () => {
+  it('serializes interrupted-turn recovery before starting ordinary workers', async () => {
+    apiKey = 'test-key'
+    models = ['gemini-4-neon-high']
+    const journal = new AgyTurnJournal(path.join(cwd, 'antigravity-active-turns.json'))
+    journal.mark('agy:interrupted')
+    const sequence: string[] = []
+    const modelOptions = [
+      {
+        ...configOptions[0],
+        currentValue: acpModelId(models[0]),
+        options: [{ name: models[0], value: acpModelId(models[0]) }],
+      },
+    ]
+    nextAgent = () => {
+      const recovery = !launchWorkerMode.at(-1)
+      sequence.push(recovery ? 'recover' : 'worker')
+      return mockAgent()
+        .onRequest('authenticate', async ({ params }) => {
+          if (recovery) {
+            const gateway = params._meta?.gateway as { baseUrl: string; headers: Record<string, string> }
+            const reply = await fetch(
+              `${gateway.baseUrl}/v1beta/models/${acpModelId(models[0])}:streamGenerateContent`,
+              {
+                method: 'POST',
+                headers: gateway.headers,
+                body: '{}',
+              },
+            )
+            expect(reply.status).toBe(400)
+          }
+          return {}
+        })
+        .onRequest('session/list', () => ({ sessions: [{ sessionId: 'interrupted', cwd }] }))
+        .onRequest('session/load', () => ({ configOptions: modelOptions }))
+        .onNotification('session/cancel', () => {
+          sequence.push('cancel')
+        })
+        .onRequest('session/close', () => {
+          sequence.push('close')
+          return {}
+        })
+        .onRequest('session/prompt', () => {
+          sequence.push('prompt')
+          return { stopReason: 'end_turn' }
+        })
+    }
+    await Promise.all([provider.resumeSession('agy:interrupted'), provider.getTranscript('agy:interrupted')])
+    expect(launchWorkerMode).toEqual([false, true, true])
+    expect(sequence.slice(0, 4)).toEqual(['recover', 'cancel', 'close', 'worker'])
+    expect(new AgyTurnJournal(path.join(cwd, 'antigravity-active-turns.json')).pending()).toEqual([])
+    expect(sequence).not.toContain('prompt')
+    await provider.startTurn('agy:interrupted', [{ type: 'text', text: 'continue' }])
+    await vi.waitFor(() => expect(provider.hasActiveTurn).toBe(false))
+    expect(sequence.at(-1)).toBe('prompt')
+  })
+
+  it('records active prompts and clears their recovery entry after an orderly stop', async () => {
+    let complete: ((result: PromptResponse) => void) | undefined
+    agent.onRequest('session/new', () => ({ sessionId: 'active' }))
+    agent.onRequest(
+      'session/prompt',
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          complete = resolve
+        }),
+    )
+    const close = vi.fn(() => ({}))
+    agent.onRequest('session/close', close)
+    agent.onNotification('session/cancel', () => complete?.({ stopReason: 'cancelled' }))
+    const session = await provider.createSession({ cwd })
+    await provider.startTurn(session.id, [{ type: 'text', text: 'work' }])
+    await vi.waitFor(() => expect(complete).toBeDefined())
+    const journal = path.join(cwd, 'antigravity-active-turns.json')
+    expect(new AgyTurnJournal(journal).pending()).toEqual([session.id])
+    await provider.stop()
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(new AgyTurnJournal(journal).pending()).toEqual([])
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'turn.completed', status: 'interrupted' }))
+  })
+
   it('discovers native permission modes and applies them across model and permission changes', async () => {
     const choices = ['default', 'accept-edits', 'plan', 'auto']
     const modesFor = (currentModeId: string) => ({
@@ -588,10 +694,11 @@ describe('Antigravity ACP session lifecycle', () => {
     expect(events.some((e) => e.kind.startsWith('item.'))).toBe(false)
   })
 
-  it('reopens a stale ACP snapshot in a new process without interrupting another active session', async () => {
+  it('reopens only a changed native revision without interrupting another active session', async () => {
     const saved = [{ user: 'old question', assistant: 'old answer' }]
     const now = vi.spyOn(Date, 'now')
     let clock = 10_000
+    let revision = 1_000
     now.mockImplementation(() => clock)
     let loads = 0
     let finishOther: ((result: PromptResponse) => void) | undefined
@@ -599,7 +706,7 @@ describe('Antigravity ACP session lifecycle', () => {
       const snapshot = saved.map((turn) => ({ ...turn }))
       return mockAgent()
         .onRequest('session/list', () => ({
-          sessions: [{ sessionId: 'shared', cwd, updatedAt: new Date(1000).toISOString() }],
+          sessions: [{ sessionId: 'shared', cwd, updatedAt: new Date(revision).toISOString() }],
         }))
         .onRequest('session/new', () => ({ sessionId: 'other' }))
         .onRequest('session/close', () => ({}))
@@ -629,7 +736,15 @@ describe('Antigravity ACP session lifecycle', () => {
       await provider.startTurn(other.id, [{ type: 'text', text: 'keep working' }])
       await vi.waitFor(() => expect(finishOther).toBeDefined())
 
+      clock += 6_000
+      await provider.refreshSession('agy:shared')
+      await provider.resumeSession('agy:shared')
+      expect(loads).toBe(1)
+      expect(connection).toBe(oldConnection)
+      expect(oldConnection.signal.aborted).toBe(false)
+
       saved.push({ user: 'new question', assistant: 'new answer' })
+      revision += 1_000
       clock += 500
       await provider.refreshSession('agy:shared')
       const latest = await provider.getTranscript('agy:shared')
@@ -641,6 +756,7 @@ describe('Antigravity ACP session lifecycle', () => {
       expect((await provider.getSession(other.id))?.status).toBe('working')
 
       saved.push({ user: 'third question', assistant: 'third answer' })
+      revision += 1_000
       clock += 6_000
       await provider.resumeSession('agy:shared')
       expect((await provider.getTranscript('agy:shared'))?.turns.at(-1)?.items.at(-1)).toMatchObject({
@@ -652,6 +768,35 @@ describe('Antigravity ACP session lifecycle', () => {
     } finally {
       now.mockRestore()
     }
+  })
+
+  it('keeps the old transcript owner until a stale worker acknowledges close', async () => {
+    let revision = 1_000
+    let failClose = true
+    const load = vi.fn(() => ({}))
+    nextAgent = () =>
+      mockAgent()
+        .onRequest('session/list', () => ({
+          sessions: [{ sessionId: 'shared', cwd, updatedAt: new Date(revision).toISOString() }],
+        }))
+        .onRequest('session/load', load)
+        .onRequest('session/close', () => {
+          if (failClose) {
+            failClose = false
+            throw new RequestError(-32603, 'close failed')
+          }
+          return {}
+        })
+    await provider.getTranscript('agy:shared')
+    const oldConnection = connection
+    const launches = launchKeys.length
+    revision += 1_000
+    await expect(provider.refreshSession('agy:shared')).rejects.toThrow('close failed')
+    expect(launchKeys).toHaveLength(launches)
+    expect(oldConnection.signal.aborted).toBe(false)
+    await provider.refreshSession('agy:shared')
+    expect(oldConnection.signal.aborted).toBe(true)
+    expect(load).toHaveBeenCalledTimes(2)
   })
 
   it('keeps a newly created empty session on its original process until it is persisted', async () => {

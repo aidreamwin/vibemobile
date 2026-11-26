@@ -21,7 +21,7 @@ export function acpModelId(model: string) {
   return `gemini-vm-${createHash('sha256').update(model).digest('hex')}`
 }
 
-export async function startModelGateway(profile: StoredAgentProfile, models: string[]) {
+export async function startModelGateway(profile: StoredAgentProfile, models: string[], generationBlocked = false) {
   const byAcpId = new Map(
     models.flatMap((id) => {
       const alias = acpModelId(id)
@@ -50,6 +50,16 @@ export async function startModelGateway(profile: StoredAgentProfile, models: str
     const [pathname, query] = (req.url ?? '').split('?')
     if (req.method === 'GET' && pathname === '/v1beta/models') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(catalog)
+      return
+    }
+    // AGY can start an interrupted turn while authenticating, before ACP has
+    // selected the saved model. A recovery client only reconciles native state.
+    if (generationBlocked && req.method === 'POST') {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          error: { code: 400, status: 'FAILED_PRECONDITION', message: '会话正在恢复，请重新发送消息。' },
+        }),
+      )
       return
     }
     const match =
@@ -104,6 +114,9 @@ export async function startModelGateway(profile: StoredAgentProfile, models: str
     byAcpId,
     baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     headers: { 'x-goog-api-key': token },
+    enableGeneration() {
+      generationBlocked = false
+    },
     close() {
       server.close()
       server.closeAllConnections()

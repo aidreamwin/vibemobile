@@ -34,10 +34,11 @@ import {
   type ProviderProbe,
 } from '../providers/types.js'
 import { AgyApprovals } from './approvals.js'
-import { connectCli, deadline } from './connection.js'
+import { closeCli, connectCli, deadline } from './connection.js'
 import type { AgentConnection } from '../agents/profileRuntime.js'
 import { acpModelId, startModelGateway, supplierModels } from './modelGateway.js'
 import { AgyTranscript, promptBlocks } from './transcript.js'
+import { AgyTurnJournal } from './turnJournal.js'
 
 type AcpClient = {
   connection: ClientConnection
@@ -129,9 +130,13 @@ export class AntigravityProvider implements AgentProvider {
   #models: ModelInfo[] = []
   #images?: ImageStore
   #prefs: SessionPrefsStore
+  #journal: AgyTurnJournal
+  #recovering?: Promise<void>
+  #stopping?: Promise<void>
 
   constructor(private opts: ProviderOptions) {
     this.#prefs = new SessionPrefsStore(opts.stateDir && path.join(opts.stateDir, 'antigravity-sessions.json'))
+    this.#journal = new AgyTurnJournal(opts.stateDir && path.join(opts.stateDir, 'antigravity-active-turns.json'))
     if (opts.stateDir) this.#images = new ImageStore(path.join(opts.stateDir, 'images'))
   }
 
@@ -142,7 +147,10 @@ export class AntigravityProvider implements AgentProvider {
     }
   }
 
-  #client(model?: string, unattended = false, isolated = false) {
+  async #client(model?: string, unattended = false, isolated = false) {
+    if (this.#stopping) throw clientError('Antigravity 正在关闭，请稍后重试。', 409)
+    await this.#ensureRecovery()
+    if (this.#stopping) throw clientError('Antigravity 正在关闭，请稍后重试。', 409)
     const profile = this.opts.profile?.()
     const models = supplierModels(profile)
     const index = model && models.length ? models.indexOf(model) : 0
@@ -183,9 +191,9 @@ export class AntigravityProvider implements AgentProvider {
     return pending
   }
 
-  #release(client: AcpClient) {
+  async #release(client: AcpClient) {
     if (this.#isolated.has(client) && ![...this.#opened.values()].some((session) => session.client === client))
-      client.connection.close()
+      await closeCli(client.connection)
   }
 
   async #connect(
@@ -193,6 +201,7 @@ export class AntigravityProvider implements AgentProvider {
     models: string[],
     unattended: boolean,
     isolated: boolean,
+    recovery = false,
   ): Promise<AcpClient> {
     let connection: ClientConnection
     const app = new ClientApp()
@@ -216,6 +225,7 @@ export class AntigravityProvider implements AgentProvider {
       profile?.baseUrl,
       useGateway,
       unattended,
+      !recovery,
     )
     let gateway: AcpClient['gateway']
     try {
@@ -237,7 +247,9 @@ export class AntigravityProvider implements AgentProvider {
       if (profile && useGateway) {
         if (!info.authMethods?.some((method) => method.id === 'gateway'))
           throw new Error('此 Antigravity CLI 不支持供应商模型网关，请更新 agy。')
-        gateway = await startModelGateway(profile, models)
+        // Authentication/discovery must never send a resumed turn to an
+        // unconfigured supplier model. Enable this front on an explicit prompt.
+        gateway = await startModelGateway(profile, models, true)
         await connection.agent.request(
           'authenticate',
           {
@@ -255,19 +267,23 @@ export class AntigravityProvider implements AgentProvider {
           throw new Error('Antigravity 无法使用已保存的 Gemini API Key，请在设置中检查密钥。')
         }
       }
-      void connection.closed.then(() => {
+      void connection.closed.then(async () => {
         gateway?.close()
-        for (const session of this.#opened.values()) {
-          if (session.client.connection !== connection) continue
+        const owned = [...this.#opened.values()].filter((session) => session.client.connection === connection)
+        for (const session of owned) {
           if (session.history.live) this.#finish(session, 'failed', 'Antigravity CLI 已断开连接。')
-          this.#opened.delete(session.summary.id)
+        }
+        await closeCli(connection)
+        for (const session of owned) {
+          if (this.#opened.get(session.summary.id) === session && session.client.connection === connection)
+            this.#opened.delete(session.summary.id)
         }
         if (!gateway && !isolated && !this.#isolated.size) this.#models = []
       })
       return { connection, info, gateway, unattended }
     } catch (err) {
       gateway?.close()
-      connection.close()
+      await closeCli(connection)
       throw err
     }
   }
@@ -278,17 +294,92 @@ export class AntigravityProvider implements AgentProvider {
   get hasActiveTurn() {
     return [...this.#opened.values()].some((session) => session.starting || session.history.live)
   }
-  async stop() {
+  async #closeClients() {
     const starting = [...this.#clients.values(), ...this.#startingIsolated]
     const shared = await Promise.all(starting.map((pending) => pending.catch(() => undefined)))
     await Promise.all(
-      [...new Set([...shared, ...this.#isolated])].map(async (client) => {
-        client?.connection.close()
-        await client?.connection.closed
-      }),
+      [...new Set([...shared, ...this.#isolated])].map((client) => client && closeCli(client.connection)),
     )
     this.#permissionModes = undefined
     this.#models = []
+  }
+
+  async #ensureRecovery() {
+    if (this.#recovering) return this.#recovering
+    const interrupted = this.#journal.pending().filter((id) => {
+      const session = this.#opened.get(id)
+      return !session || session.client.connection.signal.aborted || (!session.history.live && !session.starting)
+    })
+    if (!interrupted.length) return
+    if (this.hasActiveTurn) throw clientError('其他 Antigravity 会话正在执行，待结束后恢复中断的会话。', 409)
+    this.#recovering = this.#recover(interrupted).finally(() => {
+      this.#recovering = undefined
+    })
+    return this.#recovering
+  }
+
+  async #recover(ids: string[]) {
+    // AGY resumes interrupted native work when a server authenticates. Use a
+    // single monolithic ACP process for reconciliation, never several workers.
+    await this.#closeClients()
+    const profile = this.opts.profile?.()
+    const models = supplierModels(profile).slice(0, ACP_CATALOG_LIMIT)
+    const client = await this.#connect(profile, models, false, true, true)
+    try {
+      for (const id of ids) {
+        let native: SessionInfo | undefined
+        const seen = new Set<string>()
+        let cursor: string | undefined
+        do {
+          const page = await client.connection.agent.request('session/list', { cursor }, deadline())
+          native = page.sessions.find((info) => publicId(info.sessionId) === id)
+          cursor = page.nextCursor ?? undefined
+          if (cursor && seen.has(cursor)) throw new Error('Antigravity 返回了重复的会话列表游标。')
+          if (cursor) seen.add(cursor)
+        } while (!native && cursor)
+        if (native) {
+          if (!this.#allowed(native)) throw clientError('中断的 Antigravity 会话位于工作区范围外。', 409)
+          const cwd = await resolveDirectory(this.opts.workspaceRoots, workspacePath(native.cwd))
+          const method = client.info.agentCapabilities?.sessionCapabilities?.resume ? 'session/resume' : 'session/load'
+          await client.connection.agent.request(
+            method,
+            { sessionId: native.sessionId, cwd, mcpServers: [] },
+            deadline(120_000),
+          )
+          await client.connection.agent.notify('session/cancel', { sessionId: native.sessionId })
+          if (!client.info.agentCapabilities?.sessionCapabilities?.close)
+            throw clientError('当前 Antigravity CLI 不支持安全恢复中断会话，请更新 agy。', 409)
+          await client.connection.agent.request('session/close', { sessionId: native.sessionId }, deadline())
+        }
+        this.#journal.clear(id)
+      }
+    } finally {
+      await closeCli(client.connection)
+    }
+  }
+
+  async stop() {
+    if (this.#stopping) return this.#stopping
+    this.#stopping = (async () => {
+      await this.#recovering?.catch(() => undefined)
+      const running = [...this.#opened.values()].filter((session) => session.history.live)
+      await Promise.all(
+        running.map(async (session) => {
+          try {
+            await session.client.connection.agent.notify('session/cancel', { sessionId: session.nativeId })
+            await this.#closeNative(session)
+            this.#journal.clear(session.summary.id)
+            if (session.history.live) this.#finish(session, 'interrupted')
+          } catch {
+            // Keep the journal entry until a later recovery confirms closure.
+          }
+        }),
+      )
+      await this.#closeClients()
+    })().finally(() => {
+      this.#stopping = undefined
+    })
+    return this.#stopping
   }
 
   async probe(): Promise<ProviderProbe> {
@@ -301,7 +392,7 @@ export class AntigravityProvider implements AgentProvider {
         await connection.agent.request('session/list', { cwd: this.opts.workspaceRoots[0] }, deadline())
       } catch (err) {
         if (!authRequired(err)) throw err
-        if (!this.#opened.size) connection.close() // Next probe picks up a login completed in a terminal.
+        if (!this.#opened.size) await closeCli(connection) // Next probe picks up a login completed in a terminal.
         return { ...base, version, available: true, authenticated: false, detail: loginHint }
       }
       // ACP reports execution modes in session/new, not initialize. A closed
@@ -374,7 +465,12 @@ export class AntigravityProvider implements AgentProvider {
     if (info.updatedAt) {
       this.#revisions.set(id, info.updatedAt)
       const open = this.#opened.get(id)
-      if (open && !open.starting && !open.history.live && open.revision !== info.updatedAt) open.stale = true
+      if (open && open.revision !== info.updatedAt) {
+        // The native list also reports revisions written by our own prompts.
+        // Only a newer external revision requires replacing the idle snapshot.
+        if (!open.starting && !open.history.live && time > summary.updatedAt) open.stale = true
+        else if (!open.stale) open.revision = info.updatedAt
+      }
     }
     summary.title = prefs?.title ?? (info.title || summary.title)
     summary.updatedAt = Math.max(summary.updatedAt, time)
@@ -569,8 +665,13 @@ export class AntigravityProvider implements AgentProvider {
       return summary
     } catch (err) {
       if (session) {
-        await this.#discard(session)
-        this.#known.delete(session.summary.id)
+        try {
+          await this.#discard(session)
+          this.#known.delete(session.summary.id)
+        } catch {
+          // Keep the owner until a native close succeeds.
+          session.stale = true
+        }
       }
       if (authRequired(err)) throw clientError(loginHint, 409)
       throw err
@@ -579,20 +680,32 @@ export class AntigravityProvider implements AgentProvider {
 
   async #closeNative(session: OpenSession) {
     const { connection, info } = session.client
-    if (info.agentCapabilities?.sessionCapabilities?.close && !connection.signal.aborted)
+    if (connection.signal.aborted) return
+    if (!info.agentCapabilities?.sessionCapabilities?.close)
+      throw clientError('当前 Antigravity CLI 不支持安全关闭会话，请更新 agy。', 409)
+    try {
       await connection.agent.request('session/close', { sessionId: session.nativeId }, deadline())
+    } catch (err) {
+      if (!(err instanceof RequestError) || err.code !== -32002) throw err
+    }
+  }
+
+  async #detach(session: OpenSession) {
+    const id = session.summary.id
+    // Retain the old owner if ACP did not confirm the close. Retrying a load
+    // must not attach a second worker to a possibly still-running session.
+    await this.#closeNative(session)
+    if (session.client.connection.signal.aborted) await closeCli(session.client.connection)
+    if (this.#opened.get(id) === session) this.#opened.delete(id)
+    await this.#release(session.client)
   }
 
   #discard(session: OpenSession) {
     const id = session.summary.id
     if (this.#opened.get(id) !== session) return
-    this.#opened.delete(id)
-    const closing = this.#closeNative(session)
-      .catch(() => {})
-      .finally(() => {
-        this.#closing.delete(id)
-        this.#release(session.client)
-      })
+    const pending = this.#closing.get(id)
+    if (pending) return pending
+    const closing = this.#detach(session).finally(() => this.#closing.delete(id))
     this.#closing.set(id, closing)
     return closing
   }
@@ -610,12 +723,23 @@ export class AntigravityProvider implements AgentProvider {
   }
 
   async #load(id: string): Promise<OpenSession> {
+    if (this.#recovering) await this.#recovering
+    const owner = this.#opened.get(id)
+    if (
+      this.#journal.pending().includes(id) &&
+      (!owner || owner.client.connection.signal.aborted || (!owner.history.live && !owner.starting))
+    )
+      await this.#ensureRecovery()
     const closing = this.#closing.get(id)
     if (closing) await closing
     const loading = this.#loading.get(id)
     if (loading) return loading
     const existing = this.#opened.get(id)
-    if (existing && (!existing.stale || existing.starting || existing.history.live)) {
+    if (
+      existing &&
+      !existing.client.connection.signal.aborted &&
+      (!existing.stale || existing.starting || existing.history.live)
+    ) {
       existing.touched = Date.now()
       return existing
     }
@@ -630,13 +754,14 @@ export class AntigravityProvider implements AgentProvider {
     const models = supplierModels(this.opts.profile?.())
     const saved = this.#prefs.get(id)?.model
     const model = saved && models.includes(saved) ? saved : models[0]
+    // Hand off ownership before starting a new client. Closing a native AGY
+    // session can cancel its execution, so never overlap the two attachments.
+    if (existing) await this.#detach(existing)
     // A CLI process can keep a stale session snapshot even after close/load.
     const client = await this.#client(model, false, true)
     let session: OpenSession | undefined
     try {
-      if (existing) await this.#closeNative(existing)
       session = this.#open(summary, client)
-      if (existing) this.#release(existing.client)
       await this.#attach(session, true)
       session.history.finish('completed')
       if (model) {
@@ -652,8 +777,15 @@ export class AntigravityProvider implements AgentProvider {
       this.#prune(session)
       return session
     } catch (err) {
-      if (session) await this.#discard(session)
-      else this.#release(client)
+      if (session) {
+        // This front was allocated solely for the failed attachment. If close
+        // itself fails, terminate it before allowing another restore attempt.
+        try {
+          await this.#discard(session)
+        } catch {
+          await closeCli(client.connection)
+        }
+      } else await this.#release(client)
       if (err instanceof RequestError && err.code === -32002) {
         this.#known.delete(id)
         throw new SessionNotFoundError(id)
@@ -664,13 +796,18 @@ export class AntigravityProvider implements AgentProvider {
   }
 
   #prune(current: OpenSession) {
-    if (this.#opened.size <= 6) return
+    const excess = this.#opened.size - this.#closing.size - 6
+    if (excess <= 0) return
     const idle = [...this.#opened.values()].filter(
-      (s) => s !== current && !s.starting && !s.history.live && !this.#loading.has(s.summary.id),
+      (s) =>
+        s !== current &&
+        !s.starting &&
+        !s.history.live &&
+        !this.#loading.has(s.summary.id) &&
+        !this.#closing.has(s.summary.id),
     )
-    for (const session of idle.sort((a, b) => a.touched - b.touched)) {
-      if (this.#opened.size <= 6) break
-      void this.#discard(session)
+    for (const session of idle.sort((a, b) => a.touched - b.touched).slice(0, excess)) {
+      void this.#discard(session)?.catch(() => undefined)
     }
   }
 
@@ -688,19 +825,24 @@ export class AntigravityProvider implements AgentProvider {
       open &&
       !open.starting &&
       !open.history.live &&
-      Date.now() - open.touched > 5_000 &&
+      !this.#loading.has(id) &&
+      !this.#closing.has(id) &&
       (open.history.turns.length || this.#revisions.has(id))
-    )
-      open.stale = true
+    ) {
+      // An ordinary tab open only validates the cached trajectory. Native
+      // close/load is needed when session/list confirms an external change.
+      try {
+        await this.#discover(summary.cwd, (candidate) => candidate.id === id)
+      } catch {
+        // A transient metadata error must not prevent reading a cached chat.
+      }
+    }
     const session = await this.#load(id)
     this.#emit({ kind: 'commands.updated', threadId: id, commands: session.commands })
     return session.summary
   }
 
   async refreshSession(id: string) {
-    const open = this.#opened.get(id)
-    if (open && !open.starting && !open.history.live && (open.history.turns.length || this.#revisions.has(id)))
-      open.stale = true
     return this.resumeSession(id)
   }
 
@@ -736,7 +878,7 @@ export class AntigravityProvider implements AgentProvider {
     const { connection } = open?.client ?? (await this.#client())
     await connection.agent.request('session/delete', { sessionId: id.slice(4) }, deadline())
     this.#opened.delete(id)
-    if (open) this.#release(open.client)
+    if (open) await this.#release(open.client)
     this.#known.delete(id)
     this.#revisions.delete(id)
     this.#prefs.forget(id)
@@ -810,12 +952,14 @@ export class AntigravityProvider implements AgentProvider {
     }
     if (!session.client.info.agentCapabilities?.sessionCapabilities?.close)
       throw clientError('当前 Antigravity CLI 不支持切换执行进程。', 400)
-    const next = await this.#client(model, unattended, true)
     // Keep the native session ID and the transcript already displayed on the phone.
     const previous = session.summary.model
     const previousClient = session.client
+    // Do not bring up another front until the old worker has acknowledged close.
+    await this.#closeNative(session)
+    let next: AcpClient | undefined
     try {
-      await this.#closeNative(session)
+      next = await this.#client(model, unattended, true)
       if (this.#opened.get(session.summary.id) !== session) throw new Error('Antigravity CLI 已断开连接。')
       session.client = next
       session.options = []
@@ -826,25 +970,40 @@ export class AntigravityProvider implements AgentProvider {
     } catch (err) {
       if (this.#opened.get(session.summary.id) === session) {
         session.summary.model = previous
-        await this.#discard(session)
+        if (next && session.client === next) {
+          try {
+            await this.#discard(session)
+          } catch {
+            await closeCli(next.connection)
+          }
+        } else {
+          // The previous worker was closed, but launching its replacement failed.
+          this.#opened.delete(session.summary.id)
+        }
       }
       throw err
     } finally {
-      this.#release(previousClient)
-      this.#release(next)
+      await this.#release(previousClient)
+      if (next) await this.#release(next)
     }
   }
 
   async startTurn(id: string, input: AgentInput[], opts: TurnOptions = {}) {
+    if (this.#stopping) throw clientError('Antigravity 正在关闭，请稍后重试。', 409)
     permissionFor(opts)
     const session = await this.#load(id)
     if (session.starting || session.history.live) throw clientError('此 Antigravity 会话正在运行。', 409)
+    if (this.#recovering || this.#closing.has(id) || this.#loading.has(id) || this.#opened.get(id) !== session)
+      throw clientError('此 Antigravity 会话正在重新连接，请重试。', 409)
     session.starting = true
     try {
       await this.#selectForTurn(session, opts)
       const prompt = promptBlocks(input, Boolean(session.client.info.agentCapabilities?.promptCapabilities?.image))
       const { connection } = session.client
       if (this.#opened.get(id) !== session || connection.signal.aborted) throw new Error('Antigravity CLI 已断开连接。')
+      if (this.#stopping) throw clientError('Antigravity 正在关闭，请稍后重试。', 409)
+      this.#journal.mark(id)
+      session.client.gateway?.enableGeneration()
       session.history.live = true
       const turnId = session.history.begin()
       session.history.userInput(prompt)
@@ -855,6 +1014,11 @@ export class AntigravityProvider implements AgentProvider {
       void connection.agent.request('session/prompt', { sessionId: session.nativeId, prompt }).then(
         ({ stopReason }) => {
           if (!session.history.live || session.history.turn?.id !== turnId) return
+          try {
+            this.#journal.clear(id)
+          } catch {
+            /* Recover the unconfirmed entry later. */
+          }
           this.#finish(session, stopReason === 'cancelled' ? 'interrupted' : 'completed')
         },
         (err: Error) => {
