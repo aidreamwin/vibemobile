@@ -12,6 +12,7 @@ import { registerSystemRoutes } from '../routes/system.js'
 import { requireAuth } from '../routes/guards.js'
 import { RunnerTunnel, RunnerOfflineError } from './tunnel.js'
 import { allowedPath, MAX_BODY, MAX_FRAME, PROTOCOL, RESPONSE_HEADERS } from './wire.js'
+import { relayFileTransfer } from './fileTransfer.js'
 import type { HubHttpsOptions } from './tls.js'
 import type { RunnerStore } from './runnerStore.js'
 
@@ -229,6 +230,25 @@ export async function createHub(
     if (!entry) throw Object.assign(new Error('unknown_runner'), { statusCode: 404 })
     if (!entry.tunnel || entry.tunnel.socket.readyState !== 1) throw new RunnerOfflineError()
     return entry.tunnel
+  }
+  for (const kind of ['download', 'video'] as const) {
+    app.route<{ Params: { runner: string }; Querystring: { path?: string } }>({
+      method: ['GET', 'HEAD'],
+      url: `/r/:runner/api/files/${kind}`,
+      ...auth,
+      handler: async (req, reply) => {
+        if (typeof req.query.path !== 'string' || !req.query.path)
+          return reply.code(400).send({ error: 'path is required' })
+        const query = new URLSearchParams({ path: req.query.path })
+        return relayFileTransfer(
+          tunnelFor(req.params.runner),
+          `/api/files/${kind}?${query}`,
+          req.headers.range,
+          req.method === 'HEAD',
+          reply,
+        )
+      },
+    })
   }
   app.route<{ Params: { runner: string; '*': string } }>({
     method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],

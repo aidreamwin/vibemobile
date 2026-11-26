@@ -5,6 +5,7 @@ import {
   Ellipsis,
   FileCode2,
   FileImage,
+  FileVideo,
   FileWarning,
   GitCompare,
   LoaderCircle,
@@ -19,8 +20,8 @@ import { isPathInside } from '../../lib/workspace'
 import CopyButton from '../CopyButton'
 import { UnifiedDiff } from '../DiffView'
 import FileBody, { isRenderable } from '../FileBody'
-import ImageFilePreview from '../ImageFilePreview'
-import { isImageFile, isRasterImage } from '../../lib/fileImage'
+import MediaFilePreview, { FileDownloadLink } from '../MediaFilePreview'
+import { isImageFile, isNativeMedia, isVideoFile } from '../../lib/fileImage'
 import FileEditor from '../FileEditor'
 import {
   DropdownMenu,
@@ -44,7 +45,13 @@ function PathBreadcrumbs({ path, root, diff }: { path: string | undefined; root:
   }
   const current = parts.pop() || fullPath
   const parent = parts.length > 2 ? `${parts[0]} › … › ${parts.at(-1)}` : parts.join(' › ')
-  const Icon = diff ? GitCompare : path && isImageFile(path) ? FileImage : FileCode2
+  const Icon = diff
+    ? GitCompare
+    : path && isVideoFile(path)
+      ? FileVideo
+      : path && isImageFile(path)
+        ? FileImage
+        : FileCode2
 
   return (
     <div className="flex min-w-0 flex-1 basis-24 items-center gap-1.5 text-xs" title={fullPath}>
@@ -114,7 +121,7 @@ export default function DesktopFilePane({
 }: DesktopFilePaneProps) {
   const [wrap, setWrap] = useState(false)
   const markdown = view.kind === 'file' && isRenderable(view.path)
-  const rasterImage = view.kind === 'file' && isRasterImage(view.path)
+  const nativeMedia = view.kind === 'file' && isNativeMedia(view.path)
   const rendered = markdown && preview
   const selection = editor?.value ?? content?.text
   const lineCount = useMemo(() => selection?.split('\n').length, [selection])
@@ -175,7 +182,7 @@ export default function DesktopFilePane({
                   ))}
                 </fieldset>
               )}
-              {!rasterImage && (
+              {!nativeMedia && (
                 <button
                   type="button"
                   aria-label="编辑文件"
@@ -202,10 +209,11 @@ export default function DesktopFilePane({
           ))}
         {!editor && (
           <div className="flex shrink-0 items-center gap-0.5">
+            {view.kind === 'file' && <FileDownloadLink path={view.path} className={toolClass} />}
             {(view.path || root) && (
               <CopyButton getText={() => view.path || root} label="复制路径" className={toolClass} />
             )}
-            {view.kind === 'file' && !rendered && !rasterImage ? (
+            {view.kind === 'file' && !rendered && !nativeMedia ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button type="button" aria-label="更多文件操作" title="更多文件操作" className={toolClass}>
@@ -277,11 +285,12 @@ export default function DesktopFilePane({
           ) : (
             <p className="grid h-full place-content-center text-xs text-muted-foreground">没有文件改动</p>
           )
-        ) : rasterImage ? (
-          <ImageFilePreview
+        ) : nativeMedia ? (
+          <MediaFilePreview
             key={`${view.path}:${imageRevision}`}
             path={view.path}
             refresh={imageRevision > 0}
+            visible={visible}
             desktop
           />
         ) : (

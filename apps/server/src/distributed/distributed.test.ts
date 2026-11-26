@@ -19,6 +19,7 @@ import { registerAgentProfileRoutes } from '../routes/agentProfiles.js'
 import { NativeAgentConfigStore } from '../agents/nativeConfig.js'
 import { CodexGlobalStore } from '../agents/codexGlobal.js'
 import { registerCodexGlobalRoutes } from '../routes/codexGlobal.js'
+import { sendFileTransfer } from '../files/transfer.js'
 
 const serviceToken = crypto.randomBytes(32).toString('hex')
 const tokens = [crypto.randomBytes(32).toString('hex'), crypto.randomBytes(32).toString('hex')]
@@ -89,6 +90,21 @@ beforeAll(async () => {
     })
     const profileDir = mkdtempSync(path.join(os.tmpdir(), 'vbm-tunnel-profiles-'))
     profileDirs.push(profileDir)
+    for (const kind of ['download', 'video'] as const) {
+      app.route<{ Querystring: { path: string } }>({
+        method: ['GET', 'HEAD'],
+        url: `/api/files/${kind}`,
+        handler: (req, reply) =>
+          sendFileTransfer(
+            [profileDir],
+            req.query.path,
+            kind === 'video',
+            req.headers.range,
+            req.method === 'HEAD',
+            reply,
+          ),
+      })
+    }
     registerCodexGlobalRoutes(
       app,
       { ...config, authDisabled: true },
@@ -338,6 +354,26 @@ describe('distributed Hub and two reverse runners', () => {
       expect(response.json().data[0]).toMatchObject({ id: 'same-id', title: `runner-${i}` })
     }
   })
+
+  it('relays large downloads and video ranges using bounded tunnel responses', async () => {
+    const file = path.join(profileDirs[0], 'large.mp4')
+    const payload = Buffer.alloc(MAX_BODY + 19, 0x5a)
+    payload[0] = 0
+    payload[payload.length - 1] = 0xff
+    writeFileSync(file, payload)
+    const query = '?path=' + encodeURIComponent(file)
+    const range = await hub.inject({
+      url: '/r/r0/api/files/video' + query,
+      headers: { cookie, range: 'bytes=-19' },
+    })
+    expect(range.statusCode).toBe(206)
+    expect(range.headers['content-range']).toBe(`bytes ${MAX_BODY}-${payload.length - 1}/${payload.length}`)
+    expect(range.rawPayload).toEqual(payload.subarray(MAX_BODY))
+    const download = await hub.inject({ url: '/r/r0/api/files/download' + query, headers: { cookie } })
+    expect(download.statusCode).toBe(200)
+    expect(download.rawPayload.equals(payload)).toBe(true)
+    expect(download.headers['content-disposition']).toContain('attachment')
+  }, 20_000)
 
   it('forwards JSON bodies and query strings without changing file revisions', async () => {
     const created = await hub.inject({

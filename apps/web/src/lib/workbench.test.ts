@@ -147,7 +147,11 @@ describe('useWorkbenchStore', () => {
       expect(useWorkbenchStore.getState().settingsReturn).not.toBeNull()
       store.closeAllTabs('diff:workspace')
       expect(useWorkbenchStore.getState().tabs.map((tab) => tab.id)).toEqual(['chat:t1', 'chat:t2', 'settings'])
-      expect(useWorkbenchStore.getState().settingsReturn).toEqual({ activeTabId: 'chat:t2', secondaryTabId: null })
+      expect(useWorkbenchStore.getState().settingsReturn).toMatchObject({
+        activeTabId: 'chat:t2',
+        secondaryTabId: null,
+        paneIds: ['chat:t2'],
+      })
       store.closeTab('settings')
       expect(useWorkbenchStore.getState().activeTabId).toBe('chat:t2')
       store.closeAllTabs('chat:t1')
@@ -244,5 +248,68 @@ describe('useWorkbenchStore', () => {
     expect(useWorkbenchStore.getState().terminalHeight).toBe(TERMINAL_MAX)
     store.setTerminalHeight(10)
     expect(useWorkbenchStore.getState().terminalHeight).toBe(TERMINAL_MIN)
+  })
+
+  it('supports four independent panes, swapping content and preserving open tabs', () => {
+    const store = useWorkbenchStore.getState()
+    store.openChatTab({ threadId: 'a' })
+    store.openFileTab({ path: '/a.ts' })
+    store.setPaneCount(4)
+    expect(useWorkbenchStore.getState().paneIds).toEqual(['chat:a', 'file:/a.ts', null, null])
+    store.openChatTab({ threadId: 'b' }, { targetPane: 2 })
+    store.openFileTab({ path: '/b.ts' }, { targetPane: 3 })
+    store.showTabInPane(0, 'file:/b.ts')
+    expect(useWorkbenchStore.getState().paneIds).toEqual(['file:/b.ts', 'file:/a.ts', 'chat:b', 'chat:a'])
+    store.toggleSplit()
+    expect(useWorkbenchStore.getState().paneIds).toHaveLength(4)
+    store.openSettingsTab()
+    store.closeTab('settings')
+    expect(useWorkbenchStore.getState().paneIds).toEqual(['file:/b.ts', 'file:/a.ts', 'chat:b', 'chat:a'])
+    store.closePane(2)
+    expect(useWorkbenchStore.getState().paneIds).toHaveLength(3)
+    expect(useWorkbenchStore.getState().tabs).toHaveLength(4)
+    store.closeAllTabs('file:/a.ts')
+    expect(useWorkbenchStore.getState().paneIds).toEqual(['chat:a'])
+  })
+
+  it('restores four-pane selection and both grid proportions across reload', async () => {
+    const saved = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => saved.set(key, value),
+    })
+    try {
+      const store = useWorkbenchStore.getState()
+      store.openChatTab({ threadId: 'a' })
+      store.setPaneCount(4)
+      store.openFileTab({ path: '/a.ts' }, { targetPane: 3 })
+      store.focusPane(2)
+      store.setGridRatio('column', 0.31)
+      store.setGridRatio('row', 0.72)
+      store.setPaneCount(4, 'horizontal')
+      store.setColumnRatio(4, 1, 0.8)
+      store.setColumnRatio(3, 0, 0.75)
+      vi.resetModules()
+      const { useWorkbenchStore: restored } = await import('./workbench')
+      expect(restored.getState()).toMatchObject({
+        paneIds: ['chat:a', null, null, 'file:/a.ts'],
+        focusedPane: 2,
+        gridColumnRatio: 0.31,
+        gridRowRatio: 0.72,
+        splitDirection: 'horizontal',
+      })
+      const widths = restored.getState().columnWidths
+      expect(widths[4][0]).toBeCloseTo(0.25)
+      expect(widths[4][1]).toBeCloseTo(0.4)
+      expect(widths[4][2]).toBeCloseTo(0.1)
+      expect(widths[4][3]).toBeCloseTo(0.25)
+      expect(widths[3][0]).toBeCloseTo(0.5)
+      restored.getState().setColumnRatio(4, 0, 0)
+      expect(restored.getState().columnWidths[4][0]).toBe(0)
+      restored.getState().setColumnRatio(4, 1, null)
+      expect(restored.getState().columnWidths[4]).toEqual([0.25, 0.25, 0.25, 0.25])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

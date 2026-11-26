@@ -1,5 +1,6 @@
 import type { FileContent, FileEntry } from '@vibemobile/protocol'
 import { api, ApiError } from './api'
+import { filePathKey } from './fileLink'
 
 // This module belongs to the current runner. Switching runners reloads the app.
 const MAX_FILES = 12
@@ -10,6 +11,14 @@ const MAX_DIRECTORIES = 12
 const DIRECTORY_FRESH_MS = 5_000
 const directories = new Map<string, { entries: FileEntry[]; fetchedAt: number }>()
 const pendingDirectories = new Map<string, Promise<FileEntry[]>>()
+
+export const fileDrafts = new Map<string, { text: string; base: FileContent }>()
+export const savingFiles = new Set<string>()
+
+export function hasFileEdits(path: string): boolean {
+  const key = filePathKey(path)
+  return [...fileDrafts.keys(), ...savingFiles].some((candidate) => filePathKey(candidate) === key)
+}
 
 export function getFileSnapshot(path: string): FileContent | null {
   return snapshots.get(path)?.content ?? null
@@ -30,6 +39,16 @@ export function clearFileSnapshots() {
   pending.clear()
   directories.clear()
   pendingDirectories.clear()
+}
+
+export function invalidateFileSnapshot(path: string) {
+  const key = filePathKey(path)
+  for (const candidate of new Set([...snapshots.keys(), ...pending.keys()])) {
+    if (filePathKey(candidate) === key) {
+      snapshots.delete(candidate)
+      pending.delete(candidate)
+    }
+  }
 }
 
 export function getDirectorySnapshot(path: string): FileEntry[] | null {

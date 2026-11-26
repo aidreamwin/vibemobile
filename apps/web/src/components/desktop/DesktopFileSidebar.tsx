@@ -1,14 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ChevronRight, Columns2, FileCode2, FileImage, Folder, FolderOpen, GitBranch, RefreshCw } from 'lucide-react'
-import { isImageFile } from '../../lib/fileImage'
+import {
+  ChevronRight,
+  Columns2,
+  FileCode2,
+  FileImage,
+  FileVideo,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  RefreshCw,
+} from 'lucide-react'
+import { isImageFile, isVideoFile } from '../../lib/fileImage'
 import type { FileEntry } from '@vibemobile/protocol'
 import { api } from '../../lib/api'
-import { normalizeFilePath } from '../../lib/fileLink'
+import { filePathKey as pathKey } from '../../lib/fileLink'
+import FileActions from '../FileActions'
 import { useWorkspaceStore } from '../../lib/workspace'
 
 interface SidebarProps {
   activeFilePath: string | null
   visible?: boolean
+  canSplit: boolean
   onOpenFile: (path: string, name: string) => void
   onSplitFile: (path: string, name: string) => void
   onOpenDiff: () => void
@@ -30,14 +42,6 @@ interface TreeRow {
 
 const toolbarButton =
   'flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline focus-visible:outline-primary disabled:opacity-40'
-
-function pathKey(path: string): string {
-  // Paths belong to the runner, which may use a different OS than the browser.
-  if (/^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\')) {
-    return normalizeFilePath(path.replace(/\\/g, '/')).toLowerCase()
-  }
-  return normalizeFilePath(path)
-}
 
 function rowsInDirectory(
   directories: Record<string, Directory>,
@@ -84,6 +88,7 @@ function WorkspaceFileTree({
   rootPath,
   activeFilePath,
   visible = true,
+  canSplit,
   onOpenFile,
   onSplitFile,
   onOpenDiff,
@@ -91,31 +96,34 @@ function WorkspaceFileTree({
   const [directories, setDirectories] = useState<Record<string, Directory>>({})
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const [focusedPath, setFocusedPath] = useState<string | null>(null)
-  const pending = useRef(new Set<string>())
+  const pending = useRef(new Map<string, object>())
   const rowElements = useRef(new Map<string, HTMLDivElement>())
   const reveal = useRef<{ path: string | null; completed: boolean }>({ path: null, completed: false })
 
   const loadDirectory = useCallback(async (path: string) => {
     if (pending.current.has(path)) return
-    pending.current.add(path)
+    const request = {}
+    pending.current.set(path, request)
     setDirectories((previous) => ({
       ...previous,
       [path]: { entries: previous[path]?.entries, loading: true },
     }))
     try {
       const { data } = await api.files(path)
+      if (pending.current.get(path) !== request) return
       const entries = data.sort(
         (a, b) =>
           Number(b.type === 'directory') - Number(a.type === 'directory') || a.name.localeCompare(b.name, 'zh-CN'),
       )
       setDirectories((previous) => ({ ...previous, [path]: { entries } }))
     } catch (error) {
+      if (pending.current.get(path) !== request) return
       setDirectories((previous) => ({
         ...previous,
         [path]: { entries: previous[path]?.entries, error: (error as Error).message },
       }))
     } finally {
-      pending.current.delete(path)
+      if (pending.current.get(path) === request) pending.current.delete(path)
     }
   }, [])
 
@@ -181,8 +189,9 @@ function WorkspaceFileTree({
 
   function activateRow(entry: FileEntry, split = false) {
     if (entry.type === 'directory') setDirectoryOpen(entry.path, !expanded.has(entry.path))
-    else if (split) onSplitFile(entry.path, entry.name)
-    else onOpenFile(entry.path, entry.name)
+    else if (split) {
+      if (canSplit) onSplitFile(entry.path, entry.name)
+    } else onOpenFile(entry.path, entry.name)
   }
 
   function handleRowKey(event: KeyboardEvent<HTMLDivElement>, row: TreeRow, index: number) {
@@ -275,63 +284,88 @@ function WorkspaceFileTree({
             const isDirectory = entry.type === 'directory'
             const isOpen = isDirectory && expanded.has(entry.path)
             const isSelected = entry.path === selectedPath
-            const Icon = isDirectory ? (isOpen ? FolderOpen : Folder) : isImageFile(entry.path) ? FileImage : FileCode2
+            const Icon = isDirectory
+              ? isOpen
+                ? FolderOpen
+                : Folder
+              : isVideoFile(entry.path)
+                ? FileVideo
+                : isImageFile(entry.path)
+                  ? FileImage
+                  : FileCode2
             const indent = `min(${(level - 1) * 12 + 8}px, 40%)`
 
+            const rowElement = (
+              <div
+                ref={(element) => {
+                  if (element) rowElements.current.set(entry.path, element)
+                  else rowElements.current.delete(entry.path)
+                }}
+                role="treeitem"
+                aria-label={entry.name}
+                aria-level={level}
+                aria-posinset={position}
+                aria-setsize={siblings}
+                aria-expanded={isDirectory ? isOpen : undefined}
+                aria-selected={isSelected}
+                aria-keyshortcuts={isDirectory ? undefined : 'Shift+Enter'}
+                tabIndex={tabbablePath === entry.path ? 0 : -1}
+                style={{ paddingLeft: indent }}
+                onFocus={() => setFocusedPath(entry.path)}
+                onClick={() => activateRow(entry)}
+                onKeyDown={(event) => handleRowKey(event, row, index)}
+                className={`group flex h-7 cursor-pointer select-none items-center gap-1.5 rounded-md pr-1.5 text-[12.5px] transition-colors focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-primary ${
+                  isSelected
+                    ? 'bg-primary/12 font-medium text-foreground'
+                    : 'text-foreground/85 hover:bg-secondary/60 hover:text-foreground'
+                }`}
+              >
+                {isDirectory ? (
+                  <ChevronRight
+                    className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                    strokeWidth={1.6}
+                  />
+                ) : (
+                  <span className="size-3.5 shrink-0" />
+                )}
+                <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.5} />
+                <span className="min-w-0 truncate" title={entry.name}>
+                  {entry.name}
+                </span>
+                {!isDirectory && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    title={canSplit ? '分屏打开 (Shift+Enter)' : '已达到四分屏上限'}
+                    aria-label={`分屏打开 ${entry.name}`}
+                    disabled={!canSplit}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onSplitFile(entry.path, entry.name)
+                    }}
+                    className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-raised hover:text-foreground focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 disabled:opacity-30"
+                  >
+                    <Columns2 className="size-3" strokeWidth={1.6} />
+                  </button>
+                )}
+              </div>
+            )
             return (
               <div key={entry.path} role="none">
-                <div
-                  ref={(element) => {
-                    if (element) rowElements.current.set(entry.path, element)
-                    else rowElements.current.delete(entry.path)
-                  }}
-                  role="treeitem"
-                  aria-label={entry.name}
-                  aria-level={level}
-                  aria-posinset={position}
-                  aria-setsize={siblings}
-                  aria-expanded={isDirectory ? isOpen : undefined}
-                  aria-selected={isSelected}
-                  aria-keyshortcuts={isDirectory ? undefined : 'Shift+Enter'}
-                  tabIndex={tabbablePath === entry.path ? 0 : -1}
-                  style={{ paddingLeft: indent }}
-                  onFocus={() => setFocusedPath(entry.path)}
-                  onClick={() => activateRow(entry)}
-                  onKeyDown={(event) => handleRowKey(event, row, index)}
-                  className={`group flex h-7 cursor-pointer select-none items-center gap-1.5 rounded-md pr-1.5 text-[12.5px] transition-colors focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-primary ${
-                    isSelected
-                      ? 'bg-primary/12 font-medium text-foreground'
-                      : 'text-foreground/85 hover:bg-secondary/60 hover:text-foreground'
-                  }`}
-                >
-                  {isDirectory ? (
-                    <ChevronRight
-                      className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                      strokeWidth={1.6}
-                    />
-                  ) : (
-                    <span className="size-3.5 shrink-0" />
-                  )}
-                  <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.5} />
-                  <span className="min-w-0 truncate" title={entry.name}>
-                    {entry.name}
-                  </span>
-                  {!isDirectory && (
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      title="分屏打开 (Shift+Enter)"
-                      aria-label={`分屏打开 ${entry.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onSplitFile(entry.path, entry.name)
-                      }}
-                      className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-raised hover:text-foreground focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-                    >
-                      <Columns2 className="size-3" strokeWidth={1.6} />
-                    </button>
-                  )}
-                </div>
+                {isDirectory ? (
+                  rowElement
+                ) : (
+                  <FileActions
+                    entry={entry}
+                    root={rootPath}
+                    onChanged={() => {
+                      pending.current.delete(row.parent)
+                      void loadDirectory(row.parent)
+                    }}
+                  >
+                    {rowElement}
+                  </FileActions>
+                )}
                 {isOpen && (!directory?.entries?.length || directory.error) && (
                   <div
                     role="none"

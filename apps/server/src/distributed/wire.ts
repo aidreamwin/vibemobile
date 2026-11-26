@@ -13,7 +13,7 @@ export const MAX_CHANNELS = 64
 export const TIMEOUT = 120_000
 
 export type Frame =
-  | { type: 'http'; id: string; method: string; path: string; body?: string }
+  | { type: 'http'; id: string; method: string; path: string; body?: string; range?: string }
   | { type: 'response'; id: string; status: number; headers: Record<string, string>; body: string }
   | { type: 'open'; id: string; path: string }
   | { type: 'data'; id: string; body: string; binary: boolean }
@@ -28,7 +28,7 @@ export function allowedPath(value: string, ws = false): boolean {
   if (ws) return pathname === '/ws' || pathname === '/ws/terminal'
   if (pathname === '/api/agent-profiles/antigravity/key') return true
   return (
-    /^\/api\/(?:health|features|providers(?:\/[^/]+\/models)?|projects|sessions(?:\/[^/]+(?:\/(?:open|fork))?)?|files(?:\/(?:content|diff|image))?|images\/[^/]+|agents(?:\/[^/]+\/(?:update|check))?|codex\/global(?:\/(?:document|skills))?|agent-profiles(?:\/(?:codex|claude|opencode|antigravity)(?:\/(?:profile-[a-f0-9]{16}|native)(?:\/activate|\/models)?|\/models)?)?|system\/update(?:\/check)?)$/.test(
+    /^\/api\/(?:health|features|providers(?:\/[^/]+\/models)?|projects|sessions(?:\/[^/]+(?:\/(?:open|fork))?)?|files(?:\/(?:content|diff|image|download|video))?|images\/[^/]+|agents(?:\/[^/]+\/(?:update|check))?|codex\/global(?:\/(?:document|skills))?|agent-profiles(?:\/(?:codex|claude|opencode|antigravity)(?:\/(?:profile-[a-f0-9]{16}|native)(?:\/activate|\/models)?|\/models)?)?|system\/update(?:\/check)?)$/.test(
       pathname,
     ) && !/%(?:2f|5c|2e)/i.test(pathname)
   )
@@ -45,7 +45,9 @@ export function parseFrame(raw: RawData): Frame {
       if (
         !str('path') ||
         !str('method') ||
-        !['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(f.method as string) ||
+        !['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(f.method as string) ||
+        (f.range !== undefined &&
+          (typeof f.range !== 'string' || !/^bytes=\d+-\d+$/.test(f.range) || f.range.length > 64)) ||
         (f.body !== undefined && !str('body'))
       )
         break
@@ -99,6 +101,7 @@ export function sendData(socket: WebSocket, raw: RawData, binary: boolean): bool
 }
 
 export const RESPONSE_HEADERS = ['content-type', 'cache-control', 'x-content-type-options', 'retry-after']
+export const TRANSFER_HEADERS = ['content-disposition', 'content-length', 'content-range', 'accept-ranges', 'etag']
 
 export function rawBuffer(raw: RawData): Buffer {
   return Array.isArray(raw) ? Buffer.concat(raw) : Buffer.isBuffer(raw) ? raw : Buffer.from(raw)

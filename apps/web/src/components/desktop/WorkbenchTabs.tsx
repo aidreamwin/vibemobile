@@ -1,8 +1,8 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
-import { Bot, ChevronLeft, ChevronRight, FileCode2, FileImage, GitBranch, Settings, X } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, FileCode2, FileImage, FileVideo, GitBranch, Settings, X } from 'lucide-react'
 import { ContextMenu } from 'radix-ui'
 import type { WorkbenchTab } from '../../lib/workbench'
-import { isImageFile } from '../../lib/fileImage'
+import { isImageFile, isVideoFile } from '../../lib/fileImage'
 
 function TabStatusDot({ tab }: { tab: WorkbenchTab }) {
   if (tab.kind !== 'chat' || !tab.status || tab.status === 'idle') return null
@@ -24,7 +24,9 @@ function TabIcon({ tab }: { tab: WorkbenchTab }) {
     case 'chat':
       return <Bot className={cls} strokeWidth={1.5} />
     case 'file':
-      return isImageFile(tab.path) ? (
+      return isVideoFile(tab.path) ? (
+        <FileVideo className={cls} strokeWidth={1.5} />
+      ) : isImageFile(tab.path) ? (
         <FileImage className={cls} strokeWidth={1.5} />
       ) : (
         <FileCode2 className={cls} strokeWidth={1.5} />
@@ -44,6 +46,8 @@ export default function WorkbenchTabs({
   onSelect,
   onClose,
   onCloseAll,
+  onSplit,
+  compact = false,
   menuContainer,
 }: {
   tabs: WorkbenchTab[]
@@ -53,6 +57,8 @@ export default function WorkbenchTabs({
   onSelect: (id: string) => void
   onClose: (id: string) => void
   onCloseAll: (id: string) => void
+  onSplit?: (id: string) => void
+  compact?: boolean
   menuContainer: HTMLElement | null
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -105,7 +111,7 @@ export default function WorkbenchTabs({
 
   return (
     <div ref={containerRef} className="flex h-full min-w-0 flex-1 items-center">
-      {edges.overflow && (
+      {!compact && edges.overflow && (
         <button
           type="button"
           aria-label="向左滚动标签"
@@ -122,7 +128,12 @@ export default function WorkbenchTabs({
         onScroll={measure}
         className="h-full min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        <div ref={tabsRef} role="tablist" aria-label={label} className="flex h-full w-max items-center gap-1 px-1">
+        <div
+          ref={tabsRef}
+          role="tablist"
+          aria-label={label}
+          className={`flex h-full items-center gap-1 px-1 ${compact ? 'w-full' : 'w-max'}`}
+        >
           {tabs.map((tab, index) => {
             const isActive = tab.id === activeTabId
             const isSecondary = tab.id === secondaryTabId
@@ -164,7 +175,7 @@ export default function WorkbenchTabs({
                         onSelect(tab.id)
                       }
                     }}
-                    className={`workbench-tab group relative flex h-[30px] max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors select-none ${
+                    className={`workbench-tab group relative flex h-[30px] cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors select-none ${compact ? 'min-w-0 flex-1' : 'max-w-[220px] shrink-0'} ${
                       isActive
                         ? 'bg-[var(--workbench-selection)] font-medium text-foreground'
                         : isSecondary
@@ -173,7 +184,7 @@ export default function WorkbenchTabs({
                     }`}
                   >
                     <TabIcon tab={tab} />
-                    <span className="truncate">{tab.title}</span>
+                    <span className="min-w-0 truncate">{tab.title}</span>
                     <TabStatusDot tab={tab} />
                     <button
                       type="button"
@@ -199,9 +210,16 @@ export default function WorkbenchTabs({
                       关闭标签页
                     </ContextMenu.Item>
                     {tab.kind !== 'settings' && (
-                      <ContextMenu.Item className={menuItemClass} onSelect={() => onCloseAll(tab.id)}>
-                        {tab.kind === 'chat' ? '关闭全部 Agent 标签' : '关闭全部文件标签'}
-                      </ContextMenu.Item>
+                      <>
+                        {onSplit && !isActive && (
+                          <ContextMenu.Item className={menuItemClass} onSelect={() => onSplit(tab.id)}>
+                            在新分屏中打开
+                          </ContextMenu.Item>
+                        )}
+                        <ContextMenu.Item className={menuItemClass} onSelect={() => onCloseAll(tab.id)}>
+                          {tab.kind === 'chat' ? '关闭全部 Agent 标签' : '关闭全部文件标签'}
+                        </ContextMenu.Item>
+                      </>
                     )}
                   </ContextMenu.Content>
                 </ContextMenu.Portal>
@@ -210,7 +228,7 @@ export default function WorkbenchTabs({
           })}
         </div>
       </div>
-      {edges.overflow && (
+      {!compact && edges.overflow && (
         <button
           type="button"
           aria-label="向右滚动标签"

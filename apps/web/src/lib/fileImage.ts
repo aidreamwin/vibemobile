@@ -9,3 +9,11 @@ export function isSvgImage(path: string): boolean {
 export function isImageFile(path: string): boolean {
   return isRasterImage(path) || isSvgImage(path)
 }
+
+export function isVideoFile(path: string): boolean {
+  return /\.(?:mp4|m4v|webm|ogv|ogg|mov)$/i.test(path)
+}
+
+export function isNativeMedia(path: string): boolean {
+  return isRasterImage(path) || isVideoFile(path)
+}

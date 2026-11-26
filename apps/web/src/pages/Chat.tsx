@@ -882,7 +882,7 @@ function ChatView({
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className={`scroll-y h-full ${embedded ? 'px-4 py-5 lg:px-6' : 'px-3.5 py-4'}`}
+          className={`scroll-y h-full ${embedded ? 'workbench-chat-scroll px-4 py-5 lg:px-6' : 'px-3.5 py-4'}`}
         >
           <div className={embedded ? 'mx-auto max-w-4xl' : undefined}>
             {items.length === 0 && !loading && (

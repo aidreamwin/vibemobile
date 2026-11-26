@@ -7,8 +7,11 @@ import {
   readFileImage,
   readFileText,
   writeFileText,
+  renameWorkspaceFile,
+  deleteWorkspaceFile,
   WorkspaceError,
 } from '../files/workspace.js'
+import { sendFileTransfer } from '../files/transfer.js'
 
 /**
  * How much JSON a save may be.
@@ -60,6 +63,45 @@ export function registerFileRoutes(app: FastifyInstance, config: Config): void {
     reply.header('Cache-Control', 'private, max-age=0')
     reply.header('X-Content-Type-Options', 'nosniff')
     return reply.type(image.mime).send(image.body)
+  })
+
+  for (const kind of ['download', 'video'] as const) {
+    app.route<{ Querystring: { path: string } }>({
+      method: ['GET', 'HEAD'],
+      url: `/api/files/${kind}`,
+      ...auth,
+      handler: async (req, reply) => {
+        if (!req.query.path) return reply.code(400).send({ error: 'path is required' })
+        return wrap(
+          () =>
+            sendFileTransfer(
+              config.workspaceRoots,
+              req.query.path,
+              kind === 'video',
+              req.headers.range,
+              req.method === 'HEAD',
+              reply,
+            ),
+          reply,
+        )
+      },
+    })
+  }
+
+  app.patch<{ Body: { path?: string; name?: string } }>('/api/files', auth, async (req, reply) => {
+    const { path, name } = req.body ?? {}
+    if (typeof path !== 'string' || typeof name !== 'string')
+      return reply.code(400).send({ error: 'path and name are required' })
+    return wrap(() => renameWorkspaceFile(config.workspaceRoots, path, name), reply)
+  })
+  app.delete<{ Body: { path?: string; confirmed?: boolean } }>('/api/files', auth, async (req, reply) => {
+    const { path, confirmed } = req.body ?? {}
+    if (typeof path !== 'string' || confirmed !== true)
+      return reply.code(400).send({ error: 'confirmed file path is required' })
+    return wrap(async () => {
+      await deleteWorkspaceFile(config.workspaceRoots, path)
+      return { ok: true }
+    }, reply)
   })
 
   /**

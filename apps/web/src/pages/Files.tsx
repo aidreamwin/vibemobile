@@ -9,6 +9,7 @@ import {
   Search,
   ArrowUpDown,
   FileImage,
+  FileVideo,
   FileCode2,
   FileText,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   LoaderCircle,
   FileWarning,
   WrapText,
+  Download,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -40,7 +42,7 @@ import ToolbarRow from '../components/ToolbarRow'
 import RunnerSelector from '../components/RunnerSelector'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FileContent, FileEntry } from '@vibemobile/protocol'
-import { api, ApiError } from '../lib/api'
+import { api, ApiError, fileDownloadUrl } from '../lib/api'
 import { formatBytes, shortPath } from '../lib/format'
 import {
   getDirectorySnapshot,
@@ -49,12 +51,15 @@ import {
   readDirectorySnapshot,
   readFileSnapshot,
   rememberFileSnapshot,
+  fileDrafts as drafts,
+  savingFiles,
 } from '../lib/fileSnapshots'
 import { isPathInside, parentPath, useWorkspaceStore } from '../lib/workspace'
 import { UnifiedDiff } from '../components/DiffView'
 import FileBody, { isRenderable } from '../components/FileBody'
-import ImageFilePreview from '../components/ImageFilePreview'
-import { isImageFile, isRasterImage } from '../lib/fileImage'
+import MediaFilePreview from '../components/MediaFilePreview'
+import FileActions from '../components/FileActions'
+import { isImageFile, isNativeMedia, isVideoFile } from '../lib/fileImage'
 import { fileReadError } from '../lib/fileErrors'
 import FileEditor, { MAX_EDIT_LINES } from '../components/FileEditor'
 import { useDocumentTitle } from '../lib/title'
@@ -90,7 +95,6 @@ const offsets = new Map<string, number>()
  * being pushed into `localStorage`: it belongs to this browsing session, not to
  * the device, and a stale draft restored a week later would be a trap.
  */
-const drafts = new Map<string, { text: string; base: FileContent }>()
 
 /** Which screen a scroll offset belongs to. */
 function viewKey(view: View): string {
@@ -135,7 +139,7 @@ export default function Files({
     lastView && (!defaultCwd || inWorkspace(lastView, defaultCwd)) ? lastView : { kind: 'list', path: defaultCwd },
   )
   const view = fixedView ?? browserView
-  const rasterImage = view.kind === 'file' && isRasterImage(view.path)
+  const nativeMedia = view.kind === 'file' && isNativeMedia(view.path)
   useDocumentTitle(
     embedded || !visible
       ? ''
@@ -150,7 +154,7 @@ export default function Files({
     view.kind === 'list' ? (getDirectorySnapshot(view.path) ?? EMPTY_ENTRIES) : EMPTY_ENTRIES,
   )
   const [content, setContent] = useState(() =>
-    view.kind === 'file' && !rasterImage ? getFileSnapshot(view.path) : null,
+    view.kind === 'file' && !nativeMedia ? getFileSnapshot(view.path) : null,
   )
   const [diff, setDiff] = useState('')
   // Markdown opens rendered; the header's code/eye button flips it back.
@@ -163,11 +167,12 @@ export default function Files({
   const [discardOpen, setDiscardOpen] = useState(false)
 
   const [loading, setLoading] = useState(() =>
-    view.kind === 'list' ? !getDirectorySnapshot(view.path) : !content && !rasterImage,
+    view.kind === 'list' ? !getDirectorySnapshot(view.path) : !content && !nativeMedia,
   )
   const [error, setError] = useState<string | null>(null)
   /** Bumped by 刷新, so re-reading the same view is one more fetch. */
   const [reload, setReload] = useState(0)
+  const refresh = useCallback(() => setReload((n) => n + 1), [])
   const lastReload = useRef(reload)
 
   // Editing state lives here rather than inside `FileEditor`, because three
@@ -250,7 +255,7 @@ export default function Files({
     // `loading` moves in the same tick as the view on purpose: the fetch below
     // only starts after the render that shows the new screen, and without this
     // that render would carry the *previous* screen's rows or file body.
-    const image = next.kind === 'file' && isRasterImage(next.path)
+    const image = next.kind === 'file' && isNativeMedia(next.path)
     const cached = next.kind === 'file' && !image ? getFileSnapshot(next.path) : null
     const cachedEntries = next.kind === 'list' ? getDirectorySnapshot(next.path) : null
     const restoredDraft = next.kind === 'file' ? drafts.get(next.path) : undefined
@@ -310,6 +315,7 @@ export default function Files({
   async function save() {
     if (!editBase || view.kind !== 'file' || !dirty || saving) return
     setSaving(true)
+    savingFiles.add(view.path)
     setSaveError(null)
     try {
       const saved = await api.saveFile(view.path, draft, editBase.rev)
@@ -341,6 +347,7 @@ export default function Files({
         setSaveError((err as Error).message)
       }
     } finally {
+      savingFiles.delete(view.path)
       setSaving(false)
     }
   }
@@ -367,7 +374,7 @@ export default function Files({
     if (!visible || editing) return
     if (view.kind === 'list' && !view.path) return
     if (view.kind === 'diff' && !defaultCwd) return
-    if (rasterImage) {
+    if (nativeMedia) {
       lastReload.current = reload
       setLoading(false)
       setError(null)
@@ -411,7 +418,7 @@ export default function Files({
     return () => {
       cancelled = true
     }
-  }, [view, defaultCwd, fixedView, reload, visible, rasterImage, editing])
+  }, [view, defaultCwd, fixedView, reload, visible, nativeMedia, editing])
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
@@ -522,7 +529,6 @@ export default function Files({
     view.kind === 'list'
       ? [canGoBack ? shortPath(backDirectory, 1) : '工作区', directoryCount].filter(Boolean).join(' · ')
       : fileDetail
-  const refresh = () => setReload((n) => n + 1)
   const closeSearch = () => {
     setSearchOpen(false)
     setQuery('')
@@ -631,6 +637,13 @@ export default function Files({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-44 rounded-xl border-border p-1 shadow-xl">
+                  {view.kind === 'file' && (
+                    <DropdownMenuItem asChild className="min-h-11 rounded-lg">
+                      <a href={fileDownloadUrl(view.path)} download>
+                        <Download /> 下载文件
+                      </a>
+                    </DropdownMenuItem>
+                  )}
                   {view.kind === 'list' && (
                     <DropdownMenuCheckboxItem
                       checked={sortByName}
@@ -640,7 +653,7 @@ export default function Files({
                       <ArrowUpDown /> 按名称排序
                     </DropdownMenuCheckboxItem>
                   )}
-                  {view.kind === 'file' && !rasterImage && (!preview || !isRenderable(view.path)) && (
+                  {view.kind === 'file' && !nativeMedia && (!preview || !isRenderable(view.path)) && (
                     <DropdownMenuCheckboxItem checked={wrap} onCheckedChange={setWrap} className="min-h-11 rounded-lg">
                       <WrapText /> 自动换行
                     </DropdownMenuCheckboxItem>
@@ -744,10 +757,16 @@ export default function Files({
             </button>
           </div>
         ) : view.kind === 'list' ? (
-          <DirectoryList entries={visibleEntries} filtered={Boolean(searchQuery)} onOpen={openEntry} />
+          <DirectoryList
+            entries={visibleEntries}
+            filtered={Boolean(searchQuery)}
+            onOpen={openEntry}
+            root={defaultCwd}
+            onChanged={refresh}
+          />
         ) : view.kind === 'file' ? (
-          rasterImage ? (
-            <ImageFilePreview key={`${view.path}:${reload}`} path={view.path} refresh={reload > 0} />
+          nativeMedia ? (
+            <MediaFilePreview key={`${view.path}:${reload}`} path={view.path} refresh={reload > 0} visible={visible} />
           ) : (
             content && (
               <FileBody
@@ -773,15 +792,19 @@ const DirectoryList = memo(function DirectoryList({
   entries,
   filtered,
   onOpen,
+  root,
+  onChanged,
 }: {
   entries: FileEntry[]
   filtered: boolean
   onOpen: (entry: FileEntry) => void
+  root: string
+  onChanged: () => void
 }) {
   return (
     <ul className="divide-y divide-border/70 overflow-hidden px-3 py-1">
       {entries.map((entry) => (
-        <DirectoryRow key={entry.path} entry={entry} onOpen={onOpen} />
+        <DirectoryRow key={entry.path} entry={entry} onOpen={onOpen} root={root} onChanged={onChanged} />
       ))}
       {entries.length === 0 && (
         <li className="flex flex-col items-center gap-3 py-16 text-center text-sm text-muted-foreground">
@@ -800,20 +823,26 @@ const DirectoryList = memo(function DirectoryList({
 const DirectoryRow = memo(function DirectoryRow({
   entry,
   onOpen,
+  root,
+  onChanged,
 }: {
   entry: FileEntry
   onOpen: (entry: FileEntry) => void
+  root: string
+  onChanged: () => void
 }) {
   const directory = entry.type === 'directory'
   const Icon = directory
     ? Folder
-    : isImageFile(entry.path)
-      ? FileImage
-      : /\.(?:md|txt|log|rst)$/i.test(entry.path)
-        ? FileText
-        : FileCode2
+    : isVideoFile(entry.path)
+      ? FileVideo
+      : isImageFile(entry.path)
+        ? FileImage
+        : /\.(?:md|txt|log|rst)$/i.test(entry.path)
+          ? FileText
+          : FileCode2
   return (
-    <li className="[content-visibility:auto] [contain-intrinsic-block-size:auto_49px]">
+    <li className="flex items-center [content-visibility:auto] [contain-intrinsic-block-size:auto_49px]">
       <button
         type="button"
         onClick={() => onOpen(entry)}
@@ -835,6 +864,7 @@ const DirectoryRow = memo(function DirectoryRow({
           </span>
         )}
       </button>
+      {!directory && <FileActions mobile entry={entry} root={root} onChanged={onChanged} />}
     </li>
   )
 })

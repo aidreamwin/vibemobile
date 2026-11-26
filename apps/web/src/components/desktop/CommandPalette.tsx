@@ -122,7 +122,7 @@ export default function CommandPalette({
       },
       {
         id: 'cmd:toggle-split',
-        label: '切换分屏',
+        label: '增加分屏',
         shortcut: mod + '\\',
         icon: <Columns2 className="size-4 text-muted-foreground" strokeWidth={1.5} />,
         run: () => toggleSplit(),

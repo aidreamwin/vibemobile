@@ -41,9 +41,12 @@ function Collapsible({
   defaultOpen?: boolean
   desktop?: boolean
   monospace?: boolean
-  children: React.ReactNode
+  children?: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const hasDetails = Boolean(children)
+  const Header = hasDetails ? 'button' : 'div'
+  const expanded = hasDetails && open
   const stacked = !desktop || monospace || meta !== undefined
   return (
     <div
@@ -53,11 +56,11 @@ function Collapsible({
           : 'overflow-hidden rounded-xl border border-border bg-card shadow-sm'
       }
     >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left active:bg-secondary ${desktop ? 'min-h-11 hover:bg-secondary/70' : 'tap'}`}
+      <Header
+        type={hasDetails ? 'button' : undefined}
+        aria-expanded={hasDetails ? expanded : undefined}
+        onClick={hasDetails ? () => setOpen((v) => !v) : undefined}
+        className={`flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left ${desktop ? 'workbench-tool-header min-h-11' : 'min-h-11'} ${hasDetails ? (desktop ? 'active:bg-secondary hover:bg-secondary/70' : 'tap active:bg-secondary') : ''}`}
       >
         <div className={`flex min-w-0 flex-1 ${stacked ? 'flex-col gap-1' : 'items-center gap-3'}`}>
           <div
@@ -82,18 +85,20 @@ function Collapsible({
             </span>
           )}
         </div>
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-        >
-          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {open && <div className="border-t border-border bg-secondary">{children}</div>}
+        {hasDetails && (
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+          >
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </Header>
+      {expanded && <div className="border-t border-border bg-secondary">{children}</div>}
     </div>
   )
 }
@@ -137,7 +142,6 @@ type ToolItem = Extract<AgentItem, { kind: 'tool' }>
 
 interface ReadFileInput {
   params: Record<string, unknown>
-  pathKey: string
   path: string
 }
 
@@ -146,48 +150,23 @@ function readFileInput(input: unknown): ReadFileInput | null {
   const params = input as Record<string, unknown>
   for (const key of ['Path', 'file_path', 'filePath', 'path', 'file']) {
     const value = params[key]
-    if (typeof value === 'string' && value.trim()) return { params, pathKey: key, path: value }
+    if (typeof value === 'string' && value.trim()) return { params, path: value }
   }
   return null
 }
 
 function readFileRange(params: Record<string, unknown>): string | undefined {
   const { StartLine: start, EndLine: end } = params
-  if (typeof start !== 'number' || !Number.isInteger(start) || start < 1) return undefined
-  if (typeof end !== 'number' || !Number.isInteger(end) || end < start) return `从第 ${start} 行`
-  return `第 ${start}${end > start ? `–${end}` : ''} 行`
-}
-
-const readParameterLabels = new Map([
-  ['StartLine', '起始行'],
-  ['EndLine', '结束行'],
-  ['offset', '偏移量'],
-  ['limit', '读取上限'],
-])
-
-function ReadFileDetails({ read }: { read: ReadFileInput }) {
-  const keys = new Set(['StartLine', 'EndLine', 'offset', 'limit', ...Object.keys(read.params)])
-  keys.delete(read.pathKey)
-  return (
-    <dl className="scroll-y flex max-h-80 flex-wrap items-start gap-x-6 gap-y-3 px-3.5 py-3">
-      <div className="w-full min-w-0">
-        <dt className="text-xs leading-5 text-muted-foreground">文件路径</dt>
-        <dd className="mt-0.5 wrap-anywhere whitespace-pre-wrap font-mono text-[13px] leading-relaxed">{read.path}</dd>
-      </div>
-      {[...keys]
-        .filter((key) => Object.hasOwn(read.params, key))
-        .map((key) => (
-          <div key={key} className="min-w-0 max-w-full">
-            <dt className="wrap-anywhere text-xs leading-5 text-muted-foreground">
-              {readParameterLabels.get(key) ?? key}
-            </dt>
-            <dd className="mt-0.5 wrap-anywhere whitespace-pre-wrap font-mono text-[13px] leading-relaxed">
-              {show(read.params[key])}
-            </dd>
-          </div>
-        ))}
-    </dl>
-  )
+  if (typeof start === 'number' && Number.isInteger(start) && start >= 1) {
+    if (typeof end !== 'number' || !Number.isInteger(end) || end < start) return `从第 ${start} 行`
+    return `第 ${start}${end > start ? `–${end}` : ''} 行`
+  }
+  const parts = [
+    typeof params.offset === 'number' && Number.isInteger(params.offset) ? `偏移 ${params.offset}` : null,
+    typeof params.limit === 'number' && Number.isInteger(params.limit) ? `读取上限 ${params.limit}` : null,
+    typeof params.pages === 'string' && params.pages.trim() ? `页码 ${params.pages}` : null,
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
 }
 
 function ToolSection({ label, text }: { label: string; text: string }) {
@@ -199,15 +178,11 @@ function ToolSection({ label, text }: { label: string; text: string }) {
   )
 }
 
-function ToolDetails({ item, read }: { item: ToolItem; read: ReadFileInput | null }) {
+function ToolDetails({ item }: { item: ToolItem }) {
   if (item.input === undefined && !item.output && !item.error) return <Pre text="" />
   return (
     <div className="divide-y divide-border">
-      {read ? (
-        <ReadFileDetails read={read} />
-      ) : (
-        item.input !== undefined && <ToolSection label="参数" text={show(item.input)} />
-      )}
+      {item.input !== undefined && <ToolSection label="参数" text={show(item.input)} />}
       {item.output && <ToolSection label="输出" text={item.output} />}
       {item.error && <ToolSection label="错误" text={item.error} />}
     </div>
@@ -484,6 +459,7 @@ const ItemCard = memo(function ItemCard({
     case 'tool': {
       const isRead = item.label === '读取文件' || /^(read|read_file)$/i.test(item.name)
       const read = isRead ? readFileInput(item.input) : null
+      const hasOutput = Boolean(item.output?.trim() || item.error?.trim())
       const separator = read ? Math.max(read.path.lastIndexOf('/'), read.path.lastIndexOf('\\')) : -1
       const subtitle = read
         ? [read.path.slice(separator + 1) || read.path, separator > 0 ? read.path.slice(0, separator) : null]
@@ -506,7 +482,16 @@ const ItemCard = memo(function ItemCard({
           status={item.status}
           desktop={desktop}
         >
-          <ToolDetails item={item} read={read} />
+          {isRead ? (
+            hasOutput ? (
+              <div className="divide-y divide-border">
+                {item.output?.trim() && <Pre text={item.output} />}
+                {item.error?.trim() && <ToolSection label="错误" text={item.error} />}
+              </div>
+            ) : null
+          ) : (
+            <ToolDetails item={item} />
+          )}
         </Collapsible>
       )
     }

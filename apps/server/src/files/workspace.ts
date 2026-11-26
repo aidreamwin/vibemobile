@@ -301,6 +301,53 @@ export async function writeFileText(
 
 // --------------------------------------------------------------------- git
 
+async function regularFile(roots: string[], candidate: string) {
+  const file = resolveInside(roots, candidate)
+  const stat = await fs.lstat(file).catch(() => null)
+  if (!stat?.isFile()) throw new WorkspaceError('not a regular file', 404)
+  return file
+}
+
+export async function renameWorkspaceFile(roots: string[], candidate: string, name: string): Promise<FileEntry> {
+  const source = await regularFile(roots, candidate)
+  if (
+    typeof name !== 'string' ||
+    !name.trim() ||
+    name === '.' ||
+    name === '..' ||
+    /[<>:"/\\|?*]/.test(name) ||
+    [...name].some((character) => character.charCodeAt(0) < 32) ||
+    (process.platform === 'win32' && /[. ]$/.test(name))
+  ) {
+    throw new WorkspaceError('invalid file name')
+  }
+  const target = resolveInside(roots, path.join(path.dirname(source), name))
+  if (source !== target) {
+    try {
+      // Linking reserves the destination without overwriting an existing file.
+      await fs.link(source, target)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new WorkspaceError('file name already exists', 409)
+      throw new WorkspaceError('cannot rename file', 400)
+    }
+    try {
+      await fs.unlink(source)
+    } catch {
+      await fs.unlink(target).catch(() => {})
+      throw new WorkspaceError('cannot rename file', 400)
+    }
+  }
+  const stat = await fs.stat(target)
+  return { name, path: target, type: 'file', size: stat.size }
+}
+
+export async function deleteWorkspaceFile(roots: string[], candidate: string): Promise<void> {
+  const file = await regularFile(roots, candidate)
+  await fs.unlink(file).catch(() => {
+    throw new WorkspaceError('cannot delete file', 400)
+  })
+}
+
 function git(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(

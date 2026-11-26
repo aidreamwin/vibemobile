@@ -30,7 +30,7 @@ export class RunnerTunnel {
     socket.on('error', () => this.dispose())
   }
 
-  request(method: string, path: string, body?: string): Promise<Response> {
+  request(method: string, path: string, body?: string, range?: string): Promise<Response> {
     if (this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new RunnerOfflineError())
     if (this.pending.size >= MAX_CHANNELS)
       return Promise.reject(Object.assign(new Error('runner_busy'), { statusCode: 429 }))
@@ -42,7 +42,17 @@ export class RunnerTunnel {
         reject(Object.assign(new Error('runner_timeout_result_unknown'), { statusCode: 504 }))
       }, TIMEOUT)
       this.pending.set(id, { resolve, reject, timer })
-      if (!sendFrame(this.socket, { type: 'http', id, method, path, ...(body ? { body } : {}) })) this.dispose()
+      if (
+        !sendFrame(this.socket, {
+          type: 'http',
+          id,
+          method,
+          path,
+          ...(body ? { body } : {}),
+          ...(range ? { range } : {}),
+        })
+      )
+        this.dispose()
     })
   }
 

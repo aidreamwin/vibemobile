@@ -14,7 +14,6 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
   Bot,
-  Columns2,
   Files as FilesIcon,
   FolderOpen,
   GitBranch,
@@ -29,7 +28,7 @@ import type { SessionStatus, SessionSummary } from '@vibemobile/protocol'
 import RunnerSelector from '../RunnerSelector'
 import UpdateBanner from '../UpdateBanner'
 import { SheetPresentation } from '../Sheet'
-import { SIDEBAR_MAX, SIDEBAR_MIN, useWorkbenchStore, type WorkbenchTab } from '../../lib/workbench'
+import { MAX_PANES, SIDEBAR_MAX, SIDEBAR_MIN, useWorkbenchStore, type WorkbenchTab } from '../../lib/workbench'
 import { pathAfterScope } from '../../lib/runner'
 import { api } from '../../lib/api'
 import { socket } from '../../lib/ws'
@@ -39,7 +38,8 @@ import { useWorkspaceStore } from '../../lib/workspace'
 import { useApprovalStore } from '../../lib/approvals'
 import type { FileRef } from '../../lib/fileLink'
 import WorkbenchTabs from './WorkbenchTabs'
-import WorkbenchSplitDivider from './WorkbenchSplitDivider'
+import WorkbenchSplitDivider, { columnTracks } from './WorkbenchSplitDivider'
+import { PaneContentMenu, WorkbenchLayoutMenu } from './WorkbenchLayoutMenu'
 import TerminalDrawer from './TerminalDrawer'
 import InspectorPane from './InspectorPane'
 import CommandPalette from './CommandPalette'
@@ -66,8 +66,8 @@ function EmptyWorkbench({
   actions: { label: string; icon: ReactNode; run: () => void; key?: string; disabled?: boolean }[]
 }) {
   return (
-    <div className="grid h-full place-items-center overflow-y-auto px-7 py-10">
-      <div className="w-full max-w-[380px]">
+    <div className="workbench-empty grid h-full min-w-0 place-items-center overflow-y-auto px-7 py-10">
+      <div className="w-full min-w-0 max-w-[380px]">
         <div className="mb-6 flex items-center gap-3.5">
           <div className="grid size-11 shrink-0 place-items-center rounded-[12px] border border-primary/20 bg-primary/8 text-primary">
             <FolderOpen className="size-5" strokeWidth={1.6} />
@@ -139,13 +139,11 @@ function ChromeButton({
 
 const WorkbenchPane = memo(function WorkbenchPane({
   tab,
-  split,
   visible,
   onLogout,
   onSelectSessionId,
 }: {
   tab: WorkbenchTab
-  split: boolean
   visible: boolean
   onLogout: () => void
   onSelectSessionId: (id: string) => void
@@ -185,7 +183,6 @@ const WorkbenchPane = memo(function WorkbenchPane({
           threadId={threadId}
           embedded
           visible={visible}
-          showPaneTitle={split}
           onSessionMeta={handleSessionMeta}
           onOpenFileTab={openChatFile}
           onSelectSession={onSelectSessionId}
@@ -216,8 +213,11 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
 
   const tabs = useWorkbenchStore((s) => s.tabs)
   const activeTabId = useWorkbenchStore((s) => s.activeTabId)
-  const secondaryTabId = useWorkbenchStore((s) => s.secondaryTabId)
-  const splitEnabled = useWorkbenchStore((s) => s.splitEnabled)
+  const paneIds = useWorkbenchStore((s) => s.paneIds)
+  const focusedPane = useWorkbenchStore((s) => s.focusedPane)
+  const focusPane = useWorkbenchStore((s) => s.focusPane)
+  const showTabInPane = useWorkbenchStore((s) => s.showTabInPane)
+  const splitTab = useWorkbenchStore((s) => s.splitTab)
   const sidebarOpen = useWorkbenchStore((s) => s.sidebarOpen)
   const sidebarTab = useWorkbenchStore((s) => s.sidebarTab)
   const sidebarWidth = useWorkbenchStore((s) => s.sidebarWidth)
@@ -242,8 +242,13 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   const setCommandPaletteOpen = useWorkbenchStore((s) => s.setCommandPaletteOpen)
   const splitRatio = useWorkbenchStore((s) => s.splitRatio)
   const agentSplitRatio = useWorkbenchStore((s) => s.agentSplitRatio)
-  const agentPanePosition = useWorkbenchStore((s) => s.agentPanePosition)
   const setSplitRatio = useWorkbenchStore((s) => s.setSplitRatio)
+  const gridColumnRatio = useWorkbenchStore((s) => s.gridColumnRatio)
+  const gridRowRatio = useWorkbenchStore((s) => s.gridRowRatio)
+  const splitDirection = useWorkbenchStore((s) => s.splitDirection)
+  const setGridRatio = useWorkbenchStore((s) => s.setGridRatio)
+  const columnWidths = useWorkbenchStore((s) => s.columnWidths)
+  const setColumnRatio = useWorkbenchStore((s) => s.setColumnRatio)
 
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [sessionsLoading, setSessionsLoading] = useState(true)
@@ -259,31 +264,44 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   const editorRef = useRef<HTMLElement>(null)
   const handledLocation = useRef<string | null>(null)
   const pendingPath = useRef<string | null>(null)
+  const browsePane = useRef<number | undefined>(undefined)
   const previousTabId = useRef(activeTabId)
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
-  const secondaryTab =
-    splitEnabled && activeTab?.kind !== 'settings'
-      ? tabs.find((tab) => tab.id === secondaryTabId && tab.kind !== 'settings')
-      : undefined
-  const visibleAgent = activeTab?.kind === 'chat' ? activeTab : secondaryTab?.kind === 'chat' ? secondaryTab : undefined
-  const mixedSplit = Boolean(
-    activeTab && secondaryTab && (activeTab.kind === 'chat') !== (secondaryTab.kind === 'chat'),
+  const visibleTabs = paneIds.map((id) => tabs.find((tab) => tab.id === id))
+  const visibleThreadIds = useMemo(
+    () => paneIds.filter((id): id is string => Boolean(id?.startsWith('chat:'))).map((id) => id.slice(5)),
+    [paneIds],
   )
-  const savedRatio = mixedSplit ? agentSplitRatio : splitRatio
-  const ratioPaneFirst = mixedSplit && agentPanePosition === 'start'
-  const filePane = activeTab?.kind === 'chat' ? secondaryTab : activeTab
-  const visibleTabs = mixedSplit
-    ? ratioPaneFirst
-      ? [visibleAgent, filePane]
-      : [filePane, visibleAgent]
-    : [activeTab, secondaryTab]
+  const canAddPane = paneIds.length < MAX_PANES || paneIds.includes(null)
+  const columnCount =
+    splitDirection === 'horizontal' && (paneIds.length === 3 || paneIds.length === 4) ? paneIds.length : null
+  const widths = columnCount ? columnWidths[columnCount] : null
+  const visibleAgent = activeTab?.kind === 'chat' ? activeTab : visibleTabs.find((tab) => tab?.kind === 'chat')
+  const mixedSplit =
+    paneIds.length === 2 &&
+    visibleTabs.every(Boolean) &&
+    (visibleTabs[0]?.kind === 'chat') !== (visibleTabs[1]?.kind === 'chat')
+  const agentFirst = visibleTabs[0]?.kind === 'chat'
+  const savedRatio = mixedSplit
+    ? agentSplitRatio === null
+      ? null
+      : agentFirst
+        ? agentSplitRatio
+        : 1 - agentSplitRatio
+    : splitRatio === null
+      ? null
+      : 1 - splitRatio
   const retainedPaneIds = useMemo(() => {
     const open = new Map(tabs.map((tab) => [tab.id, tab.kind]))
-    const retained: string[] = []
+    const retained = paneIds.filter((id): id is string => id !== null)
     let chats = 0
     let files = 0
-    for (const id of new Set([activeTabId, secondaryTab?.id, ...recentPaneIds])) {
-      if (!id) continue
+    for (const id of retained) {
+      if (open.get(id) === 'chat') chats += 1
+      if (open.get(id) === 'file') files += 1
+    }
+    for (const id of recentPaneIds) {
+      if (retained.includes(id)) continue
       const kind = open.get(id)
       if (kind === 'chat' && chats < MAX_MOUNTED_CHATS) {
         retained.push(id)
@@ -294,13 +312,10 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
       }
     }
     return retained
-  }, [activeTabId, secondaryTab?.id, recentPaneIds, tabs])
-  const cachedTabs = tabs.filter(
-    (tab) => retainedPaneIds.includes(tab.id) && tab.id !== activeTabId && tab.id !== secondaryTab?.id,
-  )
+  }, [paneIds, recentPaneIds, tabs])
+  const cachedTabs = tabs.filter((tab) => retainedPaneIds.includes(tab.id) && !paneIds.includes(tab.id))
   const mixedBefore = useRef(mixedSplit)
-  const canSplit = activeTab?.kind !== 'settings' && tabs.filter((tab) => tab.kind !== 'settings').length >= 2
-  const activeFile = activeTab?.kind === 'file' ? activeTab : secondaryTab?.kind === 'file' ? secondaryTab : undefined
+  const activeFile = activeTab?.kind === 'file' ? activeTab : visibleTabs.find((tab) => tab?.kind === 'file')
   const needsSessions = commandPaletteOpen || inspectorOpen
   const mod = /Mac|iPhone|iPad/i.test(navigator.platform) ? '⌘' : 'Ctrl+'
   useDocumentTitle(activeTab?.title || '工作台')
@@ -323,6 +338,13 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   }, [activeTab?.kind, mixedSplit, sidebarOpen, setSidebarTab])
 
   const openPalette = useCallback(() => setCommandPaletteOpen(true), [setCommandPaletteOpen])
+  const browseForPane = useCallback(
+    (kind: 'agents' | 'files', index: number) => {
+      browsePane.current = index
+      setSidebarTab(kind)
+    },
+    [setSidebarTab],
+  )
   const showFiles = useCallback(() => setSidebarTab('files'), [setSidebarTab])
   const createSession = useCallback(() => {
     if (!projects.length) return
@@ -330,11 +352,14 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
     setCreatingSession(true)
   }, [projects.length, setSidebarTab])
   const focusComposer = useCallback(() => {
-    editorRef.current
-      ?.querySelector<HTMLTextAreaElement>(
-        'section[data-pane="agent"]:not([hidden]):not([inert]) [data-workbench-composer]',
-      )
-      ?.focus()
+    const editor = editorRef.current
+    const focused = editor?.querySelector<HTMLTextAreaElement>(
+      'section[data-focused="true"][data-pane="agent"] [data-workbench-composer]',
+    )
+    const first = editor?.querySelector<HTMLTextAreaElement>(
+      'section[data-pane="agent"]:not([hidden]):not([inert]) [data-workbench-composer]',
+    )
+    ;(focused ?? first)?.focus()
   }, [])
 
   const finishSidebarDrag = useCallback(
@@ -362,12 +387,6 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
     },
     [closeAllTabs],
   )
-
-  const previewSplitRatio = useCallback((ratio: number | null) => {
-    const style = editorRef.current?.style
-    if (ratio === null) style?.removeProperty('--workbench-live-ratio')
-    else style?.setProperty('--workbench-live-ratio', String(ratio))
-  }, [])
 
   useEffect(() => {
     const path = pathAfterScope(location.pathname)
@@ -510,12 +529,17 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
 
   const handleSelectSession = useCallback(
     (session: SessionSummary) => {
-      openChatTab({
-        threadId: session.id,
-        title: session.title || '对话',
-        provider: session.provider,
-        status: session.status,
-      })
+      const targetPane = browsePane.current
+      browsePane.current = undefined
+      openChatTab(
+        {
+          threadId: session.id,
+          title: session.title || '对话',
+          provider: session.provider,
+          status: session.status,
+        },
+        { targetPane },
+      )
     },
     [openChatTab],
   )
@@ -527,7 +551,7 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
       openChatTab(
         { threadId: session.id, title: session.title, provider: session.provider, status: session.status },
         {
-          inSecondary: true,
+          split: true,
         },
       )
     },
@@ -562,15 +586,7 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
             <kbd className="workbench-key">{mod}K</kbd>
           </button>
           <div className="flex items-center justify-end gap-1">
-            <ChromeButton
-              label="分屏"
-              active={Boolean(secondaryTab)}
-              shortcut={mod + '\\'}
-              disabled={!canSplit}
-              onClick={toggleSplit}
-            >
-              <Columns2 className="size-4" strokeWidth={1.7} />
-            </ChromeButton>
+            <WorkbenchLayoutMenu container={portalContainer} />
             <ChromeButton label="终端抽屉" active={terminalOpen} shortcut={mod + 'J'} onClick={toggleTerminal}>
               <TerminalIcon className="size-4" strokeWidth={1.7} />
             </ChromeButton>
@@ -630,9 +646,8 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
             <div hidden={sidebarTab !== 'agents'} className="min-h-0 flex-1 overflow-hidden">
               <DesktopAgentSidebar
                 activeThreadId={visibleAgent?.threadId ?? null}
-                secondaryThreadId={
-                  secondaryTab?.kind === 'chat' && secondaryTab.id !== visibleAgent?.id ? secondaryTab.threadId : null
-                }
+                visibleThreadIds={visibleThreadIds}
+                canSplit={canAddPane}
                 creating={creatingSession}
                 setCreating={setCreatingSession}
                 onSelectSession={handleSelectSession}
@@ -643,9 +658,14 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
               {(filesVisited || sidebarTab === 'files') && (
                 <DesktopFileSidebar
                   visible={sidebarOpen && sidebarTab === 'files'}
+                  canSplit={canAddPane}
                   activeFilePath={activeFile?.path ?? null}
-                  onOpenFile={(path, name) => openFileTab({ path, title: name })}
-                  onSplitFile={(path, name) => openFileTab({ path, title: name }, { inSecondary: true })}
+                  onOpenFile={(path, name) => {
+                    const targetPane = browsePane.current
+                    browsePane.current = undefined
+                    openFileTab({ path, title: name }, { targetPane })
+                  }}
+                  onSplitFile={(path, name) => openFileTab({ path, title: name }, { split: true })}
                   onOpenDiff={() => openDiffTab(undefined, { inSecondary: true })}
                 />
               )}
@@ -685,15 +705,16 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
           </aside>
 
           <div className="workbench-editor flex min-w-0 flex-1 flex-col overflow-hidden">
-            {tabs.length > 0 && !mixedSplit && (
+            {tabs.length > 0 && paneIds.length === 1 && (
               <div className="flex h-[38px] shrink-0 border-b border-border bg-[var(--workbench-toolbar)]">
                 <WorkbenchTabs
                   tabs={tabs}
                   activeTabId={activeTabId}
-                  secondaryTabId={secondaryTabId}
+                  secondaryTabId={null}
                   onSelect={setActiveTab}
                   onClose={closeTab}
                   onCloseAll={handleCloseAllTabs}
+                  onSplit={canAddPane ? splitTab : undefined}
                   menuContainer={portalContainer}
                 />
               </div>
@@ -701,80 +722,135 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
             <main
               ref={editorRef}
               tabIndex={-1}
-              className="workbench-panes flex min-h-0 flex-1 overflow-hidden"
-              data-split={Boolean(secondaryTab)}
+              className="workbench-panes min-h-0 flex-1 overflow-hidden"
+              data-count={paneIds.length}
+              data-direction={splitDirection}
               data-mixed={mixedSplit}
+              data-agent-first={agentFirst}
               style={
                 {
                   '--workbench-saved-ratio': savedRatio ?? undefined,
+                  '--workbench-saved-column': gridColumnRatio ?? undefined,
+                  '--workbench-saved-row': gridRowRatio ?? undefined,
+                  '--workbench-saved-columns': widths ? columnTracks(widths) : undefined,
                 } as CSSProperties
               }
             >
-              {!activeTab && (
-                <div className="min-h-0 min-w-0 flex-1">
-                  <EmptyWorkbench
-                    workspace={workspace}
-                    actions={[
-                      {
-                        label: '新建会话',
-                        icon: <Plus className="size-4" />,
-                        run: createSession,
-                        disabled: !projects.length,
-                      },
-                      { label: '浏览工作区文件', icon: <FolderOpen className="size-4" />, run: showFiles },
-                      {
-                        label: terminalOpen ? '收起终端' : '打开终端',
-                        icon: <TerminalIcon className="size-4" />,
-                        run: toggleTerminal,
-                        key: mod + 'J',
-                      },
-                    ]}
-                  />
-                </div>
+              {visibleTabs.map(
+                (tab, index) =>
+                  !tab && (
+                    <section
+                      key={'empty-' + index}
+                      aria-label={'空白分屏 ' + (index + 1)}
+                      data-slot={index}
+                      data-focused={focusedPane === index}
+                      inert={widths?.[index] === 0}
+                      onPointerDownCapture={() => focusPane(index)}
+                      onFocusCapture={() => focusPane(index)}
+                      className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+                    >
+                      {paneIds.length > 1 && (
+                        <div
+                          data-focused={focusedPane === index}
+                          className="workbench-pane-header flex h-[38px] shrink-0 items-center justify-end gap-1 border-b border-border bg-[var(--workbench-toolbar)] px-1.5"
+                        >
+                          <span className="mr-auto pl-2 text-xs text-muted-foreground">空白分屏</span>
+                          <PaneContentMenu
+                            index={index}
+                            tabs={tabs}
+                            current={null}
+                            container={portalContainer}
+                            onBrowse={browseForPane}
+                          />
+                        </div>
+                      )}
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        <EmptyWorkbench
+                          workspace={workspace}
+                          actions={[
+                            {
+                              label: '新建会话',
+                              icon: <Plus className="size-4" />,
+                              run: createSession,
+                              disabled: !projects.length,
+                            },
+                            { label: '浏览工作区文件', icon: <FolderOpen className="size-4" />, run: showFiles },
+                            {
+                              label: terminalOpen ? '收起终端' : '打开终端',
+                              icon: <TerminalIcon className="size-4" />,
+                              run: toggleTerminal,
+                              key: mod + 'J',
+                            },
+                          ]}
+                        />
+                      </div>
+                    </section>
+                  ),
               )}
-              {[...visibleTabs, ...cachedTabs].flatMap((tab, index) => {
-                if (!tab) return []
+              {[...visibleTabs, ...cachedTabs].map((tab, index) => {
+                if (!tab) return null
                 const visible = index < visibleTabs.length
-                const ratioPane = mixedSplit ? tab.kind === 'chat' : index === 1
-                const collapsed = visible && Boolean(secondaryTab) && savedRatio === (ratioPane ? 0 : 1)
-                const pane = (
+                const collapsed =
+                  visible &&
+                  ((paneIds.length === 2 && savedRatio === (index === 0 ? 0 : 1)) ||
+                    (widths
+                      ? widths[index] === 0
+                      : paneIds.length >= 3 &&
+                        (gridColumnRatio === (index === 0 || (paneIds.length === 4 && index === 2) ? 0 : 1) ||
+                          ((paneIds.length === 4 || index !== 0) && gridRowRatio === (index < 2 ? 0 : 1)))))
+                const sameGroup = tabs.filter(
+                  (item) =>
+                    item.id === tab.id ||
+                    (!paneIds.includes(item.id) &&
+                      (tab.kind === 'chat' ? item.kind === 'chat' : item.kind === 'file' || item.kind === 'diff')),
+                )
+                const paneTabs = paneIds.length === 2 && mixedSplit ? sameGroup : [tab]
+                return (
                   <section
                     key={tab.id}
                     aria-label={tab.title}
-                    data-ratio-pane={ratioPane}
+                    data-slot={visible ? index : undefined}
+                    data-focused={visible && focusedPane === index}
                     data-pane={tab.kind === 'chat' ? 'agent' : 'editor'}
                     hidden={!visible}
                     inert={!visible || collapsed}
-                    className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                    className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+                    onFocusCapture={() => {
+                      if (visible) focusPane(index)
+                    }}
+                    onPointerDownCapture={() => {
+                      if (visible) focusPane(index)
+                    }}
                   >
-                    {visible && mixedSplit && (
-                      <div className="flex h-[38px] shrink-0 border-b border-border bg-[var(--workbench-toolbar)]">
+                    {visible && paneIds.length > 1 && (
+                      <div
+                        data-focused={focusedPane === index}
+                        className="workbench-pane-header flex h-[38px] shrink-0 items-center border-b border-border bg-[var(--workbench-toolbar)] pr-1"
+                      >
                         <WorkbenchTabs
-                          tabs={tabs.filter((item) =>
-                            tab.kind === 'chat' ? item.kind === 'chat' : item.kind === 'file' || item.kind === 'diff',
-                          )}
+                          tabs={paneTabs}
+                          compact={paneTabs.length === 1}
                           label={tab.kind === 'chat' ? 'Agent 会话标签' : '文件标签'}
                           activeTabId={tab.id}
                           secondaryTabId={null}
-                          onSelect={setActiveTab}
+                          onSelect={(id) => showTabInPane(index, id)}
                           onClose={closeTab}
                           onCloseAll={handleCloseAllTabs}
+                          onSplit={canAddPane ? splitTab : undefined}
                           menuContainer={portalContainer}
+                        />
+                        <PaneContentMenu
+                          index={index}
+                          tabs={tabs}
+                          current={tab.id}
+                          container={portalContainer}
+                          onBrowse={browseForPane}
                         />
                       </div>
                     )}
-                    <div
-                      className="min-h-0 flex-1 overflow-hidden"
-                      onFocusCapture={() => {
-                        if (mixedSplit && activeTabId !== tab.id) setActiveTab(tab.id)
-                      }}
-                      onPointerDownCapture={() => {
-                        if (mixedSplit && activeTabId !== tab.id) setActiveTab(tab.id)
-                      }}
-                    >
+                    <div className="min-h-0 flex-1 overflow-hidden">
                       <WorkbenchPane
                         tab={tab}
-                        split={visible && Boolean(secondaryTab) && !mixedSplit}
                         visible={visible && !collapsed}
                         onLogout={onLogout}
                         onSelectSessionId={handleSelectSessionId}
@@ -782,19 +858,34 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
                     </div>
                   </section>
                 )
-                if (index !== 1) return [pane]
-                return [
-                  <WorkbenchSplitDivider
-                    key={mixedSplit ? `agent-divider-${agentPanePosition}` : 'compare-divider'}
-                    mixed={mixedSplit}
-                    ratioPaneFirst={ratioPaneFirst}
-                    ratio={savedRatio}
-                    onPreview={previewSplitRatio}
-                    onSave={(ratio) => setSplitRatio(ratio, mixedSplit)}
-                  />,
-                  pane,
-                ]
               })}
+              {paneIds.length === 2 && (
+                <WorkbenchSplitDivider
+                  key="two-pane-divider"
+                  axis="auto"
+                  onSave={(ratio) =>
+                    setSplitRatio(ratio === null ? null : mixedSplit && agentFirst ? ratio : 1 - ratio, mixedSplit)
+                  }
+                />
+              )}
+              {columnCount &&
+                widths &&
+                widths
+                  .slice(0, -1)
+                  .map((_, index) => (
+                    <WorkbenchSplitDivider
+                      key={`columns-${columnCount}-${index}`}
+                      axis="column"
+                      column={{ index, widths }}
+                      onSave={(ratio) => setColumnRatio(columnCount, index, ratio)}
+                    />
+                  ))}
+              {paneIds.length >= 3 && !columnCount && (
+                <>
+                  <WorkbenchSplitDivider axis="column" onSave={(ratio) => setGridRatio('column', ratio)} />
+                  <WorkbenchSplitDivider axis="row" onSave={(ratio) => setGridRatio('row', ratio)} />
+                </>
+              )}
             </main>
             <TerminalDrawer />
           </div>

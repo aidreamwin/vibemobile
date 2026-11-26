@@ -26,6 +26,51 @@ beforeEach(async () => {
   await app.ready()
 })
 
+describe('file transfer and management', () => {
+  it('serves video byte ranges and downloads original bytes with a filename', async () => {
+    const file = path.join(dir, '测试.mp4')
+    const bytes = Buffer.from([0, 1, 2, 3, 4, 5])
+    fs.writeFileSync(file, bytes)
+    const query = '?path=' + encodeURIComponent(file)
+    const head = await app.inject({ method: 'HEAD', url: '/api/files/video' + query })
+    expect(head.statusCode).toBe(200)
+    expect(head.headers['content-length']).toBe('6')
+    const video = await app.inject({ url: '/api/files/video' + query, headers: { range: 'bytes=2-4' } })
+    expect(video.statusCode).toBe(206)
+    expect(video.headers['content-range']).toBe('bytes 2-4/6')
+    expect(video.headers['content-type']).toContain('video/mp4')
+    expect(video.rawPayload).toEqual(bytes.subarray(2, 5))
+    const download = await app.inject({ url: '/api/files/download' + query })
+    expect(download.statusCode).toBe(200)
+    expect(download.headers['content-disposition']).toContain("attachment; filename*=UTF-8''")
+    expect(download.rawPayload).toEqual(bytes)
+    const invalid = await app.inject({ url: '/api/files/video' + query, headers: { range: 'bytes=99-' } })
+    expect(invalid.statusCode).toBe(416)
+    expect(invalid.headers['content-range']).toBe('bytes */6')
+  })
+
+  it('renames without overwriting and requires explicit delete confirmation', async () => {
+    const file = path.join(dir, 'original.bin')
+    const other = path.join(dir, 'existing.bin')
+    fs.writeFileSync(file, 'original')
+    fs.writeFileSync(other, 'existing')
+    const rename = (name: string) => app.inject({ method: 'PATCH', url: '/api/files', payload: { path: file, name } })
+    expect((await rename('existing.bin')).statusCode).toBe(409)
+    expect(fs.readFileSync(other, 'utf8')).toBe('existing')
+    const result = await rename('renamed.bin')
+    expect(result.statusCode).toBe(200)
+    const renamed = result.json().path
+    expect(fs.existsSync(file)).toBe(false)
+    expect(fs.readFileSync(renamed, 'utf8')).toBe('original')
+    const remove = (confirmed: boolean) =>
+      app.inject({ method: 'DELETE', url: '/api/files', payload: { path: renamed, confirmed } })
+    expect((await remove(false)).statusCode).toBe(400)
+    expect(fs.existsSync(renamed)).toBe(true)
+    expect((await remove(true)).statusCode).toBe(200)
+    expect(fs.existsSync(renamed)).toBe(false)
+  })
+})
+
 afterEach(async () => {
   await app.close()
   fs.rmSync(dir, { recursive: true, force: true })

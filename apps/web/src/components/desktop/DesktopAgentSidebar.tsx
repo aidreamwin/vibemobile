@@ -50,14 +50,16 @@ const ROW_ACTION =
 
 export default memo(function DesktopAgentSidebar({
   activeThreadId,
-  secondaryThreadId,
+  visibleThreadIds,
+  canSplit,
   creating,
   setCreating,
   onSelectSession,
   onSplitSession,
 }: {
   activeThreadId: string | null
-  secondaryThreadId: string | null
+  visibleThreadIds: string[]
+  canSplit: boolean
   creating: boolean
   setCreating: (creating: boolean) => void
   onSelectSession: (session: SessionSummary) => void
@@ -394,7 +396,8 @@ export default memo(function DesktopAgentSidebar({
                     key={session.id}
                     session={session}
                     selected={session.id === activeThreadId}
-                    secondary={session.id === secondaryThreadId}
+                    secondary={visibleThreadIds.includes(session.id)}
+                    canSplit={canSplit}
                     onSelectSession={onSelectSession}
                     onSplitSession={onSplitSession}
                     onActions={openSessionActions}
@@ -472,6 +475,7 @@ const DesktopSessionRow = memo(function DesktopSessionRow({
   session,
   selected,
   secondary,
+  canSplit,
   onSelectSession,
   onSplitSession,
   onActions,
@@ -479,6 +483,7 @@ const DesktopSessionRow = memo(function DesktopSessionRow({
   session: SessionSummary
   selected: boolean
   secondary: boolean
+  canSplit: boolean
   onSelectSession: (session: SessionSummary) => void
   onSplitSession: (session: SessionSummary) => void
   onActions: (session: SessionSummary) => void
@@ -518,10 +523,11 @@ const DesktopSessionRow = memo(function DesktopSessionRow({
       >
         <button
           type="button"
-          title="分屏打开"
+          title={canSplit ? '分屏打开' : '已达到四分屏上限'}
           aria-label={`分屏打开 ${title}`}
+          disabled={!canSplit}
           onClick={() => onSplitSession(session)}
-          className={ROW_ACTION}
+          className={ROW_ACTION + ' disabled:opacity-30'}
         >
           <Columns2 className="size-3" strokeWidth={1.7} />
         </button>

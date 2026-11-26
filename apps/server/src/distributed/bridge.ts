@@ -7,6 +7,7 @@ import {
   MAX_FRAME,
   PROTOCOL,
   RESPONSE_HEADERS,
+  TRANSFER_HEADERS,
   TIMEOUT,
   parseFrame,
   rawBuffer,
@@ -14,6 +15,7 @@ import {
   sendFrame,
   type Frame,
 } from './wire.js'
+import { isFileTransferPath } from '../files/transfer.js'
 
 export interface BridgeOptions {
   hubUrl: string
@@ -75,6 +77,11 @@ export function connectRunner(options: BridgeOptions): () => void {
           fail(frame.id, 'path_not_allowed')
           return
         }
+        const transfer = isFileTransferPath(frame.path)
+        if ((frame.range || frame.method === 'HEAD') && !transfer) {
+          fail(frame.id, 'path_not_allowed')
+          return
+        }
         if (requests.size >= MAX_CHANNELS || requests.has(frame.id)) {
           fail(frame.id, 'runner_busy')
           return
@@ -92,9 +99,10 @@ export function connectRunner(options: BridgeOptions): () => void {
             method: frame.method,
             headers: {
               ...(body ? { 'content-type': 'application/json' } : {}),
+              ...(transfer && frame.range ? { range: frame.range } : {}),
               authorization: `Bearer ${options.serviceToken}`,
             },
-            body: body && frame.method !== 'GET' ? body : undefined,
+            body: body && frame.method !== 'GET' && frame.method !== 'HEAD' ? body : undefined,
             signal: controller.signal,
             redirect: 'error',
           })
@@ -118,7 +126,7 @@ export function connectRunner(options: BridgeOptions): () => void {
             }
           }
           const headers: Record<string, string> = {}
-          for (const name of RESPONSE_HEADERS) {
+          for (const name of transfer ? [...RESPONSE_HEADERS, ...TRANSFER_HEADERS] : RESPONSE_HEADERS) {
             const value = response.headers.get(name)
             if (value) headers[name] = value
           }

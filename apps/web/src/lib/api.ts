@@ -90,6 +90,10 @@ const qs = (params: Record<string, string | number | boolean | undefined>) => {
   return s ? `?${s}` : ''
 }
 
+export const fileDownloadUrl = (path: string) => runnerPath(`/api/files/download${qs({ path })}`)
+export const fileVideoUrl = (path: string, revision?: number) =>
+  runnerPath(`/api/files/video${qs({ path, v: revision })}`)
+
 export const api = {
   hubMode: () => request<{ mode: 'hub' }>('/api/hub'),
   runners: () => request<{ default: string; data: RunnerInfo[] }>('/api/runners'),
@@ -202,6 +206,16 @@ export const api = {
   // ---- files ----
   files: (path?: string, hidden = false) => request<{ data: FileEntry[] }>(`/api/files${qs({ path, hidden })}`),
   fileContent: (path: string) => request<FileContent>(`/api/files/content${qs({ path })}`),
+  renameFile: (path: string, name: string) =>
+    request<FileEntry>('/api/files', {
+      method: 'PATCH',
+      body: JSON.stringify({ path, name }),
+    }),
+  deleteFile: (path: string) =>
+    request<{ ok: true }>('/api/files', {
+      method: 'DELETE',
+      body: JSON.stringify({ path, confirmed: true }),
+    }),
   /**
    * Save a file. `rev` is the digest of the text being replaced; the server
    * answers 409 `file_changed` if the file is no longer that revision, which

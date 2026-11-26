@@ -5,8 +5,8 @@ import type { FileContent } from '@vibemobile/protocol'
 import { shortPath } from '../lib/format'
 import type { FileRef } from '../lib/fileLink'
 import FileBody, { SourcePreviewToggle, isRenderable } from './FileBody'
-import ImageFilePreview from './ImageFilePreview'
-import { isRasterImage } from '../lib/fileImage'
+import MediaFilePreview, { FileDownloadLink } from './MediaFilePreview'
+import { isNativeMedia } from '../lib/fileImage'
 import { fileReadError } from '../lib/fileErrors'
 import { getFileSnapshot, readFileSnapshot } from '../lib/fileSnapshots'
 
@@ -32,9 +32,9 @@ export default function FileViewer({
   /** Given, a link inside the preview opens here instead of on a new tab. */
   onOpenFile?: (ref: FileRef) => void
 }) {
-  const rasterImage = isRasterImage(file.path)
+  const nativeMedia = isNativeMedia(file.path)
   const [loaded, setLoaded] = useState<{ path: string; content: FileContent } | null>(() => {
-    const cached = rasterImage ? null : getFileSnapshot(file.path)
+    const cached = nativeMedia ? null : getFileSnapshot(file.path)
     return cached ? { path: file.path, content: cached } : null
   })
   const content = loaded?.path === file.path ? loaded.content : null
@@ -53,7 +53,7 @@ export default function FileViewer({
   const shown = preview && isRenderable(file.path)
 
   useEffect(() => {
-    if (rasterImage) {
+    if (nativeMedia) {
       setLoading(false)
       setError(null)
       setLoaded(null)
@@ -79,7 +79,7 @@ export default function FileViewer({
     return () => {
       cancelled = true
     }
-  }, [file.path, rasterImage, reload])
+  }, [file.path, nativeMedia, reload])
 
   const name = file.path.split(/[\\/]/).at(-1) || file.path
 
@@ -114,18 +114,22 @@ export default function FileViewer({
               link pointed at, and a rendered document has no lines to point
               at. Dropping it there also leaves the toggle room on a 390px
               header. */}
-            {file.line !== null && !shown && !rasterImage && (
+            {file.line !== null && !shown && !nativeMedia && (
               <span className="shrink-0 rounded-md bg-warning/15 px-2 py-1 text-[11px] text-warning">
                 第 {file.line} 行
               </span>
             )}
             {isRenderable(file.path) && content && <SourcePreviewToggle preview={preview} onChange={setPreview} />}
+            <FileDownloadLink
+              path={file.path}
+              className="tap shrink-0 rounded-lg text-muted-foreground active:bg-secondary"
+            />
           </div>
         </header>
 
         <div className="scroll-y min-h-0 flex-1">
-          {rasterImage ? (
-            <ImageFilePreview key={file.path} path={file.path} />
+          {nativeMedia ? (
+            <MediaFilePreview key={file.path} path={file.path} />
           ) : loading || (!error && !content) ? (
             <div role="status" className="grid min-h-full place-content-center text-sm text-muted-foreground">
               <span className="flex items-center gap-2">

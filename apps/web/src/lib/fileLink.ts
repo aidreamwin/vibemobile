@@ -22,6 +22,11 @@ export interface FileRef {
   line: number | null
 }
 
+export function filePathKey(value: string): string {
+  const normalized = normalizeFilePath(value.replace(/\\/g, '/'))
+  return /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\') ? normalized.toLowerCase() : normalized
+}
+
 /** `http:`, `mailto:`, `app:` … but `D:` is one letter and is a drive. */
 const SCHEME = /^([a-zA-Z][a-zA-Z0-9+.-]*):/
 
