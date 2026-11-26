@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { api, ApiError } from './lib/api'
 import { socket } from './lib/ws'
@@ -32,6 +32,7 @@ function PageFallback({ full = false }: { full?: boolean }) {
 type AuthState = 'checking' | 'authed' | 'anonymous' | 'offline'
 
 export default function App() {
+  const logout = useCallback(() => setAuth('anonymous'), [])
   const [auth, setAuth] = useState<AuthState>('checking')
   const [bootError, setBootError] = useState<string | null>(null)
   /** Bumped by the retry button; the effect below re-runs on it. */
@@ -174,7 +175,7 @@ export default function App() {
   if (isDesktop) {
     return (
       <Suspense fallback={<PageFallback full />}>
-        <DesktopWorkbenchShell onLogout={() => setAuth('anonymous')} />
+        <DesktopWorkbenchShell onLogout={logout} />
       </Suspense>
     )
   }
@@ -189,7 +190,7 @@ export default function App() {
             <Route path="/chat/:threadId" element={<Chat />} />
             <Route path="/files" element={<Files />} />
             <Route path="/terminal" element={<Terminal />} />
-            <Route path="/settings" element={<Settings onLogout={() => setAuth('anonymous')} />} />
+            <Route path="/settings" element={<Settings onLogout={logout} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

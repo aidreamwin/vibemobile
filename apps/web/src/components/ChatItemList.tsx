@@ -1,100 +1,75 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import type { AgentItem } from '@vibemobile/protocol'
 import { Download } from 'lucide-react'
-import type { Stream, TurnTime } from '../lib/store'
+import { useStore } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
+import type { ChatStore, TurnTime } from '../lib/store'
 import { formatClock } from '../lib/format'
 import { conversationText } from '../lib/exportMarkdown'
 import { isItemHidden, useDisplayPrefs } from '../lib/displayPrefs'
 import { collapseUnansweredRetries } from '../lib/retry'
 import type { FileRef } from '../lib/fileLink'
-import { turnIdOfItem } from '../lib/turnIndex'
 import CopyButton from './CopyButton'
 import ItemCard from './ItemCard'
 import StreamingBlock from './StreamingBlock'
 
-/**
- * The rendered transcript.
- *
- * Memoised on the item list and stream buffers: a fresh map on every delta
- * frame would re-parse the whole transcript.
- *
- * Items are grouped back into turns here (the store keeps them flat) so each
- * turn can carry its own tiny export button. The grouping uses the same order
- * the transcript is rendered in; a turn id change is a boundary, and an item
- * whose turn is not known yet stays with the previous group.
- */
-export default function ChatItemList({
+const NO_REPLIES: string[] = []
+
+interface TranscriptAppearance {
+  chatStore: ChatStore
+  cwd?: string
+  desktop?: boolean
+  onOpenFile: (ref: FileRef) => void
+}
+
+const ChatItemList = memo(function ChatItemList({
   items,
-  streams,
+  chatStore,
   turnTimes,
   cwd,
-  threadId,
   running,
   desktop = false,
   onOpenFile,
   onDownloadTurn,
 }: {
   items: AgentItem[]
-  streams: Record<string, Stream>
   /** When each turn began and ended, keyed by turn id. */
   turnTimes: Record<string, TurnTime>
-  cwd?: string
-  threadId: string
   /** A turn is still executing; its actions would act on a moving target. */
   running: boolean
-  desktop?: boolean
-  onOpenFile: (ref: FileRef) => void
   onDownloadTurn: (turnId: string, items: AgentItem[]) => void
-}) {
+} & TranscriptAppearance) {
   const prefs = useDisplayPrefs((state) => state.prefs)
+  const canHaveRetries = useMemo(() => items.some((item) => item.kind === 'error'), [items])
+  // Grouping only needs to know whether a retry already produced a reply.
+  // Once that answer exists, additional tokens affect its row alone.
+  const replies = useStore(
+    chatStore,
+    useShallow((state) =>
+      canHaveRetries ? Object.keys(state.streams).filter((id) => state.streams[id].text.trim()) : NO_REPLIES,
+    ),
+  )
 
-  const rendered = useMemo(() => {
+  const visibleGroups = useMemo(() => {
     const groups: { turnId: string; items: AgentItem[] }[] = []
-    for (const item of collapseUnansweredRetries(items, streams)) {
-      const turnId = turnIdOfItem(threadId, item.id) ?? groups.at(-1)?.turnId ?? ''
+    const hasStreamedReply = new Set(replies)
+    const { turnIdOfItem } = chatStore.getState()
+    const displayItems = canHaveRetries ? collapseUnansweredRetries(items, (id) => hasStreamedReply.has(id)) : items
+    for (const item of displayItems) {
       const last = groups.at(-1)
+      const turnId = turnIdOfItem(item.id) ?? last?.turnId ?? ''
       if (last && last.turnId === turnId) last.items.push(item)
       else groups.push({ turnId, items: [item] })
     }
 
-    const renderItem = (item: AgentItem) => {
-      // While an item streams, its buffer holds the text; the item itself may
-      // still be empty. Show both, but never duplicate.
-      const stream = streams[item.id]
-      const hasStream = Boolean(stream)
-      const reasoningStream = item.kind === 'reasoning' && stream?.channel === 'reasoning'
-      const isEmptyMessage = item.kind === 'message' && item.text.length === 0
-      const isUser = item.kind === 'message' && item.role === 'user'
-      // The message's own clock, never the turn's — a steer or a queued push is
-      // dated when it was typed. No recorded time means no clock at all:
-      // showing the turn's start here would be a wrong answer, not a guess
-      // worth making.
-      const sentAt = item.kind === 'message' && item.role === 'user' ? (item.at ?? null) : null
-      return (
-        <div key={item.id}>
-          {(!hasStream || !isEmptyMessage) && (
-            <ItemCard
-              item={item}
-              streamText={reasoningStream ? stream.text : undefined}
-              sentAt={sentAt}
-              cwd={cwd}
-              onOpenFile={onOpenFile}
-              desktop={desktop}
-            />
-          )}
-          {stream && !reasoningStream && !isUser && (
-            <StreamingBlock stream={stream} cwd={cwd} onOpenFile={onOpenFile} />
-          )}
-        </div>
-      )
-    }
-
     // Display preferences hide cards but not data: the actions below keep the
     // full turn, so an export or copy is unaffected by what is on screen.
-    const visibleGroups = groups
+    return groups
       .map((group) => ({ group, visible: group.items.filter((item) => !isItemHidden(item.kind, prefs)) }))
       .filter((entry) => entry.visible.length > 0)
+  }, [items, chatStore, canHaveRetries, replies, prefs])
 
+  const rendered = useMemo(() => {
     return visibleGroups.map(({ group, visible }, index) => {
       // The last turn is still being written while `running`: offering export
       // or copy there would capture a partial answer, so the actions appear
@@ -102,14 +77,25 @@ export default function ChatItemList({
       const inProgress = running && index === visibleGroups.length - 1
       return (
         <div key={group.items[0]?.id ?? group.turnId}>
-          <div className={desktop ? 'space-y-2.5' : 'space-y-4'}>{visible.map(renderItem)}</div>
+          <div className={desktop ? 'space-y-2.5' : 'space-y-4'}>
+            {visible.map((item) => (
+              <TranscriptItem
+                key={item.id}
+                item={item}
+                chatStore={chatStore}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                desktop={desktop}
+              />
+            ))}
+          </div>
           {group.turnId && !inProgress && (
             // After the turn's last card, not above it: the export belongs to
             // the answer that just ended, and the top of a turn is where the
             // reading starts.
             <TurnActions
               items={group.items}
-              streams={streams}
+              chatStore={chatStore}
               time={turnTimes[group.turnId]?.completedAt ?? null}
               onDownload={() => onDownloadTurn(group.turnId, group.items)}
             />
@@ -117,25 +103,54 @@ export default function ChatItemList({
         </div>
       )
     })
-  }, [items, streams, turnTimes, cwd, threadId, running, onOpenFile, onDownloadTurn, prefs, desktop])
+  }, [visibleGroups, chatStore, turnTimes, cwd, running, onOpenFile, onDownloadTurn, desktop])
 
   return <div className={desktop ? 'space-y-6 pb-3' : 'space-y-4 pb-4'}>{rendered}</div>
-}
+})
+
+export default ChatItemList
+
+const TranscriptItem = memo(function TranscriptItem({
+  item,
+  chatStore,
+  cwd,
+  desktop,
+  onOpenFile,
+}: { item: AgentItem } & TranscriptAppearance) {
+  const stream = useStore(chatStore, (state) => state.streams[item.id])
+  const reasoningStream = item.kind === 'reasoning' && stream?.channel === 'reasoning'
+  const isEmptyMessage = item.kind === 'message' && item.text.length === 0
+  const isUser = item.kind === 'message' && item.role === 'user'
+  return (
+    <div>
+      {(!stream || !isEmptyMessage) && (
+        <ItemCard
+          item={item}
+          streamText={reasoningStream ? stream.text : undefined}
+          sentAt={isUser ? (item.at ?? null) : null}
+          cwd={cwd}
+          onOpenFile={onOpenFile}
+          desktop={desktop}
+        />
+      )}
+      {stream && !reasoningStream && !isUser && <StreamingBlock stream={stream} cwd={cwd} onOpenFile={onOpenFile} />}
+    </div>
+  )
+})
 
 /**
  * Copy the dialogue of one turn, and export the whole turn.
  *
- * Kept as its own component so the "copied" checkmark has somewhere to live:
- * the item list re-renders on every delta, and local state here survives that.
+ * Read the delta buffers at click time so this row stays outside the live stream.
  */
 function TurnActions({
   items,
-  streams,
+  chatStore,
   time,
   onDownload,
 }: {
   items: AgentItem[]
-  streams: Record<string, Stream>
+  chatStore: ChatStore
   /** When this turn ended; null when the backend did not report it. */
   time: number | null
   onDownload: () => void
@@ -147,7 +162,7 @@ function TurnActions({
       <CopyButton
         // Only messages: reasoning, commands, tool calls and diffs are
         // deliberately left out of what lands on the clipboard.
-        getText={() => conversationText(items, streams)}
+        getText={() => conversationText(items, chatStore.getState().streams)}
         label="复制本轮对话"
         className={button}
       />

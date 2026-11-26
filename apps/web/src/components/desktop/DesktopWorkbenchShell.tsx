@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -36,6 +37,7 @@ import { useDocumentTitle } from '../../lib/title'
 import { shortPath } from '../../lib/format'
 import { useWorkspaceStore } from '../../lib/workspace'
 import { useApprovalStore } from '../../lib/approvals'
+import type { FileRef } from '../../lib/fileLink'
 import WorkbenchTabs from './WorkbenchTabs'
 import WorkbenchSplitDivider from './WorkbenchSplitDivider'
 import TerminalDrawer from './TerminalDrawer'
@@ -48,6 +50,8 @@ import './workbench.css'
 const Chat = lazy(() => import('../../pages/Chat'))
 const Files = lazy(() => import('../../pages/Files'))
 const Settings = lazy(() => import('../../pages/Settings'))
+// Limit retained transcripts and live subscriptions to the most recently used chats.
+const MAX_MOUNTED_CHATS = 5
 
 function PaneFallback() {
   return <div className="flex h-full items-center justify-center text-xs text-muted-foreground">加载中…</div>
@@ -132,14 +136,16 @@ function ChromeButton({
   )
 }
 
-function WorkbenchPane({
+const WorkbenchPane = memo(function WorkbenchPane({
   tab,
   split,
+  visible,
   onLogout,
   onSelectSessionId,
 }: {
   tab: WorkbenchTab
   split: boolean
+  visible: boolean
   onLogout: () => void
   onSelectSessionId: (id: string) => void
 }) {
@@ -162,6 +168,14 @@ function WorkbenchPane({
     },
     [updateChatTabMeta],
   )
+  const openChatFile = useCallback(
+    (ref: FileRef) => openFileTab({ path: ref.path, line: ref.line ?? undefined }, { inSecondary: true }),
+    [openFileTab],
+  )
+  const exitChat = useCallback(() => {
+    closeTab(tab.id)
+    setSidebarTab('agents')
+  }, [closeTab, setSidebarTab, tab.id])
 
   return (
     <Suspense fallback={<PaneFallback />}>
@@ -169,14 +183,12 @@ function WorkbenchPane({
         <Chat
           threadId={threadId}
           embedded
+          visible={visible}
           showPaneTitle={split}
           onSessionMeta={handleSessionMeta}
-          onOpenFileTab={(ref) => openFileTab({ path: ref.path, line: ref.line ?? undefined }, { inSecondary: true })}
+          onOpenFileTab={openChatFile}
           onSelectSession={onSelectSessionId}
-          onExit={() => {
-            closeTab(tab.id)
-            setSidebarTab('agents')
-          }}
+          onExit={exitChat}
         />
       ) : fixedView ? (
         <Files
@@ -191,7 +203,7 @@ function WorkbenchPane({
       )}
     </Suspense>
   )
-}
+})
 
 export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => void }) {
   const location = useLocation()
@@ -236,6 +248,7 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   const [creatingSession, setCreatingSession] = useState(false)
   const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null)
   const [filesVisited, setFilesVisited] = useState(sidebarTab === 'files')
+  const [recentChatIds, setRecentChatIds] = useState<string[]>([])
   const sidebarDrag = useRef<{ x: number; width: number } | null>(null)
   const editorRef = useRef<HTMLElement>(null)
   const handledLocation = useRef<string | null>(null)
@@ -258,6 +271,17 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
       ? [visibleAgent, filePane]
       : [filePane, visibleAgent]
     : [activeTab, secondaryTab]
+  const activeChatId = activeTab?.kind === 'chat' ? activeTab.id : undefined
+  const secondaryChatId = secondaryTab?.kind === 'chat' ? secondaryTab.id : undefined
+  const retainedChatIds = useMemo(() => {
+    const open = new Set(tabs.flatMap((tab) => (tab.kind === 'chat' ? [tab.id] : [])))
+    return [...new Set([activeChatId, secondaryChatId, ...recentChatIds])]
+      .filter((id): id is string => id !== undefined && open.has(id))
+      .slice(0, MAX_MOUNTED_CHATS)
+  }, [activeChatId, secondaryChatId, recentChatIds, tabs])
+  const cachedTabs = tabs.filter(
+    (tab) => retainedChatIds.includes(tab.id) && tab.id !== activeChatId && tab.id !== secondaryChatId,
+  )
   const mixedBefore = useRef(mixedSplit)
   const canSplit = activeTab?.kind !== 'settings' && tabs.filter((tab) => tab.kind !== 'settings').length >= 2
   const activeFile = activeTab?.kind === 'file' ? activeTab : secondaryTab?.kind === 'file' ? secondaryTab : undefined
@@ -266,6 +290,15 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
   useDocumentTitle(activeTab?.title || '工作台')
 
   useEffect(() => socket.onState(setConnection), [])
+
+  useEffect(() => {
+    if (
+      retainedChatIds.length !== recentChatIds.length ||
+      retainedChatIds.some((id, index) => id !== recentChatIds[index])
+    ) {
+      setRecentChatIds(retainedChatIds)
+    }
+  }, [recentChatIds, retainedChatIds])
 
   useEffect(() => {
     if (activeTab?.kind === 'settings') return
@@ -641,19 +674,22 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
                   />
                 </div>
               )}
-              {visibleTabs.flatMap((tab, index) => {
+              {[...visibleTabs, ...cachedTabs].flatMap((tab, index) => {
                 if (!tab) return []
+                const visible = index < visibleTabs.length
                 const ratioPane = mixedSplit ? tab.kind === 'chat' : index === 1
+                const collapsed = visible && Boolean(secondaryTab) && savedRatio === (ratioPane ? 0 : 1)
                 const pane = (
                   <section
                     key={tab.id}
                     aria-label={tab.title}
                     data-ratio-pane={ratioPane}
                     data-pane={tab.kind === 'chat' ? 'agent' : 'editor'}
-                    inert={Boolean(secondaryTab) && savedRatio === (ratioPane ? 0 : 1)}
+                    hidden={!visible}
+                    inert={!visible || collapsed}
                     className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
                   >
-                    {mixedSplit && (
+                    {visible && mixedSplit && (
                       <div className="flex h-[38px] shrink-0 border-b border-border bg-[var(--workbench-toolbar)]">
                         <WorkbenchTabs
                           tabs={tabs.filter((item) =>
@@ -677,14 +713,15 @@ export default function DesktopWorkbenchShell({ onLogout }: { onLogout: () => vo
                     >
                       <WorkbenchPane
                         tab={tab}
-                        split={Boolean(secondaryTab) && !mixedSplit}
+                        split={visible && Boolean(secondaryTab) && !mixedSplit}
+                        visible={visible && !collapsed}
                         onLogout={onLogout}
                         onSelectSessionId={handleSelectSessionId}
                       />
                     </div>
                   </section>
                 )
-                if (!index) return [pane]
+                if (index !== 1) return [pane]
                 return [
                   <WorkbenchSplitDivider
                     key={mixedSplit ? `agent-divider-${agentPanePosition}` : 'compare-divider'}

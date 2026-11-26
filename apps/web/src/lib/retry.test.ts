@@ -13,7 +13,7 @@ it('keeps a repeated prompt after a real or streamed reply', () => {
   const reply: AgentItem = { kind: 'message', id: 'a', role: 'assistant', text: 'partial reply' }
   expect(collapseUnansweredRetries([prompt, reply, failure, repeated])).toHaveLength(4)
   expect(
-    collapseUnansweredRetries([prompt, { ...reply, text: '' }, failure, repeated], { a: { text: 'partial' } }),
+    collapseUnansweredRetries([prompt, { ...reply, text: '' }, failure, repeated], (id) => id === 'a'),
   ).toHaveLength(4)
 })
 it('keeps changed text or images, and repeated prompts without a failure', () => {

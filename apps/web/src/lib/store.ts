@@ -1,6 +1,6 @@
 import { createStore, useStore } from 'zustand'
 import type { AgentEvent, AgentItem, PlanStep, SessionStatus, TurnStatus, Usage } from '@vibemobile/protocol'
-import { indexItemTurn } from './turnIndex'
+import { createTurnIndex } from './turnIndex'
 
 export interface Stream {
   text: string
@@ -59,6 +59,8 @@ interface ChatState {
   streamVersion: number
 
   reset: (threadId: string) => void
+  indexTurns: (threadId: string, turns: { id: string; items: { id: string }[] }[]) => void
+  turnIdOfItem: (itemId: string) => string | undefined
   applyEvent: (event: AgentEvent) => void
   loadTranscript: (threadId: string, items: AgentItem[], live?: LiveTurn) => void
   mergeTurnTimes: (threadId: string, turns: { id: string; completedAt?: number | null }[]) => void
@@ -98,8 +100,10 @@ export function createChatStore(initialThreadId: string | null = null) {
   return createStore<ChatState>((set, get) => {
     /** Mutable working copy — never handed to React directly. */
     let workingItems: AgentItem[] = []
-    let workingStreams = new Map<string, Stream>()
+    const workingStreams = new Map<string, Stream>()
+    const turnIndex = createTurnIndex()
     const turnErrorIds = new Map<string, string>()
+    let itemsDirty = false
     let dirty = false
     let flushHandle: number | null = null
 
@@ -109,6 +113,7 @@ export function createChatStore(initialThreadId: string | null = null) {
       const index = workingItems.findIndex((existing) => itemKey(existing) === key)
       if (index === -1) workingItems.push(item)
       else workingItems[index] = item
+      itemsDirty = true
     }
 
     function appendDelta(itemId: string, channel: Stream['channel'], text: string): void {
@@ -118,7 +123,8 @@ export function createChatStore(initialThreadId: string | null = null) {
         return
       }
       if (existing.text.length > MAX_STREAM_CHARS) return
-      existing.text += text
+      // Keep buffers immutable so a selector can skip unaffected rows.
+      workingStreams.set(itemId, { channel: existing.channel, text: existing.text + text })
     }
 
     /**
@@ -146,27 +152,26 @@ export function createChatStore(initialThreadId: string | null = null) {
     }
 
     function materializeStreamedItems(): void {
-      workingItems = workingItems.map(withStreamedFallback)
+      if (!workingStreams.size) return
+      workingItems = workingItems.map((item) => {
+        const completed = withStreamedFallback(item)
+        if (completed !== item) itemsDirty = true
+        return completed
+      })
     }
 
     function streamsToRecord(): Record<string, Stream> {
-      const out: Record<string, Stream> = {}
-      for (const [id, stream] of workingStreams) {
-        // Copy rather than hand out the working object. `appendDelta` mutates in
-        // place, so publishing the same reference would make a selector like
-        // `s => s.streams[itemId]` compare equal across flushes and the streaming
-        // text would stop updating the moment that component is memoized.
-        out[id] = { ...stream }
-      }
-      return out
+      return Object.fromEntries(workingStreams)
     }
 
     const flush = () => {
       flushHandle = null
       if (!dirty) return
       dirty = false
+      const items = itemsDirty ? [...workingItems] : get().items
+      itemsDirty = false
       set((state) => ({
-        items: [...workingItems],
+        items,
         streams: streamsToRecord(),
         streamVersion: state.streamVersion + 1,
       }))
@@ -198,8 +203,10 @@ export function createChatStore(initialThreadId: string | null = null) {
      * make the stop button target work that is already over.
      */
     function loadTranscript(threadId: string, items: AgentItem[], live?: LiveTurn): void {
+      if (threadId !== get().threadId) turnIndex.clear()
       workingItems = [...items]
-      workingStreams = new Map()
+      itemsDirty = false
+      workingStreams.clear()
       set({
         threadId,
         items: [...workingItems],
@@ -270,6 +277,7 @@ export function createChatStore(initialThreadId: string | null = null) {
       }
       if (fresh.length === 0) return 0
       workingItems = [...fresh, ...workingItems]
+      itemsDirty = false
       set({ items: [...workingItems] })
       return fresh.length
     }
@@ -316,6 +324,7 @@ export function createChatStore(initialThreadId: string | null = null) {
       const present = new Set(merged.map(itemKey))
       for (const item of items) if (!present.has(itemKey(item))) merged.push(item)
       workingItems = merged
+      itemsDirty = false
 
       for (const item of items) {
         if (hasContent(item)) workingStreams.delete(itemKey(item))
@@ -347,9 +356,11 @@ export function createChatStore(initialThreadId: string | null = null) {
       streamVersion: 0,
 
       reset(threadId) {
+        turnIndex.clear()
         turnErrorIds.clear()
         workingItems = []
-        workingStreams = new Map()
+        workingStreams.clear()
+        itemsDirty = false
         dirty = false
         if (flushHandle !== null) {
           if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(flushHandle)
@@ -373,6 +384,11 @@ export function createChatStore(initialThreadId: string | null = null) {
         })
       },
 
+      indexTurns(threadId, turns) {
+        if (get().threadId === threadId) turnIndex.indexTurns(turns)
+      },
+      turnIdOfItem: turnIndex.turnIdOfItem,
+
       applyEvent(event) {
         // Ignore events for a thread we are not showing.
         const currentThread = get().threadId
@@ -390,7 +406,7 @@ export function createChatStore(initialThreadId: string | null = null) {
           case 'item.started':
           case 'item.updated':
           case 'item.completed': {
-            indexItemTurn(event.threadId, event.item.id, event.turnId)
+            turnIndex.indexItem(event.item.id, event.turnId)
             if (event.item.kind === 'error') turnErrorIds.set(event.turnId, event.item.id)
             upsertItem(event.kind === 'item.completed' ? withStreamedFallback(event.item) : event.item)
             if (event.kind === 'item.completed') {
@@ -414,7 +430,7 @@ export function createChatStore(initialThreadId: string | null = null) {
               if (!turnErrorIds.has(event.turnId)) {
                 const id = `turn-error:${event.turnId}`
                 turnErrorIds.set(event.turnId, id)
-                indexItemTurn(event.threadId, id, event.turnId)
+                turnIndex.indexItem(id, event.turnId)
                 upsertItem({ kind: 'error', id, message })
               }
             }
@@ -493,7 +509,7 @@ export function createChatStore(initialThreadId: string | null = null) {
   })
 }
 
-type ChatStore = ReturnType<typeof createChatStore>
+export type ChatStore = ReturnType<typeof createChatStore>
 const mountedChats = createStore<ReadonlyMap<string, ChatStore>>(() => new Map())
 const emptyChat = createChatStore()
 

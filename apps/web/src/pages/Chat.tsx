@@ -2,7 +2,7 @@ import { RetryBanner } from '../components/RetryBanner'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useStore } from 'zustand'
-import type { AgentInput, AgentItem, ModelInfo, SessionStatus, SessionSummary } from '@vibemobile/protocol'
+import type { AgentInput, AgentItem, ModelInfo, SessionStatus, SessionSummary, Transcript } from '@vibemobile/protocol'
 import { api, ApiError } from '../lib/api'
 import { socket } from '../lib/ws'
 import { useApprovalStore } from '../lib/approvals'
@@ -14,7 +14,6 @@ import {
   turnMarkdown,
   type ExportMode,
 } from '../lib/exportMarkdown'
-import { indexTurns } from '../lib/turnIndex'
 import { exportTurns } from '../lib/transcriptPages'
 import { useDocumentTitle } from '../lib/title'
 import { Button } from '../components/ui/button'
@@ -40,6 +39,7 @@ type ExportChoice =
 export interface ChatProps {
   threadId?: string
   embedded?: boolean
+  visible?: boolean
   showPaneTitle?: boolean
   onSessionMeta?: (session: SessionSummary, status: SessionStatus) => void
   onOpenFileTab?: (ref: FileRef) => void
@@ -47,22 +47,37 @@ export interface ChatProps {
   onExit?: () => void
 }
 
-export default function Chat({
-  threadId: propThreadId,
+export default function Chat(props: ChatProps) {
+  return props.embedded ? <ChatView {...props} /> : <RoutedChat {...props} />
+}
+
+function RoutedChat(props: ChatProps) {
+  const { threadId } = useParams<{ threadId: string }>()
+  const navigate = useNavigate()
+  return (
+    <ChatView
+      {...props}
+      threadId={props.threadId ?? threadId}
+      onExit={props.onExit ?? (() => navigate('/'))}
+      onSelectSession={props.onSelectSession ?? ((id) => navigate(`/chat/${id}`, { replace: true }))}
+    />
+  )
+}
+
+function ChatView({
+  threadId,
   embedded = false,
+  visible = true,
   showPaneTitle = false,
   onSessionMeta,
   onOpenFileTab,
   onSelectSession,
   onExit,
 }: ChatProps = {}) {
-  const params = useParams<{ threadId: string }>()
-  const threadId = propThreadId ?? params.threadId
   const chatStore = useMemo(() => createChatStore(threadId ?? null), [threadId])
   useEffect(() => {
     if (embedded && threadId) return registerChatStore(threadId, chatStore)
   }, [chatStore, embedded, threadId])
-  const navigate = useNavigate()
 
   const [session, setSession] = useState<SessionSummary | null>(null)
   useDocumentTitle(embedded ? '' : session?.title || '对话')
@@ -110,7 +125,6 @@ export default function Chat({
   const [olderError, setOlderError] = useState<string | null>(null)
 
   const items = useStore(chatStore, (s) => s.items)
-  const streams = useStore(chatStore, (s) => s.streams)
   const status = useStore(chatStore, (s) => s.status)
   const turnId = useStore(chatStore, (s) => s.turnId)
   const turnStatus = useStore(chatStore, (s) => s.turnStatus)
@@ -123,6 +137,10 @@ export default function Chat({
   const turnTimes = useStore(chatStore, (s) => s.turnTimes)
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const rememberedScrollTop = useRef(0)
+  const rememberedScrollHeight = useRef(0)
+  const restoreScroll = useRef(false)
+  const wasVisible = useRef(visible)
   const pinnedToBottom = useRef(true)
   const initialScrollPending = useRef(false)
   /** The thread the initial load finished for; the re-sync waits on it. */
@@ -163,7 +181,7 @@ export default function Chat({
 
   const running = !readOnly && (turnStatus === 'inProgress' || status === 'working' || status === 'waitingApproval')
   const [retrying, setRetrying] = useState(false)
-  const lastPrompt = [...items].reverse().find((item) => item.kind === 'message' && item.role === 'user')
+  const lastPrompt = useMemo(() => items.findLast((item) => item.kind === 'message' && item.role === 'user'), [items])
 
   // ---------------------------------------------------------------- load
 
@@ -190,6 +208,8 @@ export default function Chat({
     setLoadingOlder(false)
     loadingOlderRef.current = false
     olderAnchor.current = null
+    rememberedScrollTop.current = 0
+    rememberedScrollHeight.current = 0
     initialScrollPending.current = true
     pinnedToBottom.current = true
     setIsAtBottom(true)
@@ -197,16 +217,16 @@ export default function Chat({
 
     // Resume first: the transcript is readable straight from disk, but the
     // backend only forwards live events for threads it has re-attached to.
-    let subscribed = false
     let viewingReadOnly = false
     let readOnlyError: ApiError | null = null
 
-    api
-      .openSession(threadId)
+    Promise.resolve()
+      .then(() => (cancelled ? undefined : api.openSession(threadId)))
       // Same budget as scrolling up. The server's turn-count default is much
       // heavier than a phone screen needs, and every turn renders eagerly.
-      .then(() => api.session(threadId, { items: PAGE_ITEMS }))
+      .then(() => (cancelled ? undefined : api.session(threadId, { items: PAGE_ITEMS })))
       .catch((err) => {
+        if (cancelled) return
         if (!(err instanceof ApiError) || (err.code !== 'session_in_use' && err.code !== 'session_provider_mismatch'))
           throw err
         // Writer locks and provider-key mismatches still permit reading history.
@@ -215,7 +235,7 @@ export default function Chat({
         return api.session(threadId, { items: PAGE_ITEMS })
       })
       .then((transcript) => {
-        if (cancelled) return
+        if (cancelled || !transcript) return
         setReadOnly(viewingReadOnly)
         setReadOnlyMessage(readOnlyError?.code === 'session_provider_mismatch' ? readOnlyError.message : null)
         hasOlderRef.current = transcript.hasMore === true
@@ -262,17 +282,13 @@ export default function Chat({
         // running on the server. Its id is what the stop button sends, so
         // without it a phone that reloaded mid-turn can watch but not stop.
         const open = [...transcript.turns].reverse().find((turn) => turn.status === 'inProgress')
-        indexTurns(threadId, transcript.turns)
+        chatStore.getState().indexTurns(threadId, transcript.turns)
         chatStore.getState().mergeTurnTimes(threadId, transcript.turns)
         chatStore.getState().loadTranscript(threadId, items, {
           turnId: open?.id ?? null,
           turnStatus: open ? 'inProgress' : (transcript.turns.at(-1)?.status ?? null),
         })
         chatStore.setState({ status: transcript.session.status })
-        if (!viewingReadOnly) {
-          socket.subscribe(threadId)
-          subscribed = true
-        }
       })
       .catch((err) => {
         if (cancelled) return
@@ -291,17 +307,20 @@ export default function Chat({
     return () => {
       cancelled = true
       if (loadedThread.current === threadId) loadedThread.current = null
-      if (threadId && subscribed) socket.unsubscribe(threadId)
     }
   }, [chatStore, threadId, loadAttempt])
 
   // -------------------------------------------------------------- events
 
   useEffect(() => {
-    return socket.onEvent((event) => {
-      if (!readOnly) chatStore.getState().applyEvent(event)
-    })
-  }, [chatStore, readOnly])
+    if (!threadId || loading || loadError || readOnly || loadedThread.current !== threadId) return
+    const unsubscribe = socket.onEvent((event) => chatStore.getState().applyEvent(event))
+    socket.subscribe(threadId)
+    return () => {
+      unsubscribe()
+      socket.unsubscribe(threadId)
+    }
+  }, [chatStore, threadId, loading, loadError, readOnly])
 
   // ---------------------------------------------------------- re-sync
 
@@ -316,6 +335,78 @@ export default function Chat({
   // `resyncTranscript`, not `loadTranscript`: the merge keeps the in-flight
   // text and avoids the full-screen "加载中…" that a phone would otherwise
   // flash every time its screen turned off and on.
+  const mergeLatestTranscript = useCallback(
+    (transcript: Transcript, before: Set<string>) => {
+      if (!threadId || loadedThread.current !== threadId) return
+      const items = transcript.turns.flatMap((turn) => turn.items)
+      const open = transcript.turns.findLast((turn) => turn.status === 'inProgress')
+      const gap = transcript.hasMore && before.size > 0 && !items.some((item) => before.has(item.id))
+      const state = chatStore.getState()
+      state.indexTurns(threadId, transcript.turns)
+      state.mergeTurnTimes(threadId, transcript.turns)
+      state.resyncTranscript(
+        threadId,
+        items,
+        {
+          turnId: open?.id ?? null,
+          turnStatus: open ? 'inProgress' : (transcript.turns.at(-1)?.status ?? null),
+        },
+        gap ? before : undefined,
+      )
+      chatStore.setState({ status: transcript.session.status })
+      setSession(transcript.session)
+
+      // Preserve a deeper cursor already loaded by the reader unless the latest page has a gap.
+      if (gap || !olderCursorRef.current) {
+        hasOlderRef.current = transcript.hasMore === true
+        olderCursorRef.current = hasOlderRef.current ? (transcript.nextCursor ?? null) : null
+        partialTurn.current = transcript.turns[0]?.hasEarlierItems ? transcript.turns[0].id : null
+        setHasOlder(hasOlderRef.current)
+        setOlderCursor(olderCursorRef.current)
+      }
+    },
+    [chatStore, threadId],
+  )
+
+  useEffect(() => {
+    const resumed = visible && !wasVisible.current
+    wasVisible.current = visible
+    if (!resumed || !readOnly || !threadId || loadedThread.current !== threadId) return
+    let cancelled = false
+    let writable = false
+    const before = new Set(chatStore.getState().items.map((item) => item.id))
+    void api
+      .openSession(threadId)
+      .then(() => {
+        writable = true
+      })
+      .catch((error: unknown) => {
+        if (
+          !(error instanceof ApiError) ||
+          (error.code !== 'session_in_use' && error.code !== 'session_provider_mismatch')
+        )
+          throw error
+      })
+      .then(() => (cancelled ? undefined : api.session(threadId, { items: PAGE_ITEMS })))
+      .then((transcript) => {
+        if (cancelled || !transcript) return
+        mergeLatestTranscript(transcript, before)
+        if (!writable) return
+        setReadOnly(false)
+        setReadOnlyMessage(null)
+        void api
+          .models(transcript.session.provider)
+          .then(({ data }) => {
+            if (loadedThread.current === threadId) setModels(data)
+          })
+          .catch(() => undefined)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [chatStore, mergeLatestTranscript, readOnly, threadId, visible])
+
   useEffect(() => {
     if (!threadId || readOnly) return
     let cancelled = false
@@ -334,36 +425,7 @@ export default function Chat({
       void api
         .session(threadId, { items: PAGE_ITEMS })
         .then((transcript) => {
-          if (cancelled) return
-          const items: AgentItem[] = transcript.turns.flatMap((turn) => turn.items)
-          const open = [...transcript.turns].reverse().find((turn) => turn.status === 'inProgress')
-          const gap = transcript.hasMore && before.size > 0 && !items.some((item) => before.has(item.id))
-          indexTurns(threadId, transcript.turns)
-          chatStore.getState().mergeTurnTimes(threadId, transcript.turns)
-          chatStore.getState().resyncTranscript(
-            threadId,
-            items,
-            {
-              turnId: open?.id ?? null,
-              turnStatus: open ? 'inProgress' : (transcript.turns.at(-1)?.status ?? null),
-            },
-            gap ? before : undefined,
-          )
-          chatStore.setState({ status: transcript.session.status })
-          setSession(transcript.session)
-
-          // A session that was short when it was opened can grow past the
-          // page limit while the phone is away, and then older turns become
-          // reachable for the first time. Only adopted when there is no cursor
-          // yet: replacing a deeper one with the newest page's would re-fetch
-          // pages already on screen after every reconnect.
-          if (gap || !olderCursorRef.current) {
-            hasOlderRef.current = transcript.hasMore === true
-            olderCursorRef.current = transcript.hasMore === true ? (transcript.nextCursor ?? null) : null
-            partialTurn.current = transcript.turns[0]?.hasEarlierItems ? transcript.turns[0].id : null
-            setHasOlder(hasOlderRef.current)
-            setOlderCursor(olderCursorRef.current)
-          }
+          if (!cancelled) mergeLatestTranscript(transcript, before)
         })
         .catch(() => {
           // Best effort. The socket is back and live events are flowing again,
@@ -376,7 +438,7 @@ export default function Chat({
       cancelled = true
       unsubscribe()
     }
-  }, [chatStore, threadId, readOnly])
+  }, [chatStore, mergeLatestTranscript, threadId, readOnly])
 
   // -------------------------------------------------------- older history
 
@@ -401,10 +463,13 @@ export default function Chat({
       // was sent: a slow page must not undo the scrolling the reader did while
       // waiting for it.
       const anchor = scrollRef.current
-      if (anchor) olderAnchor.current = { height: anchor.scrollHeight, top: anchor.scrollTop }
+      if (anchor?.clientHeight) olderAnchor.current = { height: anchor.scrollHeight, top: anchor.scrollTop }
+      else if (rememberedScrollHeight.current) {
+        olderAnchor.current = { height: rememberedScrollHeight.current, top: rememberedScrollTop.current }
+      }
 
       const items: AgentItem[] = transcript.turns.flatMap((turn) => turn.items)
-      indexTurns(threadId, transcript.turns)
+      chatStore.getState().indexTurns(threadId, transcript.turns)
       chatStore.getState().mergeTurnTimes(threadId, transcript.turns)
       const added = chatStore.getState().prependTranscriptItems(threadId, items)
       // Nothing added means the page was entirely already on screen (a stale
@@ -441,14 +506,22 @@ export default function Chat({
   // transcript. `useLayoutEffect`, not `useEffect`: the prepend is a visible
   // jump otherwise.
   useLayoutEffect(() => {
+    if (!visible) {
+      restoreScroll.current = true
+      return
+    }
     const el = scrollRef.current
+    if (!el?.clientHeight) return
     const anchor = olderAnchor.current
-    if (!el || !anchor) return
     olderAnchor.current = null
-    el.scrollTop = el.scrollHeight - anchor.height + anchor.top
-    // The anchor is distance-to-bottom, so this is "keep the same lines under
-    // the thumb" independent of how tall the new page turned out to be.
-  }, [items])
+    if (anchor) el.scrollTop = el.scrollHeight - anchor.height + anchor.top
+    else if (restoreScroll.current && !initialScrollPending.current) {
+      el.scrollTop = pinnedToBottom.current ? el.scrollHeight : rememberedScrollTop.current
+    }
+    restoreScroll.current = false
+    rememberedScrollHeight.current = el.scrollHeight
+    rememberedScrollTop.current = el.scrollTop
+  }, [items, visible])
 
   // Paging is normally driven by scrolling up, but a page can be shorter than
   // the viewport on a large display — then the scroller never scrolls, no event
@@ -457,16 +530,18 @@ export default function Chat({
   // this cannot spin.
   useEffect(() => {
     const el = scrollRef.current
-    if (!el || loadingOlder || !hasOlder || !olderCursor || olderError) return
+    if (!visible || !el?.clientHeight || loadingOlder || !hasOlder || !olderCursor || olderError) return
     if (el.scrollHeight > el.clientHeight + 1) return
     void loadOlder()
-  }, [items, loadingOlder, hasOlder, olderCursor, olderError, loadOlder])
+  }, [items, loadingOlder, hasOlder, olderCursor, olderError, loadOlder, visible])
 
   // ---------------------------------------------------------- auto-scroll
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
-    if (!el) return
+    if (!visible || !el?.clientHeight) return
+    rememberedScrollHeight.current = el.scrollHeight
+    rememberedScrollTop.current = el.scrollTop
     // 80px of slack so a near-bottom position still counts as "following".
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
     pinnedToBottom.current = nearBottom
@@ -485,7 +560,7 @@ export default function Chat({
     ) {
       void loadOlder()
     }
-  }, [loadOlder])
+  }, [loadOlder, visible])
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current
@@ -497,7 +572,7 @@ export default function Chat({
 
   useEffect(() => {
     const el = scrollRef.current
-    if (!el || !pinnedToBottom.current) return
+    if (!visible || !el?.clientHeight || !pinnedToBottom.current) return
     if (!initialScrollPending.current) {
       el.scrollTop = el.scrollHeight
       return
@@ -520,7 +595,26 @@ export default function Chat({
       window.cancelAnimationFrame(firstFrame)
       if (secondFrame) window.cancelAnimationFrame(secondFrame)
     }
-  }, [items, streams, plan, loading])
+  }, [items, plan, loading, visible])
+
+  // Streaming updates are rendered by the subscribed message. Follow the
+  // bottom after that update without subscribing the whole chat to each delta.
+  useEffect(() => {
+    if (!visible) return
+    let frame = 0
+    const unsubscribe = chatStore.subscribe((state, previous) => {
+      if (state.streams === previous.streams || frame || initialScrollPending.current || !pinnedToBottom.current) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        const el = scrollRef.current
+        if (pinnedToBottom.current && el?.clientHeight) el.scrollTop = el.scrollHeight
+      })
+    })
+    return () => {
+      unsubscribe()
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [chatStore, visible])
 
   // -------------------------------------------------------------- actions
 
@@ -655,7 +749,7 @@ export default function Chat({
             : choice.items
           downloadMarkdown(
             markdownFilename(session.title, mode === 'conversation' ? 'turn-对话' : 'turn-完整'),
-            turnMarkdown(session, items, choice.label, streams, mode),
+            turnMarkdown(session, items, choice.label, chatStore.getState().streams, mode),
           )
           return
         }
@@ -670,7 +764,7 @@ export default function Chat({
         setExporting(false)
       }
     },
-    [exportChoice, session, streams, threadId, exporting],
+    [chatStore, exportChoice, session, threadId, exporting],
   )
 
   const changeModel = useCallback(
@@ -692,13 +786,12 @@ export default function Chat({
     setForkError(null)
     try {
       const forked = await api.forkSession(threadId)
-      if (onSelectSession) onSelectSession(forked.id)
-      else navigate(`/chat/${forked.id}`, { replace: true })
+      onSelectSession?.(forked.id)
     } catch (err) {
       setForkError((err as Error).message)
       setForking(false)
     }
-  }, [threadId, forking, navigate, onSelectSession])
+  }, [threadId, forking, onSelectSession])
 
   // --------------------------------------------------------------- render
 
@@ -711,6 +804,13 @@ export default function Chat({
     },
     [onOpenFileTab],
   )
+
+  useEffect(() => {
+    if (visible) return
+    setShowDiff(false)
+    setOpenFile(null)
+    setExportChoice(null)
+  }, [visible])
 
   if (loading) {
     return (
@@ -733,7 +833,7 @@ export default function Chat({
         forkError={forkError}
         onFork={forkAndContinue}
         onRetry={() => setLoadAttempt((attempt) => attempt + 1)}
-        onBack={onExit ?? (() => navigate('/'))}
+        onBack={() => onExit?.()}
       />
     )
   }
@@ -741,21 +841,23 @@ export default function Chat({
   const desktopApprovals = embedded && !readOnly ? approvals.filter((approval) => approval.threadId === threadId) : []
   const conversation = (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
-      <ChatHeader
-        session={session}
-        readOnly={readOnly}
-        status={status}
-        turnStatus={turnStatus}
-        usage={usage}
-        plan={plan}
-        hasDiff={Boolean(diff)}
-        downloading={exporting}
-        embedded={embedded}
-        showPaneTitle={showPaneTitle}
-        onDownload={requestSessionExport}
-        onBack={() => navigate('/')}
-        onShowDiff={() => setShowDiff(true)}
-      />
+      {visible && (
+        <ChatHeader
+          session={session}
+          readOnly={readOnly}
+          status={status}
+          turnStatus={turnStatus}
+          usage={usage}
+          plan={plan}
+          hasDiff={Boolean(diff)}
+          downloading={exporting}
+          embedded={embedded}
+          showPaneTitle={showPaneTitle}
+          onDownload={requestSessionExport}
+          onBack={() => onExit?.()}
+          onShowDiff={() => setShowDiff(true)}
+        />
+      )}
 
       {/* Between the header and the transcript, because `BottomNav` — which
           carries this strip on every other screen — is unmounted here. Without
@@ -795,10 +897,9 @@ export default function Chat({
             )}
             <ChatItemList
               items={items}
-              streams={streams}
+              chatStore={chatStore}
               turnTimes={turnTimes}
               cwd={session?.cwd}
-              threadId={threadId ?? ''}
               running={
                 turnStatus === 'inProgress' ||
                 status === 'working' ||
@@ -870,7 +971,7 @@ export default function Chat({
         </div>
       )}
 
-      {desktopApprovals.length > 0 && (
+      {visible && desktopApprovals.length > 0 && (
         <div className="scroll-y mx-auto max-h-[35%] w-full max-w-[58rem] shrink-0 space-y-2 px-4 pt-2 lg:max-w-[59rem] lg:px-6">
           {desktopApprovals.map((approval) => (
             <ApprovalSheet key={approval.requestId} approval={approval} inline />
@@ -906,19 +1007,21 @@ export default function Chat({
         }
       />
 
-      <ChatOverlays
-        openFile={openFile}
-        onCloseFile={() => setOpenFile(null)}
-        onOpenFile={showFile}
-        readOnly={readOnly}
-        approvals={embedded ? [] : approvals}
-        desktop={embedded}
-        showDiff={showDiff}
-        diff={diff}
-        onCloseDiff={() => setShowDiff(false)}
-      />
+      {visible && (
+        <ChatOverlays
+          openFile={openFile}
+          onCloseFile={() => setOpenFile(null)}
+          onOpenFile={showFile}
+          readOnly={readOnly}
+          approvals={embedded ? [] : approvals}
+          desktop={embedded}
+          showDiff={showDiff}
+          diff={diff}
+          onCloseDiff={() => setShowDiff(false)}
+        />
+      )}
 
-      {exportChoice && (
+      {visible && exportChoice && (
         <Sheet title="导出 Markdown" onClose={() => setExportChoice(null)}>
           <div className="space-y-2 px-4 pt-2 pb-4">
             <p className="px-0.5 text-[12px] text-muted-foreground">

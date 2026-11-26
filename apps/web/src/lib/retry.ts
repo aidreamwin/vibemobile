@@ -3,7 +3,7 @@ import type { AgentInput, AgentItem } from '@vibemobile/protocol'
 /** Keep one prompt bubble across failed attempts that produced no reply or work. */
 export function collapseUnansweredRetries(
   items: AgentItem[],
-  streams: Readonly<Record<string, { text: string }>> = {},
+  hasStreamedReply?: (itemId: string) => boolean,
 ): AgentItem[] {
   let prompt: Extract<AgentItem, { kind: 'message' }> | undefined
   let failed = false
@@ -23,7 +23,7 @@ export function collapseUnansweredRetries(
     }
     if (item.kind === 'error') failed = true
     else if (item.kind !== 'retry') {
-      if (item.kind !== 'message' || item.text.trim() || streams[item.id]?.text.trim() || item.images?.length)
+      if (item.kind !== 'message' || item.text.trim() || hasStreamedReply?.(item.id) || item.images?.length)
         answered = true
     }
     return true

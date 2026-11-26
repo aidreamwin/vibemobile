@@ -69,15 +69,18 @@ beforeEach(() => {
   chatStore.getState().reset(THREAD)
 })
 
-it('isolates transcript snapshots and streams belonging to two panes', async () => {
+it('isolates transcript snapshots, turn indexes and streams belonging to two panes', async () => {
   const otherThread = 'thread-2'
+  const otherTurn = 'turn-2'
   const otherChat = createChatStore(otherThread)
+  chatStore.getState().indexTurns(THREAD, [{ id: TURN, items: [{ id: 'history' }] }])
+  otherChat.getState().indexTurns(otherThread, [{ id: otherTurn, items: [{ id: 'history' }] }])
   loadTranscript(THREAD, [message('history', 'first pane')])
   otherChat.getState().loadTranscript(otherThread, [message('history', 'second pane')])
 
   const events: AgentEvent[] = [
     { kind: 'item.started', threadId: THREAD, turnId: TURN, item: message('reply', '') },
-    { kind: 'item.started', threadId: otherThread, turnId: TURN, item: message('reply', '') },
+    { kind: 'item.started', threadId: otherThread, turnId: otherTurn, item: message('reply', '') },
     delta('reply', 'text', 'first reply'),
     delta('reply', 'text', 'second reply', otherThread),
   ]
@@ -91,9 +94,32 @@ it('isolates transcript snapshots and streams belonging to two panes', async () 
   expect(otherChat.getState().items[0]).toMatchObject({ text: 'second pane' })
   expect(chatStore.getState().streams.reply?.text).toBe('first reply')
   expect(otherChat.getState().streams.reply?.text).toBe('second reply')
+  expect(chatStore.getState().turnIdOfItem('history')).toBe(TURN)
+  expect(otherChat.getState().turnIdOfItem('history')).toBe(otherTurn)
+  expect(chatStore.getState().turnIdOfItem('reply')).toBe(TURN)
+  expect(otherChat.getState().turnIdOfItem('reply')).toBe(otherTurn)
 
   chatStore.getState().reset(THREAD)
+  expect(chatStore.getState().turnIdOfItem('history')).toBeUndefined()
+  expect(otherChat.getState().turnIdOfItem('history')).toBe(otherTurn)
   expect(otherChat.getState().streams.reply?.text).toBe('second reply')
+})
+
+it('keeps the item list and unaffected streams stable across stream-only updates', async () => {
+  loadTranscript(THREAD, [message('reply', ''), message('other', '')])
+  apply(delta('reply', 'text', 'part one'))
+  apply(delta('other', 'text', 'untouched'))
+  await settled()
+
+  const before = chatStore.getState()
+  apply(delta('reply', 'text', ' and two'))
+  await settled()
+  const after = chatStore.getState()
+
+  expect(after.items).toBe(before.items)
+  expect(after.streams.other).toBe(before.streams.other)
+  expect(before.streams.reply?.text).toBe('part one')
+  expect(after.streams.reply?.text).toBe('part one and two')
 })
 
 describe('streamed deltas vs the authoritative completed item', () => {
